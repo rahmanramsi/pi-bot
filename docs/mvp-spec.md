@@ -2,11 +2,11 @@
 
 ## Goal
 
-Turn the selected Agent Conversation Workspace design into a small, local-first Electron app that lets a person choose a read-only Pi teammate and talk to it while keeping the work anchored to a folder on their computer.
+Turn the selected Agent Conversation Workspace design into a small, local-first Electron app that lets a person choose a coding Pi teammate and talk to it while keeping the work anchored to a folder on their computer.
 
 ## Primary task
 
-Choose Planner, Researcher, or Coder in the sidebar, ask that agent a question about the selected workspace, and see the answer stream in place, including the read-only tools Pi uses.
+Choose Planner, Researcher, or Coder in the sidebar, ask that agent a question about the selected workspace, and see the answer stream in place, including the tools Pi uses.
 
 ## MVP scope
 
@@ -17,7 +17,7 @@ Choose Planner, Researcher, or Coder in the sidebar, ask that agent a question a
 - New chat, secondary history selection, and session titles derived from the first prompt.
 - Native folder selection and remembered last workspace.
 - Model selection and thinking-level selection.
-- Read-only tool activity for `read`, `grep`, `find`, and `ls`.
+- Tool activity for the coding tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`).
 - Stop while a response is streaming.
 - Visible loading, empty, no-model, and error states.
 - Local Electron/Vite build and manual QA against a real model.
@@ -25,7 +25,7 @@ Choose Planner, Researcher, or Coder in the sidebar, ask that agent a question a
 ## Explicit non-goals
 
 - Cloud sync, accounts, billing, team collaboration, or web deployment.
-- File writes, shell execution, browser automation, or arbitrary extensions.
+- Browser automation, or arbitrary extensions.
 - Automatic multi-agent orchestration, agent-to-agent handoffs, and custom agent creation.
 - Provider/API-key management. Pi's existing local authentication remains the source of available models.
 
@@ -37,7 +37,7 @@ Choose Planner, Researcher, or Coder in the sidebar, ask that agent a question a
 - Each agent has its own persistent `SessionManager` session for the selected workspace and can be reopened from history.
 - Pi's persistent `SessionManager` is the source of truth for history. The renderer only keeps the current view state.
 - A session is created lazily for a new chat and can be reopened from the selected agent's history list.
-- Tools are read-only by construction. The UI states this in the context panel.
+- Tools are the local coding toolset. The UI states this in the context panel.
 
 ## Acceptance criteria
 
@@ -54,4 +54,4 @@ Choose Planner, Researcher, or Coder in the sidebar, ask that agent a question a
 ## Verification strategy
 
 - TypeScript check plus Vite production build.
-- Manual Electron QA: connect, switch between all three agents, verify each conversation changes, expand agent-scoped history, switch workspace, create a session, send a read-only prompt, observe streamed text/tool activity, scroll a long conversation, stop a longer response, reopen history, and restart the app.
+- Manual Electron QA: connect, switch between all three agents, verify each conversation changes, expand agent-scoped history, switch workspace, create a session, send a prompt, observe streamed text/tool activity, scroll a long conversation, stop a longer response, reopen history, and restart the app.

@@ -13,14 +13,14 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
-const readOnlyTools = ["read", "grep", "find", "ls"];
+const codingTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const builtinAgentProfiles = {
   planner: {
     name: "Planner",
     initials: "PL",
     description: "Breaks work into clear next steps.",
-    systemPrompt: "You are Planner, a thoughtful planning teammate. Turn the user's request into a clear, practical plan before proposing implementation. Stay concise and use only the read-only tools provided.",
+    systemPrompt: "You are Planner, a thoughtful planning teammate. Turn the user's request into a clear, practical plan before proposing implementation. Stay concise and use the available coding tools when they help.",
     builtIn: true,
     archived: false,
   },
@@ -28,7 +28,7 @@ const builtinAgentProfiles = {
     name: "Researcher",
     initials: "RE",
     description: "Finds evidence and explains what it means.",
-    systemPrompt: "You are Researcher, an evidence-focused teammate. Inspect the selected workspace, trace relevant information, and explain findings with concrete references. Stay concise and use only the read-only tools provided.",
+    systemPrompt: "You are Researcher, an evidence-focused teammate. Inspect the selected workspace, trace relevant information, and explain findings with concrete references. Stay concise and use the available coding tools when they help.",
     builtIn: true,
     archived: false,
   },
@@ -36,7 +36,7 @@ const builtinAgentProfiles = {
     name: "Coder",
     initials: "CO",
     description: "Explains implementation details and trade-offs.",
-    systemPrompt: "You are Coder, an implementation-focused teammate. Inspect the selected workspace, explain how the code works, and suggest precise changes without claiming to edit files. Stay concise and use only the read-only tools provided.",
+    systemPrompt: "You are Coder, an implementation-focused teammate. Inspect the selected workspace, explain how the code works, and make the requested changes directly. Stay concise and use the available coding tools.",
     builtIn: true,
     archived: false,
   },
@@ -86,7 +86,7 @@ function normalizeProfile(id, value, { builtIn = false, fallback } = {}) {
   const name = cleanText(value?.name, base.name || "Untitled agent", 80);
   const systemPrompt = typeof value?.systemPrompt === "string"
     ? value.systemPrompt.trim().slice(0, 8000)
-    : cleanText(undefined, base.systemPrompt || `You are ${name}, a helpful workspace teammate. Use only the read-only tools provided and never claim to change files.`, 8000);
+    : cleanText(undefined, base.systemPrompt || `You are ${name}, a helpful workspace teammate. Use the available coding tools to read, search, and change files in the selected workspace.`, 8000);
   return {
     id,
     name,
@@ -364,7 +364,7 @@ function currentConfig() {
     thinkingLevel: session?.thinkingLevel ?? "off",
     availableThinkingLevels: session?.getAvailableThinkingLevels?.() ?? [],
     models: availableModels.map(modelOption),
-    tools: readOnlyTools,
+    tools: codingTools,
     session: currentSessionSummary(),
   };
 }
@@ -474,8 +474,8 @@ async function createSession({ mode = "continue", sessionPath, agentId = activeA
     noThemes: true,
     noContextFiles: true,
     systemPrompt: agentProfiles[agentId].systemPrompt
-      ? `${agentProfiles[agentId].systemPrompt} Never claim to write or execute commands because only read-only tools are available.`
-      : "Use only the available read-only tools. Never claim to write files or execute commands.",
+      ? agentProfiles[agentId].systemPrompt
+      : "You are a coding teammate. Use the available tools (read, bash, edit, write, grep, find, ls) to inspect and change the selected workspace.",
   });
   await resourceLoader.reload();
 
@@ -484,7 +484,7 @@ async function createSession({ mode = "continue", sessionPath, agentId = activeA
     modelRuntime,
     model: selectedModel,
     thinkingLevel: preferredThinkingLevel,
-    tools: readOnlyTools,
+    tools: codingTools,
     sessionManager: manager,
     settingsManager,
     resourceLoader,

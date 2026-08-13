@@ -187,7 +187,7 @@ summary:focus-visible {
   min-height: 38px;
   padding-bottom: 21px;
   border-bottom: 1px solid var(--sidebar-border);
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 600;
 }
 
@@ -289,14 +289,14 @@ summary:focus-visible {
   border-radius: 999px;
   color: var(--primary-foreground);
   background: var(--primary);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: .03em;
 }
 
-.agent-planner { background: var(--primary); }
-.agent-researcher { color: var(--secondary-foreground); background: var(--secondary); }
-.agent-coder { color: var(--accent-foreground); background: var(--accent); }
+.agent-planner { background: oklch(0.52 0.13 40); }
+.agent-researcher { background: oklch(0.45 0.11 168); }
+.agent-coder { background: oklch(0.5 0.14 268); }
 
 .agent-copy {
   display: grid;
@@ -315,7 +315,8 @@ summary:focus-visible {
 
 .agent-copy strong { font-size: 12px; font-weight: 600; }
 .agent-copy small { color: var(--muted-foreground); font-size: 10px; }
-.agent-copy small i { display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%; background: oklch(0.62 0.16 145); }
+.agent-status.working { color: var(--foreground); font-weight: 500; }
+.agent-status.working::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%; background: var(--primary); animation: pulse 1.3s infinite; }
 
 .sidebar-action {
   justify-content: center;
@@ -377,7 +378,7 @@ summary:focus-visible {
   color: var(--muted-foreground);
   background: transparent;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   letter-spacing: .1em;
   text-align: left;
@@ -417,7 +418,6 @@ summary:focus-visible {
   font-size: 11px;
 }
 
-.read-only-dot { display: inline-block; width: 7px; height: 7px; border: 1px solid var(--primary); border-radius: 50%; }
 
 .variant-a[data-sidebar-state="collapsed"] .a-sidebar { padding-right: 12px; padding-left: 12px; }
 .variant-a[data-sidebar-state="collapsed"] .sidebar-label { display: none; }
@@ -464,13 +464,12 @@ summary:focus-visible {
   margin: 5px 0 0;
   overflow: hidden;
   color: var(--foreground);
-  font-size: 21px;
-  font-weight: 500;
+  font-size: 18px;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.session-name { max-width: 650px; margin-top: 4px; overflow: hidden; color: var(--muted-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .live-status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 11px; }
 .live-status i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted-foreground); }
 .live-status.busy { color: var(--foreground); }
@@ -501,14 +500,14 @@ summary:focus-visible {
 .chat-message { display: flex; align-items: flex-start; gap: 11px; max-width: 92%; }
 .chat-message.assistant { justify-self: start; }
 .chat-message.user { flex-direction: row-reverse; justify-self: end; max-width: 86%; }
-.chat-avatar { display: grid; flex: 0 0 auto; place-items: center; width: 30px; height: 30px; margin-top: 2px; border: 1px solid var(--border); border-radius: 999px; color: var(--primary-foreground); background: var(--primary); font-size: 9px; font-weight: 700; letter-spacing: .04em; }
+.chat-avatar { display: grid; flex: 0 0 auto; place-items: center; width: 30px; height: 30px; margin-top: 2px; border: 1px solid var(--border); border-radius: 999px; color: var(--primary-foreground); background: var(--primary); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
 .chat-message.user .chat-avatar { color: var(--secondary-foreground); background: var(--secondary); }
 .chat-message-main { min-width: 0; }
 .chat-message.user .chat-message-main { display: flex; flex-direction: column; align-items: flex-end; }
 .chat-message-meta { display: flex; align-items: center; gap: 8px; min-height: 18px; margin: 0 5px 6px; color: var(--muted-foreground); }
-.chat-message-meta strong { color: var(--foreground); font-size: 12px; font-weight: 650; }
+.chat-message-meta strong { color: var(--foreground); font-size: 12px; font-weight: 600; }
 .chat-message-meta time { color: var(--muted-foreground); font-size: 10px; }
-.chat-status { font-size: 8px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.chat-status { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .chat-bubble { border: 1px solid var(--border); border-radius: 4px 15px 15px 15px; background: var(--card); box-shadow: 0 3px 12px color-mix(in oklch, var(--foreground) 4%, transparent); }
 .chat-message.user .chat-bubble { border-color: var(--border); border-radius: 15px 4px 15px 15px; background: var(--secondary); box-shadow: none; }
 .chat-body { max-width: 760px; padding: 13px 16px; color: var(--card-foreground); font-size: 14px; line-height: 1.62; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -520,16 +519,16 @@ summary:focus-visible {
 .activity-cluster summary::-webkit-details-marker { display: none; }
 .activity-glyph { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); }
 .activity-glyph svg { width: 13px; height: 13px; }
-.activity-title { color: var(--foreground); font-weight: 650; }
+.activity-title { color: var(--foreground); font-weight: 600; }
 .activity-count { color: var(--muted-foreground); }
-.activity-state { margin-left: auto; font-size: 9px; font-weight: 650; text-transform: uppercase; }
+.activity-state { margin-left: auto; font-size: 10px; font-weight: 600; text-transform: uppercase; }
 .activity-state.running { animation: pulse 1.3s infinite; }
 .activity-list { display: grid; gap: 0; padding: 0 11px 8px; }
 .activity-line { padding: 9px 0 7px 28px; border-top: 1px solid var(--border); }
 .activity-line-header { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.activity-line-header strong { color: var(--foreground); font-size: 11px; font-weight: 650; }
-.activity-line-header time { margin-left: auto; color: var(--muted-foreground); font-size: 9px; }
-.activity-line-status { font-size: 8px; text-transform: uppercase; }
+.activity-line-header strong { color: var(--foreground); font-size: 11px; font-weight: 600; }
+.activity-line-header time { margin-left: auto; color: var(--muted-foreground); font-size: 10px; }
+.activity-line-status { font-size: 10px; text-transform: uppercase; }
 .activity-line pre { max-height: 130px; margin: 6px 0 0; overflow: auto; color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .jump-latest { position: absolute; right: 28px; bottom: 18px; z-index: 2; border-radius: 999px; box-shadow: 0 5px 16px color-mix(in oklch, var(--foreground) 10%, transparent); }
@@ -538,12 +537,12 @@ summary:focus-visible {
 .empty-conversation { display: grid; flex: 1 1 auto; align-content: center; justify-items: start; max-width: 500px; min-height: 0; color: var(--muted-foreground); }
 .empty-orbit { display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 18px; border: 1px solid var(--border); border-radius: 50%; color: var(--foreground); background: var(--muted); font-size: 22px; }
 .empty-orbit svg { width: 22px; height: 22px; }
-.empty-conversation h2 { margin: 0 0 8px; color: var(--foreground); font-size: 23px; font-weight: 500; }
+.empty-conversation h2 { margin: 0 0 8px; color: var(--foreground); font-size: 20px; font-weight: 600; }
 .empty-conversation p { max-width: 420px; margin: 0; font-size: 14px; line-height: 1.6; }
 
 .composer { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; min-height: 72px; padding: 12px 14px 12px 18px; border: 1px solid var(--input); border-radius: calc(var(--radius) + 4px); background: var(--background); box-shadow: 0 12px 30px color-mix(in oklch, var(--foreground) 7%, transparent); }
 .composer-plus { flex: 0 0 auto; width: 18px; height: 18px; color: var(--muted-foreground); }
-.composer-input { height: auto; padding: 0; border: 0; box-shadow: none; background: transparent; font-size: 15px; }
+.composer-input { height: auto; padding: 0; border: 0; box-shadow: none; background: transparent; font-size: 14px; }
 .composer-input:focus-visible { border: 0; box-shadow: none; outline: none; }
 .send-button,
 .stop-button { min-height: 42px; }
@@ -580,7 +579,7 @@ summary:focus-visible {
 .manager-modal { width: min(760px, calc(100% - 2rem)); }
 .form-modal { width: min(640px, calc(100% - 2rem)); }
 .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 25px 27px 20px; border-bottom: 1px solid var(--border); }
-.modal-header h2 { margin: 5px 0 7px; color: var(--foreground); font-size: 23px; font-weight: 500; }
+.modal-header h2 { margin: 5px 0 7px; color: var(--foreground); font-size: 20px; font-weight: 600; }
 .modal-description { max-width: 540px; margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
 .modal-error { display: flex; gap: 8px; margin: 16px 27px 0; padding: 10px 12px; border: 1px solid color-mix(in oklch, var(--destructive) 28%, var(--border)); border-radius: var(--radius); color: var(--destructive); background: color-mix(in oklch, var(--destructive) 5%, var(--background)); font-size: 12px; line-height: 1.45; }
 .modal-error svg { flex: 0 0 auto; width: 16px; height: 16px; }
@@ -589,7 +588,7 @@ summary:focus-visible {
 .manager-agent.archived { opacity: .62; }
 .manager-agent-copy { min-width: 0; }
 .manager-agent-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.manager-agent-title strong { overflow: hidden; color: var(--foreground); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.manager-agent-title strong { overflow: hidden; color: var(--foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .manager-agent-title span { flex: 0 0 auto; color: var(--muted-foreground); font-size: 10px; }
 .manager-agent-copy p { margin: 4px 0 0; overflow: hidden; color: var(--muted-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .manager-agent-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }

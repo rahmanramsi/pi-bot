@@ -4,14 +4,14 @@
 
 Make the published Pi Bot MVP dependable for repeated local use. The selected agent, its custom instructions, and its conversation history must remain understandable and correct across agent switching, new conversations, restarts, streaming responses, and recoverable errors.
 
-The primary user task remains: choose an agent, ask about the selected workspace, and understand the answer and the read-only work it performed.
+The primary user task remains: choose an agent, ask about the selected workspace, and understand the answer and the work it performed.
 
 ## Assumptions
 
 1. Pi remains local-first and continues to use the user's existing local Pi authentication.
 2. Agent creation and customization are in scope; built-in agents remain protected templates.
-3. Custom instructions may be intentionally empty. The read-only boundary is enforced by the runtime, not by requiring a user-written instruction.
-4. `read`, `grep`, `find`, and `ls` remain the only enabled tools in this stage.
+3. Custom instructions may be intentionally empty. Tool permissions are controlled by the runtime allowlist, not by a user-written instruction.
+4. `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls` are the enabled tools in this stage.
 5. This stage targets the existing Electron desktop app, not a web or mobile build.
 
 ## Scope
@@ -41,7 +41,7 @@ The primary user task remains: choose an agent, ask about the selected workspace
 
 ### Deferred
 
-- Write tools, shell execution, browser automation, arbitrary extensions, and permission approvals.
+- Browser automation, arbitrary extensions, and permission approvals.
 - Automatic multi-agent orchestration, handoffs, background jobs, and schedules.
 - Cloud sync, accounts, billing, team collaboration, and provider/API-key management.
 - Attachments, export, structured artifact cards, and packaged auto-update distribution.
@@ -90,9 +90,9 @@ Use existing TypeScript types, preserve the current IPC naming convention, and a
 
 ## Boundaries
 
-- **Always:** preserve read-only tools, validate IPC inputs, keep secrets out of the repository, run typecheck/build/tests before a commit, and show actionable failure states.
+- **Always:** validate IPC inputs, keep secrets out of the repository, run typecheck/build/tests before a commit, and show actionable failure states.
 - **Ask first:** adding a new runtime dependency, changing Pi tool permissions, changing the persisted settings schema, or adding a packaged release workflow.
-- **Never:** commit credentials, expose Node APIs to the renderer, silently enable file writes/shell/browser tools, or claim an agent changed files when it did not.
+- **Never:** commit credentials, expose Node APIs to the renderer, or claim an agent changed files when it did not.
 
 ## Success Criteria
 

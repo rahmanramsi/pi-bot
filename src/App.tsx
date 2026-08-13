@@ -348,8 +348,9 @@ function ContextPanel({
             <label htmlFor="model-select">Model</label>
             <Select
               value={config?.modelKey || undefined}
-              onValueChange={onModelChange}
+              onValueChange={(value) => { if (value) onModelChange(value); }}
               disabled={connecting || busy || !config?.models.length}
+              items={(config?.models ?? []).map((model) => ({ label: `${model.name} · ${model.provider}`, value: model.key }))}
             >
               <SelectTrigger id="model-select"><SelectValue placeholder={config?.models.length ? "Select a model" : "No model available"} /></SelectTrigger>
               <SelectContent>
@@ -363,8 +364,9 @@ function ContextPanel({
             <label htmlFor="thinking-select">Thinking level</label>
             <Select
               value={config?.thinkingLevel ?? "medium"}
-              onValueChange={(level) => onThinkingChange(level as ThinkingLevel)}
+              onValueChange={(level) => { if (level) onThinkingChange(level as ThinkingLevel); }}
               disabled={connecting || busy || !config}
+              items={thinkingOptions.map((level) => ({ label: level, value: level }))}
             >
               <SelectTrigger id="thinking-select"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -372,17 +374,17 @@ function ContextPanel({
               </SelectContent>
             </Select>
           </div>
-          <div className="eyebrow tools-title">Tools · read only</div>
+          <div className="eyebrow tools-title">Tools</div>
           <Separator className="context-separator" />
           <ul className="tool-list">
-            {(config?.tools ?? ["read", "grep", "find", "ls"]).map((tool) => (
+            {(config?.tools ?? ["read", "bash", "edit", "write", "grep", "find", "ls"]).map((tool) => (
               <li key={tool}><Wrench aria-hidden="true" /><strong>{tool}</strong></li>
             ))}
           </ul>
         </ScrollArea>
       </SidebarContent>
       <SidebarFooter className="context-footer">
-        <p className="boundary-note">Local-first. Pi can read and search this folder, but it cannot write files or run shell commands.</p>
+        <p className="boundary-note">Local-first. Pi works inside this folder and can read, search, edit files, and run commands in it.</p>
       </SidebarFooter>
     </SidebarShell>
   );
@@ -471,7 +473,7 @@ function AgentSidebar({
                     <span className={`agent-avatar agent-${agent.id}`}>{agent.initials}</span>
                     <span className="agent-copy sidebar-label">
                       <strong>{agent.name}</strong>
-                      <small><i /> {busy && agent.id === activeAgentId ? "Working" : agent.builtIn ? "Template" : "Custom"}</small>
+                      <small className={busy && agent.id === activeAgentId ? "agent-status working" : "agent-status"}>{busy && agent.id === activeAgentId ? "Working" : agent.builtIn ? "Template" : "Custom"}</small>
                     </span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -525,7 +527,7 @@ function AgentSidebar({
         </ScrollArea>
       </SidebarContent>
       <SidebarFooter className="sidebar-footer">
-        <span className="read-only-dot" /> <span className="sidebar-label">Read-only teammate</span>
+        <span className="sidebar-label">Coding teammate</span>
       </SidebarFooter>
     </SidebarShell>
   );
@@ -686,7 +688,12 @@ function AgentDialog({
           {dialog.mode === "new" && (
             <label className="form-field">
               <span>Start from template</span>
-              <Select value={form.templateId || "blank"} onValueChange={(value) => applyTemplate(value === "blank" ? "" : value)} disabled={busy}>
+              <Select
+                value={form.templateId || "blank"}
+                onValueChange={(value) => applyTemplate(value === "blank" ? "" : (value ?? ""))}
+                disabled={busy}
+                items={[{ label: "Blank agent", value: "blank" }, ...agents.filter((agent) => agent.builtIn).map((agent) => ({ label: agent.name, value: agent.id }))]}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="blank">Blank agent</SelectItem>
@@ -713,7 +720,7 @@ function AgentDialog({
             <span>Instructions</span>
             <Textarea value={form.systemPrompt} onChange={(event) => setField("systemPrompt", event.target.value)} placeholder="Optional: describe the role, method, and boundaries…" rows={7} maxLength={8000} disabled={busy} />
           </label>
-          <div className="permission-note"><strong>Capability boundary</strong><span>All agents currently use the same local read-only tools: read, grep, find, and ls. They cannot write files or run shell commands.</span></div>
+          <div className="permission-note"><strong>Capability boundary</strong><span>All agents use the local coding tools: read, bash, edit, write, grep, find, and ls. They can change files and run shell commands in the selected workspace.</span></div>
           <DialogFooter className="modal-footer">
             <Button variant="outline" type="button" onClick={onClose} disabled={busy}>Cancel</Button>
             <Button type="submit" disabled={busy || !form.name.trim() || !form.description.trim()}>{busy ? "Saving…" : dialog.mode === "edit" ? "Save changes" : "Create agent"}</Button>
@@ -923,9 +930,8 @@ export function App() {
           <SidebarInset className="a-conversation">
         <header className="section-header">
           <div>
-            <div className="eyebrow">Conversation · {activeAgent.name}</div>
-            <h1>Conversation</h1>
-            <div className="session-name">{title}</div>
+            <div className="eyebrow">{activeAgent.name}</div>
+            <h1>{title}</h1>
           </div>
           <span className={busy ? "live-status busy" : "live-status"}><i /> {connecting ? "Connecting" : busy ? "Working" : "Ready"}</span>
         </header>
