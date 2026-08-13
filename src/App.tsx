@@ -1,4 +1,57 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  Bot,
+  ChevronDown,
+  CircleAlert,
+  FolderOpen,
+  History as HistoryIcon,
+  MessageCircle,
+  MessageSquarePlus,
+  Plus,
+  Settings2,
+  Square,
+  Wrench,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sidebar as SidebarShell,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
+import { Textarea } from "@/components/ui/textarea";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type {
   AgentId,
   AgentDraft,
@@ -87,8 +140,9 @@ function Composer({
 
   return (
     <form className="composer" onSubmit={submit}>
-      <span className="composer-plus" aria-hidden="true">＋</span>
-      <input
+      <Plus className="composer-plus" aria-hidden="true" />
+      <Input
+        className="composer-input"
         aria-label={`Message ${agentName}`}
         value={message}
         onChange={(event) => setMessage(event.target.value)}
@@ -96,13 +150,14 @@ function Composer({
         disabled={disabled}
       />
       {busy ? (
-        <button className="stop-button" type="button" onClick={onAbort} aria-label="Stop response">
-          Stop
-        </button>
+        <Button className="stop-button" variant="destructive" type="button" onClick={onAbort} aria-label="Stop response">
+          <Square />
+          <span>Stop</span>
+        </Button>
       ) : (
-        <button className="send-button" type="submit" aria-label="Send message" disabled={disabled}>
-          ↑
-        </button>
+        <Button className="send-button" size="icon" type="submit" aria-label="Send message" disabled={disabled}>
+          <ArrowUp />
+        </Button>
       )}
     </form>
   );
@@ -126,10 +181,10 @@ function ActivityCluster({ items }: { items: TimelineItem[] }) {
   return (
     <details className={`activity-cluster ${status}`} open={hasRunning || undefined}>
       <summary>
-        <span className="activity-glyph" aria-hidden="true">⌁</span>
+        <span className="activity-glyph" aria-hidden="true"><Activity /></span>
         <span className="activity-title">Activity</span>
         <span className="activity-count">{stepLabel}</span>
-        <span className={`activity-state ${status}`}>{statusLabel}</span>
+        <Badge className={`activity-state ${status}`} variant={status === "failed" ? "destructive" : status === "running" ? "secondary" : "outline"}>{statusLabel}</Badge>
       </summary>
       <div className="activity-list">
         {items.map((item) => (
@@ -159,7 +214,7 @@ function ChatMessage({ item, assistantLabel, assistantInitials }: { item: Timeli
         <div className="chat-message-meta">
           <strong>{label}</strong>
           <time>{item.timestamp}</time>
-          {item.status && <span className={`chat-status ${item.status}`}>{item.status}</span>}
+              {item.status && <Badge className={`chat-status ${item.status}`} variant={item.status === "failed" ? "destructive" : item.status === "running" ? "secondary" : "outline"}>{item.status}</Badge>}
         </div>
         <div className="chat-bubble">
           <div className="chat-body">{item.body || "Thinking…"}</div>
@@ -220,12 +275,19 @@ function EventRows({ items, assistantLabel, assistantInitials }: { items: Timeli
     <div className="conversation-feed">
       {items.length === 0 ? (
         <div className="empty-conversation">
-          <div className="empty-orbit" aria-hidden="true">π</div>
+          <div className="empty-orbit" aria-hidden="true"><Bot /></div>
           <h2>Start with the workspace</h2>
           <p>Ask {assistantLabel} to map a folder, explain a file, or find a pattern. It can inspect only; your files stay unchanged.</p>
         </div>
       ) : (
-        <div className="event-rows" ref={scrollRef} onScroll={handleScroll} role="log" aria-label={`${assistantLabel} conversation`}>
+        <ScrollArea
+          className="conversation-scroll"
+          viewportClassName="event-rows"
+          viewportRef={scrollRef}
+          onScroll={handleScroll}
+          role="log"
+          aria-label={`${assistantLabel} conversation`}
+        >
           <div className="conversation-blocks">
             {blocks.map((block) => block.kind === "activity" ? (
               <ActivityCluster items={block.items} key={`activity-${block.items[0].id}`} />
@@ -233,9 +295,9 @@ function EventRows({ items, assistantLabel, assistantInitials }: { items: Timeli
               <ChatMessage item={block.item} assistantLabel={assistantLabel} assistantInitials={assistantInitials} key={block.item.id} />
             ))}
           </div>
-        </div>
+        </ScrollArea>
       )}
-      {showJump && <button className="jump-latest" type="button" onClick={jumpToLatest}>↓ New activity</button>}
+      {showJump && <Button className="jump-latest" variant="outline" size="sm" type="button" onClick={jumpToLatest}><ArrowDown /> New activity</Button>}
     </div>
   );
 }
@@ -262,61 +324,71 @@ function ContextPanel({
   const thinkingOptions = config?.availableThinkingLevels.length ? config.availableThinkingLevels : allThinkingLevels;
 
   return (
-    <aside className="a-context">
-      <div className="eyebrow">Context</div>
-      <div className="context-block">
-        <span>Agent</span>
-        <strong>{agent.name}</strong>
-        <small>{agent.description}</small>
-        <button onClick={onEditAgent} disabled={connecting || busy}>Customize agent</button>
-      </div>
-      <div className="context-block">
-        <span>Working folder</span>
-        <strong title={config?.workspace}>⌑ {config?.workspace ?? "Connecting…"}</strong>
-        <button onClick={onChooseFolder} disabled={connecting || busy}>Change folder</button>
-      </div>
-      <div className="context-block">
-        <span>Conversation</span>
-        <strong>{config?.session?.name ?? "New conversation"}</strong>
-        <small>Local session history</small>
-      </div>
-      <div className="context-block">
-        <label htmlFor="model-select">Model</label>
-        <select
-          id="model-select"
-          value={config?.modelKey ?? ""}
-          onChange={(event) => onModelChange(event.target.value)}
-          disabled={connecting || busy || !config?.models.length}
-        >
-          {!config?.models.length && <option value="">No model available</option>}
-          {config?.models.map((model) => (
-            <option value={model.key} key={model.key}>{model.name} · {model.provider}</option>
-          ))}
-        </select>
-      </div>
-      <div className="context-block">
-        <label htmlFor="thinking-select">Thinking level</label>
-        <select
-          id="thinking-select"
-          value={config?.thinkingLevel ?? "medium"}
-          onChange={(event) => onThinkingChange(event.target.value as ThinkingLevel)}
-          disabled={connecting || busy || !config}
-        >
-          {thinkingOptions.map((level) => <option value={level} key={level}>{level}</option>)}
-        </select>
-      </div>
-      <div className="eyebrow tools-title">Tools · read only</div>
-      <ul className="tool-list">
-        {(config?.tools ?? ["read", "grep", "find", "ls"]).map((tool) => (
-          <li key={tool}><span>⌁</span><strong>{tool}</strong></li>
-        ))}
-      </ul>
-      <p className="boundary-note">Local-first. Pi can read and search this folder, but it cannot write files or run shell commands.</p>
-    </aside>
+    <SidebarShell side="right" collapsible="none" className="a-context">
+      <SidebarContent className="context-content">
+        <ScrollArea className="context-scroll" viewportClassName="context-scroll-viewport">
+          <div className="eyebrow">Context</div>
+          <div className="context-block">
+            <span>Agent</span>
+            <strong>{agent.name}</strong>
+            <small>{agent.description}</small>
+            <Button variant="link" size="sm" className="context-action" onClick={onEditAgent} disabled={connecting || busy}>Customize agent</Button>
+          </div>
+          <div className="context-block">
+            <span>Working folder</span>
+            <strong className="context-value" title={config?.workspace}><FolderOpen /> {config?.workspace ?? "Connecting…"}</strong>
+            <Button variant="link" size="sm" className="context-action" onClick={onChooseFolder} disabled={connecting || busy}>Change folder</Button>
+          </div>
+          <div className="context-block">
+            <span>Conversation</span>
+            <strong>{config?.session?.name ?? "New conversation"}</strong>
+            <small>Local session history</small>
+          </div>
+          <div className="context-block">
+            <label htmlFor="model-select">Model</label>
+            <Select
+              value={config?.modelKey || undefined}
+              onValueChange={onModelChange}
+              disabled={connecting || busy || !config?.models.length}
+            >
+              <SelectTrigger id="model-select"><SelectValue placeholder={config?.models.length ? "Select a model" : "No model available"} /></SelectTrigger>
+              <SelectContent>
+                {config?.models.map((model) => (
+                  <SelectItem value={model.key} key={model.key}>{model.name} · {model.provider}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="context-block">
+            <label htmlFor="thinking-select">Thinking level</label>
+            <Select
+              value={config?.thinkingLevel ?? "medium"}
+              onValueChange={(level) => onThinkingChange(level as ThinkingLevel)}
+              disabled={connecting || busy || !config}
+            >
+              <SelectTrigger id="thinking-select"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {thinkingOptions.map((level) => <SelectItem value={level} key={level}>{level}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="eyebrow tools-title">Tools · read only</div>
+          <Separator className="context-separator" />
+          <ul className="tool-list">
+            {(config?.tools ?? ["read", "grep", "find", "ls"]).map((tool) => (
+              <li key={tool}><Wrench aria-hidden="true" /><strong>{tool}</strong></li>
+            ))}
+          </ul>
+        </ScrollArea>
+      </SidebarContent>
+      <SidebarFooter className="context-footer">
+        <p className="boundary-note">Local-first. Pi can read and search this folder, but it cannot write files or run shell commands.</p>
+      </SidebarFooter>
+    </SidebarShell>
   );
 }
 
-function Sidebar({
+function AgentSidebar({
   agents,
   activeAgentId,
   sessions,
@@ -349,70 +421,113 @@ function Sidebar({
   const archivedCount = agents.filter((agent) => agent.archived).length;
 
   return (
-    <aside className="a-sidebar">
-      <header className="brand">
-        <span className="brand-mark">π</span>
-        <span>Pi Bot</span>
-      </header>
-      <div className="sidebar-scroll">
-        <div className="sidebar-heading">
-          <div className="eyebrow">Agents</div>
-          <div className="sidebar-agent-actions">
-            <button className="sidebar-action" onClick={onManageAgents} disabled={busy || connecting}>Manage</button>
-            <button className="sidebar-action add" onClick={onNewAgent} disabled={busy || connecting} aria-label="Create agent">＋</button>
-          </div>
-        </div>
-        <div className="agent-list" aria-label="Agents">
-          {visibleAgents.map((agent) => (
-            <button
-              className={agent.id === activeAgentId ? "agent-item active" : "agent-item"}
-              key={agent.id}
-              onClick={() => onSelectAgent(agent.id)}
-              disabled={busy || connecting}
-              aria-current={agent.id === activeAgentId ? "page" : undefined}
-              title={agent.description}
-            >
-              <span className={`agent-avatar agent-${agent.id}`}>{agent.initials}</span>
-              <span className="agent-copy">
-                <strong>{agent.name}</strong>
-                <small><i /> {busy && agent.id === activeAgentId ? "Working" : agent.builtIn ? "Template" : "Custom"}</small>
-              </span>
-            </button>
-          ))}
-        </div>
-        {archivedCount > 0 && <button className="archived-hint" onClick={onManageAgents}>+ {archivedCount} archived agent{archivedCount === 1 ? "" : "s"}</button>}
-        <button className="new-agent" onClick={onNewAgent} disabled={busy || connecting}>
-          <span>＋</span> New agent
-        </button>
-        <button className="new-chat" onClick={onNewSession} disabled={busy || connecting}>
-          <span>＋</span> New conversation
-        </button>
-        <div className="history-section">
-          <button className="history-toggle" onClick={onToggleHistory} aria-expanded={historyOpen}>
-            <span>History</span>
-            <span className="history-toggle-meta"><small>{sessions.length}</small><b>{historyOpen ? "⌃" : "⌄"}</b></span>
-          </button>
-          {historyOpen && (
-            <div className="history-list">
-              {sessions.length === 0 && <p className="history-empty">No saved chats for {findAgent(agents, activeAgentId).name} yet.</p>}
-              {sessions.map((session) => (
-                <button
-                  className={session.path === activePath ? "history-item active" : "history-item"}
-                  key={session.path}
-                  onClick={() => onOpenSession(session)}
+    <SidebarShell side="left" collapsible="icon" className="a-sidebar">
+      <SidebarHeader>
+        <header className="brand">
+          <span className="brand-mark"><Bot aria-hidden="true" /></span>
+          <span className="sidebar-label">Pi Bot</span>
+          <SidebarTrigger />
+        </header>
+      </SidebarHeader>
+      <SidebarContent className="sidebar-content-shell">
+        <ScrollArea className="sidebar-scroll-shell" viewportClassName="sidebar-scroll">
+          <SidebarGroup>
+            <div className="sidebar-heading">
+              <SidebarGroupLabel className="eyebrow sidebar-label">Agents</SidebarGroupLabel>
+              <div className="sidebar-agent-actions">
+                <SidebarMenuButton
+                  className="sidebar-action sidebar-label-button"
+                  onClick={onManageAgents}
                   disabled={busy || connecting}
-                  title={session.name}
+                  aria-label="Manage agents"
+                  tooltip="Manage agents"
                 >
-                  <span className="history-icon">◌</span>
-                  <span className="history-copy"><strong>{session.name}</strong><small>{shortDate(session.modified)}</small></span>
-                </button>
-              ))}
+                  <Settings2 />
+                  <span className="sidebar-label">Manage</span>
+                </SidebarMenuButton>
+                <SidebarMenuButton
+                  className="sidebar-action add"
+                  onClick={onNewAgent}
+                  disabled={busy || connecting}
+                  aria-label="Create agent"
+                  tooltip="Create agent"
+                >
+                  <Plus />
+                </SidebarMenuButton>
+              </div>
             </div>
-          )}
-        </div>
-      </div>
-      <div className="sidebar-footer"><span className="read-only-dot" /> Read-only teammate</div>
-    </aside>
+            <SidebarMenu className="agent-list" aria-label="Agents">
+              {visibleAgents.map((agent) => (
+                <SidebarMenuItem key={agent.id}>
+                  <SidebarMenuButton
+                    className="agent-item"
+                    isActive={agent.id === activeAgentId}
+                    onClick={() => onSelectAgent(agent.id)}
+                    disabled={busy || connecting}
+                    aria-current={agent.id === activeAgentId ? "page" : undefined}
+                    aria-label={`${agent.name} agent`}
+                    tooltip={agent.description}
+                  >
+                    <span className={`agent-avatar agent-${agent.id}`}>{agent.initials}</span>
+                    <span className="agent-copy sidebar-label">
+                      <strong>{agent.name}</strong>
+                      <small><i /> {busy && agent.id === activeAgentId ? "Working" : agent.builtIn ? "Template" : "Custom"}</small>
+                    </span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+            {archivedCount > 0 && (
+              <SidebarMenuButton className="archived-hint" onClick={onManageAgents} tooltip={`${archivedCount} archived agent${archivedCount === 1 ? "" : "s"}`}>
+                <span className="sidebar-label">+ {archivedCount} archived agent{archivedCount === 1 ? "" : "s"}</span>
+              </SidebarMenuButton>
+            )}
+            <SidebarMenu className="sidebar-primary-actions">
+              <SidebarMenuItem>
+                <SidebarMenuButton className="new-agent" onClick={onNewAgent} disabled={busy || connecting} aria-label="New agent" tooltip="New agent">
+                  <Plus /><span className="sidebar-label">New agent</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton className="new-chat" onClick={onNewSession} disabled={busy || connecting} aria-label="New conversation" tooltip="New conversation">
+                  <MessageSquarePlus /><span className="sidebar-label">New conversation</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+            <Collapsible open={historyOpen} onOpenChange={onToggleHistory} className="history-section">
+              <CollapsibleTrigger asChild>
+                <button className="history-toggle" type="button" aria-expanded={historyOpen} title="History">
+                  <span><HistoryIcon /><span className="sidebar-label">History</span></span>
+                  <span className="history-toggle-meta"><Badge variant="secondary" className="sidebar-label">{sessions.length}</Badge><ChevronDown className={historyOpen ? "history-chevron open" : "history-chevron"} /></span>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="history-list">
+                {sessions.length === 0 && <p className="history-empty sidebar-label">No saved chats for {findAgent(agents, activeAgentId).name} yet.</p>}
+                <SidebarMenu>
+                  {sessions.map((session) => (
+                    <SidebarMenuItem key={session.path}>
+                      <SidebarMenuButton
+                        className="history-item"
+                        isActive={session.path === activePath}
+                        onClick={() => onOpenSession(session)}
+                        disabled={busy || connecting}
+                        tooltip={session.name}
+                      >
+                        <MessageCircle className="history-icon" />
+                        <span className="history-copy sidebar-label"><strong>{session.name}</strong><small>{shortDate(session.modified)}</small></span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </CollapsibleContent>
+            </Collapsible>
+          </SidebarGroup>
+        </ScrollArea>
+      </SidebarContent>
+      <SidebarFooter className="sidebar-footer">
+        <span className="read-only-dot" /> <span className="sidebar-label">Read-only teammate</span>
+      </SidebarFooter>
+    </SidebarShell>
   );
 }
 
@@ -520,17 +635,16 @@ function AgentDialog({
 
   if (dialog.mode === "manage") {
     return (
-      <div className="modal-backdrop" role="presentation">
-        <section className="agent-modal manager-modal" role="dialog" aria-modal="true" aria-labelledby="agent-manager-title">
-          <header className="modal-header">
+      <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <DialogContent className="agent-modal manager-modal" closeDisabled={busy}>
+          <DialogHeader className="modal-header">
             <div>
               <div className="eyebrow">Agent workspace</div>
-              <h2 id="agent-manager-title">Manage agents</h2>
-              <p>Templates give you a starting point. Custom agents keep their own role and conversation history.</p>
+              <DialogTitle id="agent-manager-title">Manage agents</DialogTitle>
+              <DialogDescription className="modal-description">Templates give you a starting point. Custom agents keep their own role and conversation history.</DialogDescription>
             </div>
-            <button className="modal-close" onClick={onClose} disabled={busy} aria-label="Close agent manager">×</button>
-          </header>
-          {error && <div className="modal-error" role="alert">{error}</div>}
+          </DialogHeader>
+          {error && <div className="modal-error" role="alert"><CircleAlert />{error}</div>}
           <div className="manager-list">
             {agents.map((agent) => (
               <article className={agent.archived ? "manager-agent archived" : "manager-agent"} key={agent.id}>
@@ -540,71 +654,73 @@ function AgentDialog({
                   <p>{agent.description}</p>
                 </div>
                 <div className="manager-agent-actions">
-                  <button onClick={() => onEdit(agent.id)} disabled={busy}>Edit</button>
-                  <button onClick={() => void onDuplicate(agent.id)} disabled={busy}>Duplicate</button>
-                  {!agent.builtIn && <button onClick={() => void onArchive(agent.id, !agent.archived)} disabled={busy}>{agent.archived ? "Restore" : "Archive"}</button>}
-                  {!agent.builtIn && <button className="danger-text" onClick={() => void onDelete(agent.id)} disabled={busy}>Delete</button>}
+                  <Button variant="outline" size="sm" onClick={() => onEdit(agent.id)} disabled={busy}>Edit</Button>
+                  <Button variant="outline" size="sm" onClick={() => void onDuplicate(agent.id)} disabled={busy}>Duplicate</Button>
+                  {!agent.builtIn && <Button variant="outline" size="sm" onClick={() => void onArchive(agent.id, !agent.archived)} disabled={busy}>{agent.archived ? "Restore" : "Archive"}</Button>}
+                  {!agent.builtIn && <Button variant="destructive" size="sm" onClick={() => void onDelete(agent.id)} disabled={busy}>Delete</Button>}
                 </div>
               </article>
             ))}
           </div>
-          <footer className="modal-footer">
-            <button className="secondary-button" onClick={onClose} disabled={busy}>Done</button>
-            <button className="primary-button" onClick={onNew} disabled={busy}>＋ New agent</button>
-          </footer>
-        </section>
-      </div>
+          <DialogFooter className="modal-footer">
+            <Button variant="outline" onClick={onClose} disabled={busy}>Done</Button>
+            <Button onClick={onNew} disabled={busy}><Plus /> New agent</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     );
   }
 
   return (
-    <div className="modal-backdrop" role="presentation">
-      <section className="agent-modal form-modal" role="dialog" aria-modal="true" aria-labelledby="agent-form-title">
-        <header className="modal-header">
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="agent-modal form-modal" closeDisabled={busy}>
+        <DialogHeader className="modal-header">
           <div>
             <div className="eyebrow">{dialog.mode === "edit" ? "Customize agent" : "New agent"}</div>
-            <h2 id="agent-form-title">{dialog.mode === "edit" ? `Customize ${editingAgent?.name ?? "agent"}` : "Create an agent"}</h2>
-            <p>Give this teammate one clear job. You can change its instructions later.</p>
+            <DialogTitle id="agent-form-title">{dialog.mode === "edit" ? `Customize ${editingAgent?.name ?? "agent"}` : "Create an agent"}</DialogTitle>
+            <DialogDescription className="modal-description">Give this teammate one clear job. You can change its instructions later.</DialogDescription>
           </div>
-          <button className="modal-close" onClick={onClose} disabled={busy} aria-label="Close agent form">×</button>
-        </header>
-        {error && <div className="modal-error" role="alert">{error}</div>}
+        </DialogHeader>
+        {error && <div className="modal-error" role="alert"><CircleAlert />{error}</div>}
         <form className="agent-form" onSubmit={submit}>
           {dialog.mode === "new" && (
-            <label>
-              Start from template
-              <select value={form.templateId} onChange={(event) => applyTemplate(event.target.value)} disabled={busy}>
-                <option value="">Blank agent</option>
-                {agents.filter((agent) => agent.builtIn).map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>)}
-              </select>
+            <label className="form-field">
+              <span>Start from template</span>
+              <Select value={form.templateId || "blank"} onValueChange={(value) => applyTemplate(value === "blank" ? "" : value)} disabled={busy}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="blank">Blank agent</SelectItem>
+                  {agents.filter((agent) => agent.builtIn).map((agent) => <SelectItem value={agent.id} key={agent.id}>{agent.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </label>
           )}
           <div className="form-grid">
-            <label>
-              Name
-              <input value={form.name} onChange={(event) => setField("name", event.target.value)} placeholder="e.g. Release Reviewer" maxLength={80} disabled={busy} required />
+            <label className="form-field">
+              <span>Name</span>
+              <Input value={form.name} onChange={(event) => setField("name", event.target.value)} placeholder="e.g. Release Reviewer" maxLength={80} disabled={busy} required />
             </label>
-            <label>
-              Initials
-              <input value={form.initials} onChange={(event) => setField("initials", event.target.value)} maxLength={4} disabled={busy} required />
+            <label className="form-field">
+              <span>Initials</span>
+              <Input value={form.initials} onChange={(event) => setField("initials", event.target.value)} maxLength={4} disabled={busy} required />
             </label>
           </div>
-          <label>
-            Description
-            <input value={form.description} onChange={(event) => setField("description", event.target.value)} placeholder="What outcome does this agent own?" maxLength={180} disabled={busy} required />
+          <label className="form-field">
+            <span>Description</span>
+            <Input value={form.description} onChange={(event) => setField("description", event.target.value)} placeholder="What outcome does this agent own?" maxLength={180} disabled={busy} required />
           </label>
-          <label>
-            Instructions
-            <textarea value={form.systemPrompt} onChange={(event) => setField("systemPrompt", event.target.value)} placeholder="Optional: describe the role, method, and boundaries…" rows={7} maxLength={8000} disabled={busy} />
+          <label className="form-field">
+            <span>Instructions</span>
+            <Textarea value={form.systemPrompt} onChange={(event) => setField("systemPrompt", event.target.value)} placeholder="Optional: describe the role, method, and boundaries…" rows={7} maxLength={8000} disabled={busy} />
           </label>
           <div className="permission-note"><strong>Capability boundary</strong><span>All agents currently use the same local read-only tools: read, grep, find, and ls. They cannot write files or run shell commands.</span></div>
-          <footer className="modal-footer">
-            <button className="secondary-button" type="button" onClick={onClose} disabled={busy}>Cancel</button>
-            <button className="primary-button" type="submit" disabled={busy || !form.name.trim() || !form.description.trim()}>{busy ? "Saving…" : dialog.mode === "edit" ? "Save changes" : "Create agent"}</button>
-          </footer>
+          <DialogFooter className="modal-footer">
+            <Button variant="outline" type="button" onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button type="submit" disabled={busy || !form.name.trim() || !form.description.trim()}>{busy ? "Saving…" : dialog.mode === "edit" ? "Save changes" : "Create agent"}</Button>
+          </DialogFooter>
         </form>
-      </section>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -615,6 +731,13 @@ export function App() {
   const [agents, setAgents] = useState<AgentProfile[]>(initialAgents);
   const [activeAgentId, setActiveAgentId] = useState<AgentId>("planner");
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try {
+      return window.localStorage.getItem("pi-bot.sidebar-open") !== "false";
+    } catch {
+      return true;
+    }
+  });
   const [busy, setBusy] = useState(false);
   const [connecting, setConnecting] = useState(true);
   const [error, setError] = useState("");
@@ -690,6 +813,14 @@ export function App() {
   const activeAgent = findAgent(agents, activeAgentId);
   const title = config?.session?.name ?? "New conversation";
   const interactionDisabled = connecting || !config;
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("pi-bot.sidebar-open", String(sidebarOpen));
+    } catch {
+      // Renderer-only preference; failure should not affect the workspace.
+    }
+  }, [sidebarOpen]);
 
   const perform = useMemo(() => async (
     operation: () => Promise<PiBootstrap | null>,
@@ -770,24 +901,26 @@ export function App() {
   }
 
   return (
-    <main className="variant-a">
-      <Sidebar
-        agents={agents}
-        activeAgentId={activeAgentId}
-        sessions={sessions}
-        activePath={activePath}
-        busy={busy}
-        connecting={connecting}
-        historyOpen={historyOpen}
-        onSelectAgent={onSelectAgent}
-        onNewAgent={() => { setError(""); setAgentDialog({ mode: "new" }); }}
-        onManageAgents={() => { setError(""); setAgentDialog({ mode: "manage" }); }}
-        onToggleHistory={() => setHistoryOpen((open) => !open)}
-        onNewSession={() => void perform(() => window.piBot.newSession())}
-        onOpenSession={(selected) => void perform(() => window.piBot.openSession(selected.path))}
-      />
+    <TooltipProvider>
+      <SidebarProvider asChild open={sidebarOpen} onOpenChange={setSidebarOpen} defaultOpen>
+        <main className="variant-a">
+          <AgentSidebar
+            agents={agents}
+            activeAgentId={activeAgentId}
+            sessions={sessions}
+            activePath={activePath}
+            busy={busy}
+            connecting={connecting}
+            historyOpen={historyOpen}
+            onSelectAgent={onSelectAgent}
+            onNewAgent={() => { setError(""); setAgentDialog({ mode: "new" }); }}
+            onManageAgents={() => { setError(""); setAgentDialog({ mode: "manage" }); }}
+            onToggleHistory={() => setHistoryOpen((open) => !open)}
+            onNewSession={() => void perform(() => window.piBot.newSession())}
+            onOpenSession={(selected) => void perform(() => window.piBot.openSession(selected.path))}
+          />
 
-      <section className="a-conversation">
+          <SidebarInset className="a-conversation">
         <header className="section-header">
           <div>
             <div className="eyebrow">Conversation · {activeAgent.name}</div>
@@ -796,41 +929,43 @@ export function App() {
           </div>
           <span className={busy ? "live-status busy" : "live-status"}><i /> {connecting ? "Connecting" : busy ? "Working" : "Ready"}</span>
         </header>
-        {error && <div className="error-line" role="alert"><strong>Pi Bot needs attention</strong><span>{error}</span></div>}
+        {error && <div className="error-line" role="alert"><CircleAlert /><div><strong>Pi Bot needs attention</strong><span>{error}</span></div></div>}
         <EventRows items={items} assistantLabel={activeAgent.name} assistantInitials={activeAgent.initials} />
         <Composer busy={busy} disabled={interactionDisabled} agentName={activeAgent.name} onPrompt={onPrompt} onAbort={onAbort} />
-      </section>
+          </SidebarInset>
 
-      <ContextPanel
-        agent={activeAgent}
-        config={config}
-        connecting={connecting}
-        busy={busy}
-        onChooseFolder={() => void perform(() => window.piBot.chooseFolder())}
-        onEditAgent={() => { setError(""); setAgentDialog({ mode: "edit", agentId: activeAgent.id }); }}
-        onModelChange={(key) => {
-          window.piBot.setModel(key).then(setConfig).catch((reason) => setError(readableError(reason)));
-        }}
-        onThinkingChange={(level) => {
-          window.piBot.setThinkingLevel(level).then(setConfig).catch((reason) => setError(readableError(reason)));
-        }}
-      />
-      {agentDialog && (
-        <AgentDialog
-          dialog={agentDialog}
-          agents={agents}
-          busy={busy || connecting}
-          error={error}
-          onClose={() => setAgentDialog(null)}
-          onNew={() => { setError(""); setAgentDialog({ mode: "new" }); }}
-          onEdit={(agentId) => { setError(""); setAgentDialog({ mode: "edit", agentId }); }}
-          onCreate={createAgent}
-          onUpdate={updateAgent}
-          onDuplicate={duplicateAgent}
-          onArchive={archiveAgent}
-          onDelete={deleteAgent}
-        />
-      )}
-    </main>
+          <ContextPanel
+            agent={activeAgent}
+            config={config}
+            connecting={connecting}
+            busy={busy}
+            onChooseFolder={() => void perform(() => window.piBot.chooseFolder())}
+            onEditAgent={() => { setError(""); setAgentDialog({ mode: "edit", agentId: activeAgent.id }); }}
+            onModelChange={(key) => {
+              window.piBot.setModel(key).then(setConfig).catch((reason) => setError(readableError(reason)));
+            }}
+            onThinkingChange={(level) => {
+              window.piBot.setThinkingLevel(level).then(setConfig).catch((reason) => setError(readableError(reason)));
+            }}
+          />
+          {agentDialog && (
+            <AgentDialog
+              dialog={agentDialog}
+              agents={agents}
+              busy={busy || connecting}
+              error={error}
+              onClose={() => setAgentDialog(null)}
+              onNew={() => { setError(""); setAgentDialog({ mode: "new" }); }}
+              onEdit={(agentId) => { setError(""); setAgentDialog({ mode: "edit", agentId }); }}
+              onCreate={createAgent}
+              onUpdate={updateAgent}
+              onDuplicate={duplicateAgent}
+              onArchive={archiveAgent}
+              onDelete={deleteAgent}
+            />
+          )}
+        </main>
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }
