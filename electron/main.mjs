@@ -1,11 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
   createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
+  loadSkillsFromDir,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -15,49 +17,50 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
 const codingTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-const builtinAgentProfiles = {
-  planner: {
-    name: "Planner",
-    initials: "PL",
-    description: "Breaks work into clear next steps.",
-    systemPrompt: "You are Planner, a thoughtful planning teammate. Turn the user's request into a clear, practical plan before proposing implementation. Stay concise and use the available coding tools when they help.",
-    builtIn: true,
-    archived: false,
-  },
-  researcher: {
-    name: "Researcher",
-    initials: "RE",
-    description: "Finds evidence and explains what it means.",
-    systemPrompt: "You are Researcher, an evidence-focused teammate. Inspect the selected workspace, trace relevant information, and explain findings with concrete references. Stay concise and use the available coding tools when they help.",
-    builtIn: true,
-    archived: false,
-  },
-  coder: {
-    name: "Coder",
-    initials: "CO",
-    description: "Explains implementation details and trade-offs.",
-    systemPrompt: "You are Coder, an implementation-focused teammate. Inspect the selected workspace, explain how the code works, and make the requested changes directly. Stay concise and use the available coding tools.",
-    builtIn: true,
-    archived: false,
-  },
-};
-const defaultAgentId = "planner";
-let agentProfiles = Object.fromEntries(Object.entries(builtinAgentProfiles).map(([id, profile]) => [id, { id, ...profile }]));
+const settingsVersion = 2;
+const defaultAgentId = "assistant";
 
 let window;
-let workspace = appRoot;
-let preferredModelKey;
-let preferredThinkingLevel;
+let agentProfiles = {};
 let activeAgentId = defaultAgentId;
-let agentSessions = {};
-let sessionAgents = {};
+let setupComplete = false;
+let currentSessions = {};
+let sessionRecords = {};
+let preferredThinkingLevel = "medium";
 let session;
+let sessionManager;
 let unsubscribe;
+let activeRuntimeKey;
+let sessionOperation = Promise.resolve();
+const sessionRuntimes = new Map();
 let modelRuntime;
 let availableModels = [];
+let storedCredentials = {};
+const pendingAuthPrompts = new Map();
+
+function userDataPath(...parts) {
+  return path.join(app.getPath("userData"), ...parts);
+}
 
 function settingsFile() {
-  return path.join(app.getPath("userData"), "settings.json");
+  return userDataPath("settings.json");
+}
+
+function credentialsFile() {
+  return userDataPath("credentials.bin");
+}
+
+function defaultWorkspace(agentId) {
+  return userDataPath("agents", agentId);
+}
+
+function isolatedRuntimeDir(agentId) {
+  return userDataPath("runtime", agentId);
+}
+
+function sessionDirectory(agentId, workspace) {
+  const workspaceKey = createHash("sha256").update(workspace).digest("hex").slice(0, 20);
+  return userDataPath("sessions", agentId, workspaceKey);
 }
 
 function isAgentId(value) {
@@ -66,8 +69,7 @@ function isAgentId(value) {
 
 function cleanText(value, fallback, maxLength = 4000) {
   if (typeof value !== "string") return fallback;
-  const text = value.trim();
-  return text ? text.slice(0, maxLength) : fallback;
+  return value.trim().slice(0, maxLength);
 }
 
 function initialsFor(name) {
@@ -78,123 +80,150 @@ function initialsFor(name) {
     .map((part) => part[0])
     .join("")
     .toUpperCase();
-  return initials || "AI";
+  return initials || "AS";
 }
 
-function normalizeProfile(id, value, { builtIn = false, fallback } = {}) {
-  const base = fallback ?? {};
-  const name = cleanText(value?.name, base.name || "Untitled agent", 80);
-  const systemPrompt = typeof value?.systemPrompt === "string"
-    ? value.systemPrompt.trim().slice(0, 8000)
-    : cleanText(undefined, base.systemPrompt || `You are ${name}, a helpful workspace teammate. Use the available coding tools to read, search, and change files in the selected workspace.`, 8000);
+function defaultAgentProfile() {
   return {
-    id,
-    name,
-    initials: cleanText(value?.initials, base.initials || initialsFor(name), 4).toUpperCase(),
-    description: cleanText(value?.description, base.description || "A focused workspace teammate.", 180),
-    systemPrompt,
-    builtIn,
-    archived: builtIn ? false : Boolean(value?.archived),
+    id: defaultAgentId,
+    name: "Assistant",
+    initials: "AS",
+    instructions: "",
+    workspace: defaultWorkspace(defaultAgentId),
+    workspaceKind: "app",
+    workspaceTrusted: true,
+    defaultModelKey: "",
+    thinkingLevel: preferredThinkingLevel,
+    archived: false,
   };
 }
 
-function loadAgentProfiles(savedAgents) {
-  const next = Object.fromEntries(Object.entries(builtinAgentProfiles).map(([id, profile]) => [id, { id, ...profile }]));
-  const entries = Array.isArray(savedAgents)
-    ? savedAgents.map((value) => [value?.id, value])
-    : savedAgents && typeof savedAgents === "object"
-      ? Object.entries(savedAgents)
-      : [];
-
-  for (const [rawId, value] of entries) {
-    if (typeof rawId !== "string" || !rawId || !value || typeof value !== "object") continue;
-    const existing = next[rawId];
-    next[rawId] = normalizeProfile(rawId, value, {
-      builtIn: Boolean(existing?.builtIn),
-      fallback: existing,
-    });
-  }
-  agentProfiles = next;
-}
-
-function listAgents({ includeArchived = true } = {}) {
-  return Object.values(agentProfiles)
-    .filter((agent) => includeArchived || !agent.archived)
-    .sort((a, b) => Number(b.builtIn) - Number(a.builtIn) || a.name.localeCompare(b.name));
-}
-
-function fallbackAgentId(excludedId) {
-  const candidates = listAgents({ includeArchived: false }).filter((agent) => agent.id !== excludedId);
-  return candidates.find((agent) => agent.id === defaultAgentId)?.id ?? candidates[0]?.id;
-}
-
-function uniqueAgentId(seed) {
-  const base = cleanText(seed, "agent", 48)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "agent";
-  let id = base;
-  let suffix = 2;
-  while (agentProfiles[id]) id = `${base}-${suffix++}`;
-  return id;
-}
-
-function reassignAgentSessions(fromId, toId) {
-  for (const [pathName, agentId] of Object.entries(sessionAgents)) {
-    if (agentId === fromId) sessionAgents[pathName] = toId;
-  }
-  for (const workspaceSessions of Object.values(agentSessions)) {
-    if (!workspaceSessions || typeof workspaceSessions !== "object") continue;
-    for (const [agentId, sessionPath] of Object.entries(workspaceSessions)) {
-      if (agentId === fromId) {
-        delete workspaceSessions[agentId];
-        workspaceSessions[toId] = sessionPath;
-      }
-    }
+function readInstructions(workspace) {
+  const file = path.join(workspace, "AGENTS.md");
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return "";
   }
 }
 
-function currentAgentSessions() {
-  if (!agentSessions[workspace] || typeof agentSessions[workspace] !== "object") {
-    agentSessions[workspace] = {};
-  }
-  return agentSessions[workspace];
+function normalizeProfile(id, value = {}, fallback = {}) {
+  const name = cleanText(value.name, fallback.name || "Untitled agent", 80) || "Untitled agent";
+  const workspace = cleanText(value.workspace, fallback.workspace || defaultWorkspace(id), 2000) || defaultWorkspace(id);
+  const workspaceKind = value.workspaceKind === "external" || fallback.workspaceKind === "external" ? "external" : "app";
+  return {
+    id,
+    name,
+    initials: (cleanText(value.initials, fallback.initials || initialsFor(name), 4) || initialsFor(name)).toUpperCase(),
+    instructions: typeof value.instructions === "string" ? value.instructions.slice(0, 20000) : readInstructions(workspace),
+    workspace,
+    workspaceKind,
+    workspaceTrusted: workspaceKind === "app" || value.workspaceTrusted === true || fallback.workspaceTrusted === true,
+    defaultModelKey: cleanText(value.defaultModelKey ?? value.modelKey, fallback.defaultModelKey || "", 240),
+    thinkingLevel: thinkingLevels.includes(value.thinkingLevel) ? value.thinkingLevel : fallback.thinkingLevel || preferredThinkingLevel,
+    archived: Boolean(value.archived),
+  };
 }
 
 function loadSettings() {
+  agentProfiles = { [defaultAgentId]: defaultAgentProfile() };
+  activeAgentId = defaultAgentId;
+  setupComplete = false;
+  currentSessions = {};
+  sessionRecords = {};
   try {
     const saved = JSON.parse(readFileSync(settingsFile(), "utf8"));
-    loadAgentProfiles(saved.agents);
-    if (typeof saved.workspace === "string" && existsSync(saved.workspace)) workspace = saved.workspace;
-    if (typeof saved.modelKey === "string") preferredModelKey = saved.modelKey;
-    if (thinkingLevels.includes(saved.thinkingLevel)) preferredThinkingLevel = saved.thinkingLevel;
-    if (isAgentId(saved.activeAgentId) && !agentProfiles[saved.activeAgentId].archived) activeAgentId = saved.activeAgentId;
-    if (saved.agentSessions && typeof saved.agentSessions === "object") {
-      const values = Object.values(saved.agentSessions);
-      const isLegacyFlatMap = values.some((value) => typeof value === "string");
-      agentSessions = isLegacyFlatMap ? { [workspace]: saved.agentSessions } : saved.agentSessions;
+    if (saved?.schemaVersion !== settingsVersion) return;
+
+    const entries = Array.isArray(saved.agents)
+      ? saved.agents.map((value) => [value?.id, value])
+      : saved.agents && typeof saved.agents === "object"
+        ? Object.entries(saved.agents)
+        : [];
+    const next = {};
+    for (const [rawId, value] of entries) {
+      if (typeof rawId !== "string" || !rawId || !value || typeof value !== "object") continue;
+      next[rawId] = normalizeProfile(rawId, value, rawId === defaultAgentId ? defaultAgentProfile() : {});
     }
-    if (saved.sessionAgents && typeof saved.sessionAgents === "object") sessionAgents = saved.sessionAgents;
+    if (Object.keys(next).length > 0) agentProfiles = next;
+    if (!agentProfiles[defaultAgentId] && Object.keys(agentProfiles).length === 0) {
+      agentProfiles = { [defaultAgentId]: defaultAgentProfile() };
+    }
+    if (typeof saved.activeAgentId === "string" && isAgentId(saved.activeAgentId)) activeAgentId = saved.activeAgentId;
+    else if (!isAgentId(activeAgentId)) activeAgentId = Object.keys(agentProfiles)[0] ?? null;
+    setupComplete = Boolean(saved.setupComplete);
+    if (thinkingLevels.includes(saved.thinkingLevel)) preferredThinkingLevel = saved.thinkingLevel;
+    if (saved.currentSessions && typeof saved.currentSessions === "object") currentSessions = saved.currentSessions;
+    if (saved.sessionRecords && typeof saved.sessionRecords === "object") sessionRecords = saved.sessionRecords;
   } catch {
-    // A missing or incomplete settings file is the normal first-run state.
+    // A missing file, or a pre-v2 file, starts with a clean Assistant profile.
   }
 }
 
 function saveSettings() {
   try {
+    mkdirSync(app.getPath("userData"), { recursive: true });
     writeFileSync(settingsFile(), JSON.stringify({
-      workspace,
-      modelKey: preferredModelKey,
-      thinkingLevel: preferredThinkingLevel,
+      schemaVersion: settingsVersion,
+      setupComplete,
       activeAgentId,
-      agentSessions,
-      sessionAgents,
-      agents: listAgents(),
+      thinkingLevel: preferredThinkingLevel,
+      currentSessions,
+      sessionRecords,
+      agents: Object.values(agentProfiles),
     }, null, 2));
   } catch (error) {
     console.warn("Could not save Pi Bot settings:", error);
   }
 }
+
+function loadCredentials() {
+  storedCredentials = {};
+  try {
+    const encoded = readFileSync(credentialsFile(), "utf8");
+    const decoded = safeStorage.isEncryptionAvailable()
+      ? safeStorage.decryptString(Buffer.from(encoded, "base64"))
+      : encoded;
+    const parsed = JSON.parse(decoded);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) storedCredentials = parsed;
+  } catch {
+    // No credentials is the normal first-run state.
+  }
+}
+
+function saveCredentials() {
+  mkdirSync(app.getPath("userData"), { recursive: true });
+  const content = JSON.stringify(storedCredentials);
+  if (safeStorage.isEncryptionAvailable()) {
+    writeFileSync(credentialsFile(), safeStorage.encryptString(content).toString("base64"), { mode: 0o600 });
+  } else {
+    writeFileSync(credentialsFile(), content, { mode: 0o600 });
+  }
+}
+
+const credentialStore = {
+  async read(providerId) {
+    return storedCredentials[providerId];
+  },
+  async list() {
+    return Object.entries(storedCredentials).map(([providerId, credential]) => ({
+      providerId,
+      type: credential?.type === "oauth" ? "oauth" : "api_key",
+    }));
+  },
+  async modify(providerId, fn) {
+    const next = await fn(storedCredentials[providerId]);
+    if (next !== undefined) {
+      storedCredentials[providerId] = next;
+      saveCredentials();
+    }
+    return storedCredentials[providerId];
+  },
+  async delete(providerId) {
+    delete storedCredentials[providerId];
+    saveCredentials();
+  },
+};
 
 function send(payload) {
   window?.webContents.send("pi:event", payload);
@@ -211,19 +240,13 @@ function stringify(value) {
 function messageText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content.map((part) => {
-    if (part?.type === "text") return part.text;
-    if (part?.type === "thinking") return "";
-    if (part?.type === "toolCall") return "";
-    return "";
-  }).filter(Boolean).join("\n");
+  return content.map((part) => part?.type === "text" ? part.text : "").filter(Boolean).join("\n");
 }
 
 function displayTime(timestamp) {
   return new Intl.DateTimeFormat("en", {
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
   }).format(new Date(timestamp));
 }
 
@@ -237,45 +260,79 @@ function modelOption(model) {
     id: model.id,
     name: model.name ?? model.id,
     provider: model.provider,
+    reasoning: Boolean(model.reasoning),
+    contextWindow: model.contextWindow ?? 0,
   };
 }
 
 function titleFromPrompt(prompt) {
   const compact = prompt.replace(/\s+/g, " ").trim();
   if (!compact) return "New conversation";
-  return compact.length > 52 ? `${compact.slice(0, 49)}…` : compact;
+  return compact.length > 58 ? `${compact.slice(0, 55)}…` : compact;
 }
 
-function transcriptFromSession() {
-  if (!session) return [];
+function listAgents({ includeArchived = true } = {}) {
+  return Object.values(agentProfiles)
+    .filter((agent) => includeArchived || !agent.archived)
+    .map((agent) => ({ ...agent, instructions: readInstructions(agent.workspace) }))
+    .sort((a, b) => Number(a.archived) - Number(b.archived) || a.name.localeCompare(b.name));
+}
 
+function fallbackAgentId(excludedId) {
+  return listAgents({ includeArchived: false }).find((agent) => agent.id !== excludedId)?.id ?? null;
+}
+
+function uniqueAgentId(seed) {
+  const base = cleanText(seed, "agent", 48)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "agent";
+  let id = base;
+  let suffix = 2;
+  while (agentProfiles[id]) id = `${base}-${suffix++}`;
+  return id;
+}
+
+function ensureWorkspace(profile) {
+  mkdirSync(profile.workspace, { recursive: true });
+  const agentsFile = path.join(profile.workspace, "AGENTS.md");
+  if (!existsSync(agentsFile)) writeFileSync(agentsFile, "");
+  mkdirSync(path.join(profile.workspace, ".agents", "skills"), { recursive: true });
+}
+
+function ensureAllWorkspaces() {
+  for (const profile of Object.values(agentProfiles)) {
+    try {
+      ensureWorkspace(profile);
+    } catch (error) {
+      console.warn(`Could not prepare workspace for ${profile.name}:`, error);
+    }
+  }
+}
+
+function activeProfile() {
+  return isAgentId(activeAgentId) ? agentProfiles[activeAgentId] : undefined;
+}
+
+function transcriptFromManager(manager, profile = activeProfile()) {
+  if (!manager) return [];
   const items = [];
   const toolRows = new Map();
-  const entries = session.sessionManager.buildContextEntries();
-
-  for (const entry of entries) {
+  for (const entry of manager.buildContextEntries()) {
     if (entry.type !== "message") continue;
     const message = entry.message;
     const timestamp = displayTime(message.timestamp);
-
     if (message.role === "user") {
-      items.push({
-        id: entry.id,
-        kind: "user",
-        label: "You",
-        body: messageText(message.content),
-        timestamp,
-      });
+      items.push({ id: entry.id, kind: "user", label: "You", body: messageText(message.content), timestamp });
       continue;
     }
-
     if (message.role === "assistant") {
       const body = messageText(message.content);
       if (body || message.errorMessage) {
         items.push({
           id: entry.id,
           kind: "assistant",
-          label: "Pi Bot",
+          label: profile?.name ?? "Assistant",
           body: body || message.errorMessage,
           timestamp,
           status: message.errorMessage ? "failed" : "done",
@@ -283,20 +340,12 @@ function transcriptFromSession() {
       }
       for (const part of message.content ?? []) {
         if (part?.type !== "toolCall") continue;
-        const tool = {
-          id: part.id,
-          kind: "tool",
-          label: `Tool · ${part.name}`,
-          body: stringify(part.arguments),
-          timestamp,
-          status: "done",
-        };
+        const tool = { id: part.id, kind: "tool", label: `Tool · ${part.name}`, body: stringify(part.arguments), timestamp, status: "done" };
         items.push(tool);
         toolRows.set(part.id, tool);
       }
       continue;
     }
-
     if (message.role === "toolResult") {
       const tool = toolRows.get(message.toolCallId);
       const body = messageText(message.content);
@@ -315,16 +364,15 @@ function transcriptFromSession() {
       }
     }
   }
-
   return items;
 }
 
-function sessionSummary(info) {
-  const assignedAgentId = isAgentId(sessionAgents[info.path]) ? sessionAgents[info.path] : defaultAgentId;
+function sessionSummary(info, agentId, workspace) {
   return {
     path: info.path,
     id: info.id,
-    agentId: assignedAgentId,
+    agentId,
+    workspace,
     name: info.name || titleFromPrompt(info.firstMessage || "New conversation"),
     created: info.created instanceof Date ? info.created.toISOString() : info.created,
     modified: info.modified instanceof Date ? info.modified.toISOString() : info.modified,
@@ -333,333 +381,691 @@ function sessionSummary(info) {
 }
 
 async function listSessions(agentId = activeAgentId) {
-  const sessions = await SessionManager.list(workspace);
-  return sessions
-    .filter((info) => info.messageCount > 0 && (sessionAgents[info.path] ?? defaultAgentId) === agentId)
-    .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
-    .map(sessionSummary);
+  const profile = isAgentId(agentId) ? agentProfiles[agentId] : undefined;
+  if (!profile) return [];
+  const dir = sessionDirectory(agentId, profile.workspace);
+  try {
+    return (await SessionManager.list(profile.workspace, dir))
+      .filter((info) => info.messageCount > 0)
+      .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
+      .map((info) => {
+        sessionRecords[info.path] = { agentId, workspace: profile.workspace };
+        return sessionSummary(info, agentId, profile.workspace);
+      });
+  } catch {
+    return [];
+  }
 }
 
-function currentSessionSummary() {
-  if (!session) return null;
-  const manager = session.sessionManager;
+async function sessionsByAgent() {
+  const result = {};
+  for (const profile of listAgents({ includeArchived: false })) result[profile.id] = await listSessions(profile.id);
+  return result;
+}
+
+function activeRuntime() {
+  return activeRuntimeKey ? sessionRuntimes.get(activeRuntimeKey) : undefined;
+}
+
+function activateRuntime(runtime) {
+  activeAgentId = runtime.agentId;
+  activeRuntimeKey = runtime.key;
+  session = runtime.session;
+  sessionManager = runtime.sessionManager;
+  unsubscribe = runtime.unsubscribe;
+}
+
+function clearActiveRuntime() {
+  activeRuntimeKey = undefined;
+  session = undefined;
+  sessionManager = undefined;
+  unsubscribe = undefined;
+}
+
+function transcriptForRuntime(runtime) {
+  return runtime?.transcript ?? transcriptFromManager(runtime?.sessionManager, agentProfiles[runtime?.agentId]);
+}
+
+function currentSessionSummary(runtime = activeRuntime()) {
+  const manager = runtime?.sessionManager ?? sessionManager;
+  const currentSession = runtime?.session ?? session;
+  if (!manager) return null;
   const entries = manager.getEntries();
   const firstUser = entries.find((entry) => entry.type === "message" && entry.message.role === "user");
   return {
     path: manager.getSessionFile(),
     id: manager.getSessionId(),
-    agentId: activeAgentId,
-    name: session.sessionName || manager.getSessionName() || (firstUser ? titleFromPrompt(messageText(firstUser.message.content)) : "New conversation"),
+    name: currentSession?.sessionName || manager.getSessionName() || (firstUser ? titleFromPrompt(messageText(firstUser.message.content)) : "New conversation"),
   };
 }
 
-function currentConfig() {
-  const currentModel = session?.model;
+function currentSavedModel(manager = activeRuntime()?.sessionManager ?? sessionManager) {
+  const saved = manager?.buildSessionContext().model;
+  if (!saved) return undefined;
+  return modelRuntime?.getModel(saved.provider, saved.modelId);
+}
+
+function currentConfig(runtime = activeRuntime()) {
+  const profile = activeProfile();
+  const currentSession = runtime?.session ?? session;
+  const manager = runtime?.sessionManager ?? sessionManager;
+  const currentModel = currentSession?.model ?? currentSavedModel(manager);
+  const currentKey = modelKey(currentModel) || profile?.defaultModelKey || "";
+  const available = availableModels.some((model) => modelKey(model) === currentKey);
+  const contextUsage = currentSession?.getContextUsage?.();
+  const contextWindow = contextUsage?.contextWindow ?? currentModel?.contextWindow ?? 0;
   return {
     agentId: activeAgentId,
-    workspace,
-    model: currentModel?.name ?? currentModel?.id ?? "No model",
-    modelKey: modelKey(currentModel),
-    provider: currentModel?.provider ?? "",
-    thinkingLevel: session?.thinkingLevel ?? "off",
-    availableThinkingLevels: session?.getAvailableThinkingLevels?.() ?? [],
+    workspace: profile?.workspace ?? "",
+    workspaceKind: profile?.workspaceKind ?? "",
+    workspaceTrusted: profile?.workspaceTrusted ?? false,
+    model: currentModel?.name ?? (currentKey ? "Model unavailable" : "No model selected"),
+    modelKey: currentKey,
+    defaultModelKey: profile?.defaultModelKey ?? "",
+    modelAvailable: available,
+    provider: currentModel?.provider ?? currentKey.split("/")[0] ?? "",
+    thinkingLevel: currentSession?.thinkingLevel ?? profile?.thinkingLevel ?? preferredThinkingLevel,
+    availableThinkingLevels: currentSession?.getAvailableThinkingLevels?.() ?? (currentModel?.reasoning ? thinkingLevels : ["off"]),
+    streaming: Boolean(currentSession?.isStreaming),
+    context: {
+      tokens: contextUsage?.tokens ?? null,
+      contextWindow,
+      percent: contextUsage?.percent ?? null,
+    },
     models: availableModels.map(modelOption),
     tools: codingTools,
-    session: currentSessionSummary(),
+    session: currentSessionSummary(runtime),
+  };
+}
+
+function authProviders() {
+  return (modelRuntime?.getProviders?.() ?? []).map((provider) => {
+    const status = modelRuntime.getProviderAuthStatus(provider.id);
+    const methods = [];
+    if (provider.auth?.apiKey) methods.push("api_key");
+    if (provider.auth?.oauth) methods.push("oauth");
+    if (methods.length === 0 && status.configured) methods.push("api_key");
+    return {
+      id: provider.id,
+      name: provider.name ?? provider.id,
+      methods,
+      configured: Boolean(status.configured),
+      source: status.source,
+      label: status.label,
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function piAuthFile() {
+  return path.join(getAgentDir(), "auth.json");
+}
+
+function importablePiCredentials() {
+  try {
+    const parsed = JSON.parse(readFileSync(piAuthFile(), "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function setupState() {
+  return {
+    required: !setupComplete,
+    canImportPiAuth: !setupComplete && Object.keys(importablePiCredentials()).length > 0,
+    piAuthPath: piAuthFile(),
+    credentialStorage: safeStorage.isEncryptionAvailable() ? "os-keychain" : "protected-app-file",
+    providers: authProviders(),
   };
 }
 
 async function bootstrap() {
+  const profile = activeProfile();
+  const runtime = activeRuntime();
   return {
-    config: currentConfig(),
-    transcript: transcriptFromSession(),
+    config: currentConfig(runtime),
+    transcript: runtime ? transcriptForRuntime(runtime) : transcriptFromManager(sessionManager, profile),
     sessions: await listSessions(activeAgentId),
+    sessionsByAgent: await sessionsByAgent(),
     agents: listAgents(),
+    setup: setupState(),
+    authenticated: availableModels.length > 0,
+    activeAgentId,
+    profile,
   };
 }
 
-function relay(event) {
-  if (
-    event.type === "message_update" &&
-    event.assistantMessageEvent.type === "text_delta"
-  ) {
-    send({ type: "assistant-delta", delta: event.assistantMessageEvent.delta });
-  }
-
-  if (event.type === "tool_execution_start") {
-    send({
-      type: "tool-start",
-      id: event.toolCallId,
-      name: event.toolName,
-      detail: stringify(event.args),
-    });
-  }
-
-  if (event.type === "tool_execution_update") {
-    send({
-      type: "tool-update",
-      id: event.toolCallId,
-      detail: stringify(event.partialResult),
-    });
-  }
-
-  if (event.type === "tool_execution_end") {
-    send({
-      type: "tool-end",
-      id: event.toolCallId,
-      failed: event.isError,
-      detail: stringify(event.result),
-    });
-  }
-
-  if (event.type === "turn_end" && event.message?.role === "assistant" && event.message.errorMessage) {
-    if (event.message.stopReason === "aborted") {
-      send({ type: "aborted" });
+function updateRuntimeTranscript(runtime, event) {
+  runtime.transcript ??= transcriptFromManager(runtime.sessionManager, agentProfiles[runtime.agentId]);
+  if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+    const last = runtime.transcript.at(-1);
+    if (last?.kind === "assistant" && last.status === "running") {
+      last.body = `${last.body}${event.assistantMessageEvent.delta}`;
     } else {
-      send({ type: "error", message: event.message.errorMessage });
+      runtime.transcript.push({
+        id: `assistant-${Date.now()}`,
+        kind: "assistant",
+        label: agentProfiles[runtime.agentId]?.name ?? "Assistant",
+        body: event.assistantMessageEvent.delta,
+        status: "running",
+        timestamp: displayTime(Date.now()),
+      });
     }
   }
+  if (event.type === "tool_execution_start") {
+    runtime.transcript.push({
+      id: event.toolCallId,
+      kind: "tool",
+      label: `Tool · ${event.toolName}`,
+      body: stringify(event.args),
+      status: "running",
+      timestamp: displayTime(Date.now()),
+    });
+  }
+  if (event.type === "tool_execution_update") {
+    const item = runtime.transcript.find((entry) => entry.id === event.toolCallId);
+    if (item) item.body = stringify(event.partialResult);
+  }
+  if (event.type === "tool_execution_end") {
+    const item = runtime.transcript.find((entry) => entry.id === event.toolCallId);
+    if (item) {
+      item.body = stringify(event.result);
+      item.status = event.isError ? "failed" : "done";
+    }
+  }
+  if (event.type === "agent_settled" || event.type === "aborted" || (event.type === "agent_end" && !event.willRetry)) {
+    runtime.transcript = transcriptFromManager(runtime.sessionManager, agentProfiles[runtime.agentId]);
+  }
+}
 
+async function sendSessionSync(runtime) {
+  if (!runtime || runtime.key !== activeRuntimeKey) return;
+  const key = runtime.key;
+  const sessions = await listSessions(runtime.agentId);
+  const grouped = await sessionsByAgent();
+  if (activeRuntimeKey !== key) return;
+  send({
+    type: "session-sync",
+    transcript: transcriptForRuntime(runtime),
+    sessions,
+    sessionsByAgent: grouped,
+    config: currentConfig(runtime),
+    agents: listAgents(),
+    setup: setupState(),
+    authenticated: availableModels.length > 0,
+    activeAgentId: runtime.agentId,
+  });
+}
+
+function relay(runtime, event) {
+  updateRuntimeTranscript(runtime, event);
+  if (runtime.key !== activeRuntimeKey) return;
+  if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+    send({ type: "assistant-delta", delta: event.assistantMessageEvent.delta });
+  }
+  if (event.type === "tool_execution_start") {
+    send({ type: "tool-start", id: event.toolCallId, name: event.toolName, detail: stringify(event.args) });
+  }
+  if (event.type === "tool_execution_update") {
+    send({ type: "tool-update", id: event.toolCallId, detail: stringify(event.partialResult) });
+  }
+  if (event.type === "tool_execution_end") {
+    send({ type: "tool-end", id: event.toolCallId, failed: event.isError, detail: stringify(event.result) });
+  }
+  if (event.type === "turn_end" && event.message?.role === "assistant" && event.message.errorMessage) {
+    if (event.message.stopReason === "aborted") send({ type: "aborted" });
+    else send({ type: "error", message: event.message.errorMessage });
+  }
   if (event.type === "agent_start") send({ type: "agent-start" });
   if (event.type === "agent_end") send({ type: "agent-end", retrying: event.willRetry });
   if (event.type === "agent_settled") send({ type: "agent-settled" });
 }
 
-async function ensureRuntime() {
-  modelRuntime ??= await ModelRuntime.create();
-  availableModels = [...await modelRuntime.getAvailable()];
-  if (availableModels.length === 0) {
-    throw new Error("No authenticated Pi model found. Run `pi` once and sign in to a provider.");
+async function refreshRuntime() {
+  modelRuntime ??= await ModelRuntime.create({ credentials: credentialStore, refreshOnCreate: false });
+  try {
+    await modelRuntime.refresh({ allowNetwork: false });
+  } catch {
+    // Static models and stored credentials remain usable when a catalog refresh fails.
   }
+  try {
+    availableModels = [...await modelRuntime.getAvailable()];
+  } catch {
+    availableModels = [];
+  }
+  return modelRuntime;
 }
 
-async function createSession({ mode = "continue", sessionPath, agentId = activeAgentId } = {}) {
-  if (!isAgentId(agentId)) throw new Error("Invalid agent.");
-  if (agentProfiles[agentId].archived) throw new Error("That agent is archived. Restore it before selecting it.");
-  activeAgentId = agentId;
-  await session?.abort();
-  unsubscribe?.();
-  session?.dispose();
+async function closeCurrentSession() {
+  const runtime = activeRuntime();
+  if (!runtime) {
+    clearActiveRuntime();
+    return;
+  }
+  await disposeRuntime(runtime.key);
+}
 
-  await ensureRuntime();
+async function disposeRuntime(key) {
+  const runtime = sessionRuntimes.get(key);
+  if (!runtime) return;
+  await runtime.session?.abort().catch(() => {});
+  runtime.unsubscribe?.();
+  runtime.session?.dispose();
+  sessionRuntimes.delete(key);
+  if (activeRuntimeKey === key) clearActiveRuntime();
+}
 
-  const mappedPath = currentAgentSessions()[agentId];
-  const mappedPathExists = typeof mappedPath === "string" && existsSync(mappedPath);
-  const manager = mode === "open"
-    ? SessionManager.open(sessionPath)
-    : mode === "new"
-      ? SessionManager.create(workspace)
-      : mappedPathExists
-        ? SessionManager.open(mappedPath)
-        : agentId === defaultAgentId
-          ? SessionManager.continueRecent(workspace)
-          : SessionManager.create(workspace);
+async function closeAgentSessions(agentId) {
+  const keys = [...sessionRuntimes.values()]
+    .filter((runtime) => runtime.agentId === agentId)
+    .map((runtime) => runtime.key);
+  for (const key of keys) await disposeRuntime(key);
+}
 
-  const savedModel = manager.buildSessionContext().model;
-  const savedModelObject = savedModel
-    ? modelRuntime.getModel(savedModel.provider, savedModel.modelId)
-    : undefined;
-  const preferredModel = preferredModelKey
-    ? availableModels.find((model) => modelKey(model) === preferredModelKey)
-    : undefined;
-  const selectedModel = preferredModel || savedModelObject || availableModels[0];
-  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false } });
-  const resourceLoader = new DefaultResourceLoader({
-    cwd: workspace,
-    agentDir: getAgentDir(),
-    settingsManager,
+async function createResourceLoader(profile) {
+  const skillResult = profile.workspaceTrusted
+    ? loadSkillsFromDir({ dir: path.join(profile.workspace, ".agents", "skills"), source: "agent-workspace" })
+    : { skills: [], diagnostics: [] };
+  const agentsFile = path.join(profile.workspace, "AGENTS.md");
+  const loader = new DefaultResourceLoader({
+    cwd: profile.workspace,
+    agentDir: isolatedRuntimeDir(profile.id),
+    settingsManager: SettingsManager.inMemory(),
     noExtensions: true,
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
-    systemPrompt: agentProfiles[agentId].systemPrompt
-      ? agentProfiles[agentId].systemPrompt
-      : "You are a coding teammate. Use the available tools (read, bash, edit, write, grep, find, ls) to inspect and change the selected workspace.",
+    systemPrompt: "You are a helpful coding teammate. Work directly in the selected agent workspace using the available tools. Be clear and concise.",
+    skillsOverride: () => skillResult,
+    agentsFilesOverride: () => ({
+      agentsFiles: [{ path: agentsFile, content: readInstructions(profile.workspace) }],
+    }),
   });
-  await resourceLoader.reload();
+  await loader.reload();
+  return loader;
+}
 
+function selectedModelFor(profile, manager, mode) {
+  const saved = manager.buildSessionContext().model;
+  if (saved) {
+    const savedKey = `${saved.provider}/${saved.modelId}`;
+    return availableModels.find((model) => modelKey(model) === savedKey);
+  }
+  if (profile.defaultModelKey) return availableModels.find((model) => modelKey(model) === profile.defaultModelKey);
+  if (mode === "new" || mode === "continue") return availableModels[0];
+  return undefined;
+}
+
+async function openSession({ mode = "continue", sessionPath, agentId = activeAgentId } = {}) {
+  if (agentId !== null && !isAgentId(agentId)) throw new Error("Invalid agent.");
+  if (!agentId) {
+    await closeCurrentSession();
+    activeAgentId = null;
+    saveSettings();
+    return bootstrap();
+  }
+  const profile = agentProfiles[agentId];
+  if (profile.archived) throw new Error("That agent is archived. Restore it before selecting it.");
+  ensureWorkspace(profile);
+  await refreshRuntime();
+
+  const dir = sessionDirectory(agentId, profile.workspace);
+  mkdirSync(dir, { recursive: true });
+  const mappedPath = currentSessions[agentId];
+  const mappedPathExists = typeof mappedPath === "string" && existsSync(mappedPath);
+  const requestedPath = mode === "open" ? sessionPath : mode === "continue" && mappedPathExists ? mappedPath : undefined;
+  const existingRuntime = requestedPath ? sessionRuntimes.get(requestedPath) : undefined;
+  if (existingRuntime) {
+    currentSessions[agentId] = requestedPath;
+    activateRuntime(existingRuntime);
+    saveSettings();
+    return bootstrap();
+  }
+  const manager = mode === "open"
+    ? SessionManager.open(sessionPath, dir, profile.workspace)
+    : mode === "new"
+      ? SessionManager.create(profile.workspace, dir)
+      : mappedPathExists
+        ? SessionManager.open(mappedPath, dir, profile.workspace)
+        : SessionManager.continueRecent(profile.workspace, dir);
+
+  const sessionFile = manager.getSessionFile();
+  if (sessionFile) {
+    currentSessions[agentId] = sessionFile;
+    sessionRecords[sessionFile] = { agentId, workspace: profile.workspace };
+  }
+  const selectedModel = selectedModelFor(profile, manager, mode);
+  if (!selectedModel) {
+    activeAgentId = agentId;
+    clearActiveRuntime();
+    sessionManager = manager;
+    saveSettings();
+    return bootstrap();
+  }
+
+  const resourceLoader = await createResourceLoader(profile);
   const result = await createAgentSession({
-    cwd: workspace,
+    cwd: profile.workspace,
+    agentDir: isolatedRuntimeDir(profile.id),
     modelRuntime,
     model: selectedModel,
-    thinkingLevel: preferredThinkingLevel,
+    thinkingLevel: profile.thinkingLevel,
     tools: codingTools,
     sessionManager: manager,
-    settingsManager,
+    settingsManager: SettingsManager.inMemory(),
     resourceLoader,
   });
-
-  session = result.session;
-  unsubscribe = session.subscribe(relay);
-  const sessionFile = session.sessionManager.getSessionFile();
-  currentAgentSessions()[agentId] = sessionFile;
-  sessionAgents[sessionFile] = agentId;
-  preferredModelKey = modelKey(session.model) || preferredModelKey;
+  const runtime = {
+    key: sessionFile ?? `${agentId}:${manager.getSessionId()}`,
+    agentId,
+    workspace: profile.workspace,
+    session: result.session,
+    sessionManager: manager,
+    transcript: transcriptFromManager(manager, profile),
+  };
+  runtime.unsubscribe = runtime.session.subscribe((event) => relay(runtime, event));
+  sessionRuntimes.set(runtime.key, runtime);
+  activeAgentId = agentId;
+  activateRuntime(runtime);
+  if (!profile.defaultModelKey && runtime.session.model) {
+    profile.defaultModelKey = modelKey(runtime.session.model);
+  }
   saveSettings();
   return bootstrap();
 }
 
-ipcMain.handle("pi:connect", () => createSession());
+function createSession(options = {}) {
+  const operation = sessionOperation.then(() => openSession(options), () => openSession(options));
+  sessionOperation = operation.catch(() => undefined);
+  return operation;
+}
+
+async function finishSetup() {
+  await refreshRuntime();
+  if (availableModels.length === 0) throw new Error("Add a provider credential before continuing.");
+  setupComplete = true;
+  ensureAllWorkspaces();
+  saveSettings();
+  return createSession({ agentId: activeAgentId || defaultAgentId });
+}
+
+async function respondToAuthPrompt(promptId, value) {
+  const pending = pendingAuthPrompts.get(promptId);
+  if (!pending) return;
+  pendingAuthPrompts.delete(promptId);
+  pending.resolve(String(value ?? ""));
+}
+
+function authInteraction() {
+  return {
+    prompt: (prompt) => new Promise((resolve, reject) => {
+      const id = randomUUID();
+      pendingAuthPrompts.set(id, { resolve, reject });
+      send({ type: "auth-prompt", id, prompt });
+    }),
+    notify: (event) => {
+      if (event.type === "auth_url") void shell.openExternal(event.url);
+      send({ type: "auth-notify", event });
+    },
+  };
+}
+
+ipcMain.handle("pi:connect", async () => {
+  await refreshRuntime();
+  if (!setupComplete && (availableModels.length === 0 || setupState().canImportPiAuth)) return bootstrap();
+  if (!setupComplete) return finishSetup();
+  return createSession({ agentId: activeAgentId });
+});
 
 ipcMain.handle("pi:select-agent", async (_event, agentId) => {
-  if (!isAgentId(agentId)) throw new Error("Invalid agent.");
-  const previousAgentId = activeAgentId;
-  try {
-    return await createSession({ agentId });
-  } catch (error) {
-    activeAgentId = previousAgentId;
-    throw error;
-  }
+  if (!isAgentId(agentId) || agentProfiles[agentId].archived) throw new Error("That agent is not available.");
+  return createSession({ agentId });
 });
 
 ipcMain.handle("pi:create-agent", async (_event, draft) => {
   if (!draft || typeof draft !== "object") throw new Error("Invalid agent profile.");
-  const template = isAgentId(draft.templateId) ? agentProfiles[draft.templateId] : undefined;
-  const id = uniqueAgentId(draft.name);
-  agentProfiles[id] = normalizeProfile(id, draft, { fallback: template });
+  const name = cleanText(draft.name, "", 80);
+  if (!name) throw new Error("Give the agent a name first.");
+  const id = uniqueAgentId(name);
+  const assistant = agentProfiles[defaultAgentId];
+  const profile = normalizeProfile(id, {
+    name,
+    initials: draft.initials,
+    instructions: "",
+    defaultModelKey: assistant?.defaultModelKey || "",
+    workspace: defaultWorkspace(id),
+    workspaceKind: "app",
+    workspaceTrusted: true,
+  });
+  agentProfiles[id] = profile;
+  ensureWorkspace(profile);
+  activeAgentId = id;
   saveSettings();
-  return bootstrap();
+  return setupComplete ? createSession({ agentId: id }) : bootstrap();
 });
 
-ipcMain.handle("pi:update-agent", async (_event, profile) => {
-  if (!profile || typeof profile !== "object" || !isAgentId(profile.id)) {
-    throw new Error("Invalid agent profile.");
-  }
-  const current = agentProfiles[profile.id];
-  agentProfiles[profile.id] = normalizeProfile(profile.id, profile, {
-    builtIn: current.builtIn,
-    fallback: current,
-  });
-  if (!current.builtIn) agentProfiles[profile.id].archived = current.archived;
-  saveSettings();
-  if (activeAgentId === profile.id && !session?.isStreaming) {
-    return createSession({ agentId: profile.id });
-  }
-  return bootstrap();
-});
-
-ipcMain.handle("pi:duplicate-agent", async (_event, agentId) => {
-  if (!isAgentId(agentId)) throw new Error("Invalid agent.");
-  const source = agentProfiles[agentId];
-  const id = uniqueAgentId(source.name);
-  agentProfiles[id] = normalizeProfile(id, {
-    ...source,
-    name: `${source.name} Copy`,
-    archived: false,
-  });
+ipcMain.handle("pi:update-agent", async (_event, value) => {
+  if (!value || typeof value !== "object" || !isAgentId(value.id)) throw new Error("Invalid agent profile.");
+  if (session?.isStreaming && value.id === activeAgentId) throw new Error("Wait for the response to finish before changing this agent.");
+  const current = agentProfiles[value.id];
+  const next = normalizeProfile(value.id, {
+    ...current,
+    ...value,
+    workspace: current.workspace,
+    workspaceKind: current.workspaceKind,
+    workspaceTrusted: current.workspaceTrusted,
+  }, current);
+  agentProfiles[value.id] = next;
+  ensureWorkspace(next);
+  writeFileSync(path.join(next.workspace, "AGENTS.md"), next.instructions ?? "");
   saveSettings();
   return bootstrap();
 });
 
 ipcMain.handle("pi:archive-agent", async (_event, agentId, archived) => {
   if (!isAgentId(agentId)) throw new Error("Invalid agent.");
-  const profile = agentProfiles[agentId];
-  if (profile.builtIn) throw new Error("Built-in agents are always available and cannot be archived.");
-  const nextArchived = Boolean(archived);
-  if (nextArchived && activeAgentId === agentId) {
+  if (session?.isStreaming && agentId === activeAgentId) throw new Error("Wait for the response to finish first.");
+  agentProfiles[agentId].archived = Boolean(archived);
+  if (agentProfiles[agentId].archived && activeAgentId === agentId) {
     const fallback = fallbackAgentId(agentId);
-    if (!fallback) throw new Error("Keep at least one active agent.");
-    profile.archived = true;
-    saveSettings();
-    return createSession({ agentId: fallback });
+    if (fallback) return createSession({ agentId: fallback });
+    await closeCurrentSession();
+    activeAgentId = null;
   }
-  profile.archived = nextArchived;
+  if (!agentProfiles[agentId].archived && !activeAgentId) return createSession({ agentId });
   saveSettings();
   return bootstrap();
 });
 
-ipcMain.handle("pi:delete-agent", async (_event, agentId) => {
+ipcMain.handle("pi:delete-agent", async (_event, agentId, deleteWorkspace = false) => {
   if (!isAgentId(agentId)) throw new Error("Invalid agent.");
+  if (session?.isStreaming && agentId === activeAgentId) throw new Error("Wait for the response to finish first.");
   const profile = agentProfiles[agentId];
-  if (profile.builtIn) throw new Error("Built-in agents are templates and cannot be deleted.");
-  const fallback = fallbackAgentId(agentId);
-  if (!fallback) throw new Error("Keep at least one agent.");
-  reassignAgentSessions(agentId, fallback);
-  delete agentProfiles[agentId];
-  if (activeAgentId === agentId) {
-    return createSession({ agentId: fallback });
+  await closeAgentSessions(agentId);
+  if (agentId === activeAgentId) clearActiveRuntime();
+  for (const [file, record] of Object.entries(sessionRecords)) {
+    if (record?.agentId !== agentId) continue;
+    try { rmSync(file, { force: true }); } catch { /* The session may already be gone. */ }
+    delete sessionRecords[file];
   }
+  delete currentSessions[agentId];
+  delete agentProfiles[agentId];
+  if (deleteWorkspace && profile.workspaceKind === "app" && profile.workspace === defaultWorkspace(agentId)) {
+    try { rmSync(profile.workspace, { recursive: true, force: true }); } catch { /* Keep profile deletion successful. */ }
+  }
+  if (activeAgentId === agentId) activeAgentId = fallbackAgentId(agentId);
   saveSettings();
-  return bootstrap();
+  return activeAgentId ? createSession({ agentId: activeAgentId }) : bootstrap();
 });
 
-ipcMain.handle("pi:choose-folder", async () => {
+ipcMain.handle("pi:choose-folder", async (_event, agentId = activeAgentId) => {
+  if (!isAgentId(agentId)) throw new Error("Select an agent first.");
+  if (session?.isStreaming) throw new Error("Wait for the response to finish before changing the workspace.");
+  const profile = agentProfiles[agentId];
   const result = await dialog.showOpenDialog(window, {
     properties: ["openDirectory"],
-    defaultPath: workspace,
+    defaultPath: profile.workspace,
   });
   if (result.canceled || result.filePaths.length === 0) return null;
-  workspace = result.filePaths[0];
-  saveSettings();
-  return createSession({ mode: "continue" });
-});
-
-ipcMain.handle("pi:new-session", () => createSession({ mode: "new" }));
-
-ipcMain.handle("pi:open-session", (_event, sessionPath) => {
-  if (typeof sessionPath !== "string" || !sessionPath) throw new Error("Invalid session path.");
-  return listSessions().then((sessions) => {
-    if (!sessions.some((entry) => entry.path === sessionPath)) {
-      throw new Error("That conversation is not available in the selected workspace.");
-    }
-    return createSession({ mode: "open", sessionPath, agentId: activeAgentId });
+  const selectedWorkspace = result.filePaths[0];
+  let trusted = false;
+  const trust = await dialog.showMessageBox(window, {
+    type: "question",
+    buttons: ["Load workspace skills", "Use without skills"],
+    defaultId: 0,
+    cancelId: 1,
+    title: "Trust workspace skills?",
+    message: "Allow Pi Bot to load skills from this workspace's .agents/skills folder?",
+    detail: "AGENTS.md is loaded from the workspace. Skills stay disabled until you trust this folder.",
   });
+  trusted = trust.response === 0;
+  profile.workspace = selectedWorkspace;
+  profile.workspaceKind = "external";
+  profile.workspaceTrusted = trusted;
+  ensureWorkspace(profile);
+  saveSettings();
+  return createSession({ mode: "new", agentId });
 });
 
-ipcMain.handle("pi:get-sessions", () => listSessions());
+ipcMain.handle("pi:trust-workspace", async (_event, agentId) => {
+  if (!isAgentId(agentId)) throw new Error("Invalid agent.");
+  if (session?.isStreaming && agentId === activeAgentId) throw new Error("Wait for the response to finish first.");
+  agentProfiles[agentId].workspaceTrusted = true;
+  saveSettings();
+  return agentId === activeAgentId ? createSession({ agentId }) : bootstrap();
+});
+
+ipcMain.handle("pi:new-session", () => createSession({ mode: "new", agentId: activeAgentId }));
+
+ipcMain.handle("pi:open-session", async (_event, sessionPath) => {
+  if (typeof sessionPath !== "string" || !sessionPath) throw new Error("Invalid session path.");
+  const sessions = await listSessions(activeAgentId);
+  if (!sessions.some((entry) => entry.path === sessionPath)) throw new Error("That conversation is not in this workspace.");
+  return createSession({ mode: "open", sessionPath, agentId: activeAgentId });
+});
+
+ipcMain.handle("pi:get-sessions", (_event, agentId = activeAgentId) => listSessions(agentId));
+
+ipcMain.handle("pi:delete-session", async (_event, sessionPath) => {
+  const sessions = await listSessions(activeAgentId);
+  if (!sessions.some((entry) => entry.path === sessionPath)) throw new Error("That conversation is not available.");
+  const wasCurrent = sessionManager?.getSessionFile() === sessionPath;
+  const runtime = [...sessionRuntimes.values()].find((entry) => entry.sessionManager.getSessionFile() === sessionPath);
+  if (runtime) await disposeRuntime(runtime.key);
+  else if (wasCurrent) await closeCurrentSession();
+  try { rmSync(sessionPath, { force: true }); } catch { /* The file may already be gone. */ }
+  delete sessionRecords[sessionPath];
+  if (currentSessions[activeAgentId] === sessionPath) delete currentSessions[activeAgentId];
+  saveSettings();
+  return wasCurrent ? createSession({ mode: "new" }) : bootstrap();
+});
 
 ipcMain.handle("pi:prompt", async (_event, message) => {
   if (typeof message !== "string" || !message.trim()) return;
-  if (!session) await createSession({ mode: "new", agentId: activeAgentId });
-
-  if (session.isStreaming) {
-    throw new Error("Pi Bot is already responding. Stop the current response before sending another prompt.");
+  if (!activeRuntime()?.session) {
+    if (!activeProfile() || !currentConfig().modelAvailable) throw new Error("Choose an available model in App Settings before sending a message.");
+    await createSession({ mode: "new", agentId: activeAgentId });
   }
-
-  const hasUserMessage = session.sessionManager
-    .getEntries()
-    .some((entry) => entry.type === "message" && entry.message.role === "user");
-  if (!hasUserMessage) session.sessionManager.appendSessionInfo(titleFromPrompt(message));
-
+  const runtime = activeRuntime();
+  const promptSession = runtime?.session;
+  if (!runtime || !promptSession) throw new Error("Choose an available model in App Settings before sending a message.");
+  if (promptSession.isStreaming) throw new Error("The agent is already responding. Stop the current response first.");
+  const hasUserMessage = runtime.sessionManager.getEntries().some((entry) => entry.type === "message" && entry.message.role === "user");
+  if (!hasUserMessage) runtime.sessionManager.appendSessionInfo(titleFromPrompt(message));
+  runtime.transcript = transcriptFromManager(runtime.sessionManager, agentProfiles[runtime.agentId]);
+  runtime.transcript.push({
+    id: `user-${Date.now()}`,
+    kind: "user",
+    label: "You",
+    body: message,
+    timestamp: displayTime(Date.now()),
+  });
   try {
-    await session.prompt(message);
+    await promptSession.prompt(message);
   } catch (error) {
-    const messageText = error instanceof Error ? error.message : String(error);
-    if (messageText !== "Request was aborted") send({ type: "error", message: messageText });
+    const text = error instanceof Error ? error.message : String(error);
+    if (runtime.key === activeRuntimeKey && text !== "Request was aborted") send({ type: "error", message: text });
     throw error;
   } finally {
-    send({
-      type: "session-sync",
-      transcript: transcriptFromSession(),
-      sessions: await listSessions(),
-      config: currentConfig(),
-      agents: listAgents(),
-    });
+    runtime.transcript = transcriptFromManager(runtime.sessionManager, agentProfiles[runtime.agentId]);
+    await sendSessionSync(runtime);
   }
 });
 
-ipcMain.handle("pi:abort", async () => {
-  await session?.abort();
+ipcMain.handle("pi:abort", () => session?.abort());
+
+ipcMain.handle("pi:set-agent-model", async (_event, agentId, key) => {
+  if (!isAgentId(agentId) || typeof key !== "string") throw new Error("Invalid model selection.");
+  if (!availableModels.some((model) => modelKey(model) === key)) throw new Error("That model is not available.");
+  agentProfiles[agentId].defaultModelKey = key;
+  saveSettings();
+  return bootstrap();
 });
 
-ipcMain.handle("pi:set-model", async (_event, key) => {
-  if (typeof key !== "string") throw new Error("Invalid model.");
-  const nextModel = availableModels.find((model) => modelKey(model) === key);
-  if (!nextModel || !session) throw new Error("Model is not available.");
-  await session.setModel(nextModel);
-  preferredModelKey = key;
+ipcMain.handle("pi:set-session-model", async (_event, agentId, key) => {
+  if (!isAgentId(agentId) || typeof key !== "string") throw new Error("Invalid model selection.");
+  const selectedModel = availableModels.find((model) => modelKey(model) === key);
+  if (!selectedModel) throw new Error("That model is not available.");
+  if (agentId !== activeAgentId) throw new Error("Select this agent before changing its model.");
+  if (session?.isStreaming) throw new Error("Stop the current response before changing the model.");
+  if (session) {
+    await session.setModel(selectedModel);
+    return bootstrap();
+  }
+  agentProfiles[agentId].defaultModelKey = key;
   saveSettings();
-  return currentConfig();
+  return createSession({ agentId });
 });
 
-ipcMain.handle("pi:set-thinking-level", (_event, level) => {
-  if (!thinkingLevels.includes(level) || !session) throw new Error("Invalid thinking level.");
-  session.setThinkingLevel(level);
-  preferredThinkingLevel = session.thinkingLevel;
+ipcMain.handle("pi:set-thinking-level", async (_event, agentId, level) => {
+  if (!isAgentId(agentId) || !thinkingLevels.includes(level)) throw new Error("Invalid thinking level.");
+  if (agentId === activeAgentId && session) {
+    if (session.isStreaming) throw new Error("Stop the current response before changing reasoning.");
+    if (!session.getAvailableThinkingLevels().includes(level)) throw new Error("That reasoning level is not supported by this model.");
+    session.setThinkingLevel(level);
+  }
+  agentProfiles[agentId].thinkingLevel = level;
   saveSettings();
-  return currentConfig();
+  return bootstrap();
 });
+
+ipcMain.handle("pi:set-provider-api-key", async (_event, providerId, apiKey) => {
+  if (typeof providerId !== "string" || typeof apiKey !== "string" || !apiKey.trim()) throw new Error("Enter an API key first.");
+  await credentialStore.modify(providerId, async () => ({ type: "api_key", key: apiKey.trim() }));
+  await refreshRuntime();
+  return finishSetup();
+});
+
+ipcMain.handle("pi:login-provider", async (_event, providerId, type) => {
+  if (typeof providerId !== "string" || (type !== "api_key" && type !== "oauth")) throw new Error("Invalid authentication method.");
+  await refreshRuntime();
+  await modelRuntime.login(providerId, type, authInteraction());
+  saveCredentials();
+  return finishSetup();
+});
+
+ipcMain.handle("pi:logout-provider", async (_event, providerId) => {
+  if (typeof providerId !== "string") throw new Error("Invalid provider.");
+  await modelRuntime?.logout(providerId).catch(() => {});
+  await credentialStore.delete(providerId);
+  await refreshRuntime();
+  return bootstrap();
+});
+
+ipcMain.handle("pi:import-pi-auth", async () => {
+  if (setupComplete) throw new Error("Pi auth import is only available during first setup.");
+  const imported = importablePiCredentials();
+  const entries = Object.entries(imported);
+  if (entries.length === 0) throw new Error("No Pi auth was found on this computer.");
+  for (const [providerId, credential] of entries) {
+    if (credential && typeof credential === "object") storedCredentials[providerId] = credential;
+  }
+  saveCredentials();
+  return finishSetup();
+});
+
+ipcMain.handle("pi:auth-respond", (_event, promptId, value) => respondToAuthPrompt(promptId, value));
 
 function createWindow() {
   window = new BrowserWindow({
@@ -668,33 +1074,40 @@ function createWindow() {
     minWidth: 1000,
     minHeight: 700,
     title: "Pi Bot",
-    titleBarStyle: "hiddenInset",
-    backgroundColor: "#f3f1eb",
+    titleBarStyle: "hidden",
+    backgroundColor: "#fbfaf6",
     webPreferences: {
       preload: path.join(here, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
-
-  if (app.isPackaged) {
-    window.loadFile(path.join(appRoot, "dist", "index.html"));
-  } else {
-    window.loadURL("http://127.0.0.1:5173");
-  }
+  if (app.isPackaged) window.loadFile(path.join(appRoot, "dist", "index.html"));
+  else window.loadURL("http://127.0.0.1:5173");
 }
 
 app.whenReady().then(() => {
   loadSettings();
+  loadCredentials();
+  ensureAllWorkspaces();
   createWindow();
 });
+
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
+
 app.on("before-quit", () => {
-  unsubscribe?.();
-  session?.dispose();
+  for (const pending of pendingAuthPrompts.values()) pending.reject(new Error("Authentication was cancelled."));
+  pendingAuthPrompts.clear();
+  for (const runtime of sessionRuntimes.values()) {
+    runtime.unsubscribe?.();
+    runtime.session?.dispose();
+  }
+  sessionRuntimes.clear();
+  clearActiveRuntime();
 });

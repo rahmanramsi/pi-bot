@@ -1,96 +1,58 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
-  Activity,
+  Archive,
   ArrowDown,
+  ArrowLeft,
   ArrowUp,
   Bot,
+  Check,
   ChevronDown,
+  ChevronRight,
   CircleAlert,
+  ExternalLink,
   FolderOpen,
-  History as HistoryIcon,
-  MessageCircle,
+  KeyRound,
+  LoaderCircle,
+  LockKeyhole,
   MessageSquarePlus,
   Plus,
+  RotateCcw,
+  Search,
   Settings2,
+  ShieldCheck,
   Square,
+  Trash2,
   Wrench,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import {
-  Sidebar as SidebarShell,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import type {
   AgentId,
-  AgentDraft,
   AgentProfile,
+  AuthPrompt,
   PiBootstrap,
   PiConfig,
   PiEvent,
+  PiModelOption,
+  ProviderAuthMethod,
+  ProviderInfo,
   SessionSummary,
   ThinkingLevel,
   TimelineItem,
 } from "./types";
 
-const allThinkingLevels: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-const initialAgents: AgentProfile[] = [
-  { id: "planner", name: "Planner", initials: "PL", description: "Breaks work into clear next steps.", systemPrompt: "", builtIn: true, archived: false },
-  { id: "researcher", name: "Researcher", initials: "RE", description: "Finds evidence and explains what it means.", systemPrompt: "", builtIn: true, archived: false },
-  { id: "coder", name: "Coder", initials: "CO", description: "Explains implementation details and trade-offs.", systemPrompt: "", builtIn: true, archived: false },
-];
-
-function time() {
-  return new Intl.DateTimeFormat("en", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date());
-}
+type View = "chat" | "settings";
+type SettingsSection = "agents" | "models";
 
 function readableError(reason: unknown) {
   if (reason instanceof Error) return reason.message;
   if (typeof reason === "string") return reason.replace(/^Error:\s*/, "");
-  try {
-    return JSON.stringify(reason);
-  } catch {
-    return "Something went wrong.";
-  }
-}
-
-function isAbortError(reason: unknown) {
-  return readableError(reason) === "Request was aborted";
+  return "Something went wrong.";
 }
 
 function shortDate(value?: string) {
@@ -98,37 +60,172 @@ function shortDate(value?: string) {
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(new Date(value));
 }
 
-function hydrate(
-  data: PiBootstrap,
-  setConfig: (config: PiConfig) => void,
-  setItems: (items: TimelineItem[]) => void,
-  setSessions: (sessions: SessionSummary[]) => void,
-  setAgents: (agents: AgentProfile[]) => void,
-) {
-  setConfig(data.config);
-  setItems(data.transcript);
-  setSessions(data.sessions);
-  setAgents(data.agents);
+function timeNow() {
+  return new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 }
 
-function findAgent(agents: AgentProfile[], agentId?: AgentId) {
-  return agents.find((agent) => agent.id === agentId) ?? agents[0] ?? initialAgents[0];
+function formatTokenCount(value: number | null) {
+  if (value === null) return "—";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
+  return String(value);
+}
+
+function labelThinkingLevel(level: ThinkingLevel) {
+  return level === "off" ? "Off" : level[0].toUpperCase() + level.slice(1);
+}
+
+function findAgent(agents: AgentProfile[], id?: AgentId | null) {
+  return agents.find((agent) => agent.id === id) ?? agents.find((agent) => !agent.archived) ?? agents[0];
+}
+
+function emptyBootstrap(): PiBootstrap {
+  return {
+    config: {
+      agentId: null,
+      workspace: "",
+      workspaceKind: "",
+      workspaceTrusted: false,
+      model: "No model selected",
+      modelKey: "",
+      defaultModelKey: "",
+      modelAvailable: false,
+      provider: "",
+      thinkingLevel: "medium",
+      availableThinkingLevels: [],
+      streaming: false,
+      context: { tokens: null, contextWindow: 0, percent: null },
+      models: [],
+      tools: [],
+      session: null,
+    },
+    transcript: [],
+    sessions: [],
+    sessionsByAgent: {},
+    agents: [],
+    setup: { required: true, canImportPiAuth: false, piAuthPath: "", credentialStorage: "protected-app-file", providers: [] },
+    authenticated: false,
+    activeAgentId: null,
+  };
+}
+
+function providerLabel(provider: string) {
+  const knownLabels: Record<string, string> = {
+    anthropic: "Anthropic",
+    deepseek: "DeepSeek",
+    google: "Google",
+    openai: "OpenAI",
+    "openai-codex": "OpenAI Codex",
+  };
+  return knownLabels[provider] ?? provider.replace(/[-_]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function modelGroups(models: PiModelOption[]) {
+  const grouped = new Map<string, PiModelOption[]>();
+  for (const model of models) grouped.set(model.provider, [...(grouped.get(model.provider) ?? []), model]);
+  return Array.from(grouped, ([provider, providerModels]) => ({ provider, label: providerLabel(provider), models: providerModels }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function ModelSelect({
+  value,
+  models,
+  onChange,
+  disabled,
+  placeholder = "Choose a model",
+  className,
+}: {
+  value: string;
+  models: PiModelOption[];
+  onChange: (key: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const groups = modelGroups(models)
+    .map((group) => ({
+      ...group,
+      models: group.models.filter((model) => !normalizedQuery || `${model.name} ${model.id} ${model.provider} ${group.label}`.toLocaleLowerCase().includes(normalizedQuery)),
+    }))
+    .filter((group) => group.models.length > 0);
+
+  useEffect(() => {
+    if (!open) return;
+    const timer = window.setTimeout(() => searchRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [open]);
+
+  return (
+    <Select open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) setQuery(""); }} value={value || null} itemToStringLabel={(key) => models.find((model) => model.key === String(key))?.name ?? placeholder} onValueChange={(next) => { if (next) onChange(next); }}>
+      <SelectTrigger size="sm" className={className} disabled={disabled} aria-label="Model">
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent className="model-select-content" align="start" alignItemWithTrigger={false}>
+        <div className="model-select-search" onKeyDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+          <Search aria-hidden="true" />
+          <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search models…" aria-label="Search models" />
+        </div>
+        {groups.map((group) => (
+          <SelectGroup key={group.provider}>
+            <SelectLabel>{group.label}</SelectLabel>
+            {group.models.map((model) => <SelectItem value={model.key} key={model.key}>{model.name}</SelectItem>)}
+          </SelectGroup>
+        ))}
+        {groups.length === 0 && <div className="model-select-empty">No models match “{query}”.</div>}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function ThinkingSelect({
+  value,
+  levels,
+  onChange,
+  disabled,
+}: {
+  value: ThinkingLevel;
+  levels: ThinkingLevel[];
+  onChange: (level: ThinkingLevel) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Select value={value} onValueChange={(next) => { if (next) onChange(next as ThinkingLevel); }}>
+      <SelectTrigger size="sm" className="thinking-select-trigger" disabled={disabled} aria-label="Reasoning level">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent align="start">
+        {levels.map((level) => <SelectItem value={level} key={level}>{labelThinkingLevel(level)}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
 }
 
 function Composer({
   busy,
   disabled,
   agentName,
+  config,
   onPrompt,
   onAbort,
+  onModelChange,
+  onThinkingChange,
 }: {
   busy: boolean;
   disabled: boolean;
   agentName: string;
+  config: PiConfig;
   onPrompt: (message: string) => void;
   onAbort: () => void;
+  onModelChange: (key: string) => void;
+  onThinkingChange: (level: ThinkingLevel) => void;
 }) {
   const [message, setMessage] = useState("");
+  const contextPercent = config.context.percent === null ? 0 : Math.min(100, Math.max(0, config.context.percent));
+  const reasoningLevels = config.availableThinkingLevels.length > 0 ? config.availableThinkingLevels : ["off"] as ThinkingLevel[];
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -140,32 +237,45 @@ function Composer({
 
   return (
     <form className="composer" onSubmit={submit}>
-      <Plus className="composer-plus" aria-hidden="true" />
-      <Input
-        className="composer-input"
-        aria-label={`Message ${agentName}`}
-        value={message}
-        onChange={(event) => setMessage(event.target.value)}
-        placeholder={`Message ${agentName} about this workspace…`}
-        disabled={disabled}
-      />
-      {busy ? (
-        <Button className="stop-button" variant="destructive" type="button" onClick={onAbort} aria-label="Stop response">
-          <Square />
-          <span>Stop</span>
-        </Button>
-      ) : (
-        <Button className="send-button" size="icon" type="submit" aria-label="Send message" disabled={disabled}>
-          <ArrowUp />
-        </Button>
-      )}
+      <div className="composer-entry">
+        <span className="composer-prefix" aria-hidden="true">+</span>
+        <Input
+          className="composer-input"
+          aria-label={`Message ${agentName}`}
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          placeholder={`Message ${agentName}…`}
+          disabled={disabled}
+        />
+        {busy ? (
+          <Button className="stop-button" variant="destructive" type="button" onClick={onAbort}>
+            <Square />
+            <span>Stop</span>
+          </Button>
+        ) : (
+          <Button className="send-button" size="icon" type="submit" aria-label="Send message" disabled={disabled}>
+            <ArrowUp />
+          </Button>
+        )}
+      </div>
+      <div className="composer-controls">
+        <div className="composer-control">
+          <span>Model</span>
+          <ModelSelect value={config.modelKey} models={config.models} onChange={onModelChange} disabled={busy || config.models.length === 0} className="composer-model-trigger" />
+        </div>
+        <div className="composer-control">
+          <span>Reasoning</span>
+          <ThinkingSelect value={config.thinkingLevel} levels={reasoningLevels} onChange={onThinkingChange} disabled={busy || !config.modelAvailable} />
+        </div>
+        <div className="context-status" title="Estimated context used by this session">
+          <div className="context-status-copy"><span>Context</span><strong>{formatTokenCount(config.context.tokens)} / {formatTokenCount(config.context.contextWindow)}</strong></div>
+          <div className="context-meter" role="progressbar" aria-label="Context usage" aria-valuemin={0} aria-valuemax={100} aria-valuenow={contextPercent}><span style={{ width: `${contextPercent}%` }} /></div>
+          <small>{config.context.percent === null ? "Waiting for usage" : `${config.context.percent.toFixed(0)}% used`}</small>
+        </div>
+      </div>
     </form>
   );
 }
-
-type ConversationBlock =
-  | { kind: "message"; item: TimelineItem }
-  | { kind: "activity"; items: TimelineItem[] };
 
 function activityLabel(item: TimelineItem) {
   return item.label.replace(/^Tool\s*·\s*/, "");
@@ -175,16 +285,13 @@ function ActivityCluster({ items }: { items: TimelineItem[] }) {
   const hasRunning = items.some((item) => item.status === "running");
   const hasFailed = items.some((item) => item.status === "failed");
   const status = hasFailed ? "failed" : hasRunning ? "running" : "done";
-  const statusLabel = hasFailed ? "Failed" : hasRunning ? "Working" : "Done";
-  const stepLabel = `${items.length} ${items.length === 1 ? "step" : "steps"}`;
-
   return (
-    <details className={`activity-cluster ${status}`} open={hasRunning || undefined}>
+    <details className={`activity-cluster ${status}`} open={hasRunning}>
       <summary>
-        <span className="activity-glyph" aria-hidden="true"><Activity /></span>
+        <span className="activity-glyph"><Wrench /></span>
         <span className="activity-title">Activity</span>
-        <span className="activity-count">{stepLabel}</span>
-        <Badge className={`activity-state ${status}`} variant={status === "failed" ? "destructive" : status === "running" ? "secondary" : "outline"}>{statusLabel}</Badge>
+        <span className="activity-count">{items.length} {items.length === 1 ? "step" : "steps"}</span>
+        <Badge variant={status === "failed" ? "destructive" : "outline"}>{hasFailed ? "Failed" : hasRunning ? "Working" : "Done"}</Badge>
       </summary>
       <div className="activity-list">
         {items.map((item) => (
@@ -192,7 +299,7 @@ function ActivityCluster({ items }: { items: TimelineItem[] }) {
             <div className="activity-line-header">
               <strong>{activityLabel(item)}</strong>
               <time>{item.timestamp}</time>
-              {item.status && <span className={`activity-line-status ${item.status}`}>{item.status}</span>}
+              <span className={`activity-line-status ${item.status ?? "done"}`}>{item.status ?? "done"}</span>
             </div>
             <pre>{item.body || (item.status === "running" ? "Working…" : "No detail returned.")}</pre>
           </div>
@@ -202,776 +309,408 @@ function ActivityCluster({ items }: { items: TimelineItem[] }) {
   );
 }
 
-function ChatMessage({ item, assistantLabel, assistantInitials }: { item: TimelineItem; assistantLabel: string; assistantInitials: string }) {
-  const isUser = item.kind === "user";
-  const label = isUser ? "You" : assistantLabel;
-  const initials = isUser ? "YO" : assistantInitials;
-
+function MarkdownContent({ body }: { body: string }) {
   return (
-    <article className={`chat-message ${isUser ? "user" : "assistant"}`} aria-live={isUser ? undefined : "polite"}>
-      <div className="chat-avatar" aria-hidden="true">{initials}</div>
+    <div className="markdown-content">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+        }}
+      >
+        {body}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function ChatMessage({ item, agent }: { item: TimelineItem; agent?: AgentProfile }) {
+  const isUser = item.kind === "user";
+  return (
+    <article className={`chat-message ${isUser ? "user" : "assistant"}`}>
+      <div className="chat-avatar" aria-hidden="true">{isUser ? "YO" : agent?.initials ?? "AS"}</div>
       <div className="chat-message-main">
         <div className="chat-message-meta">
-          <strong>{label}</strong>
+          <strong>{isUser ? "You" : agent?.name ?? "Assistant"}</strong>
           <time>{item.timestamp}</time>
-              {item.status && <Badge className={`chat-status ${item.status}`} variant={item.status === "failed" ? "destructive" : item.status === "running" ? "secondary" : "outline"}>{item.status}</Badge>}
+          {item.status === "failed" && <Badge variant="destructive">Failed</Badge>}
         </div>
-        <div className="chat-bubble">
-          <div className="chat-body">{item.body || "Thinking…"}</div>
-        </div>
+        <div className="chat-bubble"><div className="chat-body"><MarkdownContent body={item.body || "Thinking…"} /></div></div>
       </div>
     </article>
   );
 }
 
-function EventRows({ items, assistantLabel, assistantInitials }: { items: TimelineItem[]; assistantLabel: string; assistantInitials: string }) {
+function EventRows({ items, agent }: { items: TimelineItem[]; agent?: AgentProfile }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [isFollowing, setIsFollowing] = useState(true);
-  const [showJump, setShowJump] = useState(false);
-  const lastItem = items[items.length - 1];
-
-  const blocks: ConversationBlock[] = [];
+  const [following, setFollowing] = useState(true);
+  const blocks: Array<{ kind: "message"; item: TimelineItem } | { kind: "activity"; items: TimelineItem[] }> = [];
   for (const item of items) {
-    const isActivity = item.kind === "tool" || item.kind === "status";
+    const activity = item.kind === "tool" || item.kind === "status";
     const previous = blocks[blocks.length - 1];
-    if (isActivity && previous?.kind === "activity") {
-      previous.items.push(item);
-    } else if (isActivity) {
-      blocks.push({ kind: "activity", items: [item] });
-    } else {
-      blocks.push({ kind: "message", item });
-    }
+    if (activity && previous?.kind === "activity") previous.items.push(item);
+    else if (activity) blocks.push({ kind: "activity", items: [item] });
+    else blocks.push({ kind: "message", item });
   }
 
   useEffect(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    if (isFollowing) {
-      element.scrollTop = element.scrollHeight;
-      setShowJump(false);
-    } else if (items.length > 0) {
-      setShowJump(true);
-    }
-  }, [isFollowing, items.length, lastItem?.body, lastItem?.status]);
+    if (following && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [items.length, items.at(-1)?.body, following]);
 
   function handleScroll() {
     const element = scrollRef.current;
     if (!element) return;
-    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    const nextFollowing = distanceFromBottom < 80;
-    setIsFollowing(nextFollowing);
-    setShowJump(!nextFollowing && items.length > 0);
+    setFollowing(element.scrollHeight - element.scrollTop - element.clientHeight < 80);
   }
 
   function jumpToLatest() {
-    const element = scrollRef.current;
-    if (!element) return;
-    setIsFollowing(true);
-    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
-    setShowJump(false);
+    if (!scrollRef.current) return;
+    scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    setFollowing(true);
   }
 
   return (
     <div className="conversation-feed">
       {items.length === 0 ? (
         <div className="empty-conversation">
-          <div className="empty-orbit" aria-hidden="true"><Bot /></div>
-          <h2>Start with the workspace</h2>
-          <p>Ask {assistantLabel} to map a folder, explain a file, or find a pattern. It can inspect only; your files stay unchanged.</p>
+          <div className="empty-orbit"><Bot /></div>
+          <h2>Start a conversation with {agent?.name ?? "Assistant"}</h2>
+          <p>Ask a question or describe what you want to work on.</p>
         </div>
       ) : (
-        <ScrollArea
-          className="conversation-scroll"
-          viewportClassName="event-rows"
-          viewportRef={scrollRef}
-          onScroll={handleScroll}
-          role="log"
-          aria-label={`${assistantLabel} conversation`}
-        >
+        <div className="conversation-scroll" ref={scrollRef} onScroll={handleScroll} role="log" aria-label="Conversation">
           <div className="conversation-blocks">
-            {blocks.map((block) => block.kind === "activity" ? (
-              <ActivityCluster items={block.items} key={`activity-${block.items[0].id}`} />
-            ) : (
-              <ChatMessage item={block.item} assistantLabel={assistantLabel} assistantInitials={assistantInitials} key={block.item.id} />
-            ))}
+            {blocks.map((block) => block.kind === "activity"
+              ? <ActivityCluster items={block.items} key={`activity-${block.items[0].id}`} />
+              : <ChatMessage item={block.item} agent={agent} key={block.item.id} />)}
           </div>
-        </ScrollArea>
+        </div>
       )}
-      {showJump && <Button className="jump-latest" variant="outline" size="sm" type="button" onClick={jumpToLatest}><ArrowDown /> New activity</Button>}
+      {!following && items.length > 0 && <Button className="jump-latest" variant="outline" size="sm" onClick={jumpToLatest}><ArrowDown /> Latest</Button>}
     </div>
   );
 }
 
-function ContextPanel({
-  agent,
-  config,
-  connecting,
-  busy,
-  onChooseFolder,
-  onEditAgent,
-  onModelChange,
-  onThinkingChange,
-}: {
-  agent: AgentProfile;
-  config: PiConfig | null;
-  connecting: boolean;
-  busy: boolean;
-  onChooseFolder: () => void;
-  onEditAgent: () => void;
-  onModelChange: (key: string) => void;
-  onThinkingChange: (level: ThinkingLevel) => void;
-}) {
-  const thinkingOptions = config?.availableThinkingLevels.length ? config.availableThinkingLevels : allThinkingLevels;
-
-  return (
-    <SidebarShell side="right" collapsible="none" className="a-context">
-      <SidebarContent className="context-content">
-        <ScrollArea className="context-scroll" viewportClassName="context-scroll-viewport">
-          <div className="eyebrow">Context</div>
-          <div className="context-block">
-            <span>Agent</span>
-            <strong>{agent.name}</strong>
-            <small>{agent.description}</small>
-            <Button variant="link" size="sm" className="context-action" onClick={onEditAgent} disabled={connecting || busy}>Customize agent</Button>
-          </div>
-          <div className="context-block">
-            <span>Working folder</span>
-            <strong className="context-value" title={config?.workspace}><FolderOpen /> {config?.workspace ?? "Connecting…"}</strong>
-            <Button variant="link" size="sm" className="context-action" onClick={onChooseFolder} disabled={connecting || busy}>Change folder</Button>
-          </div>
-          <div className="context-block">
-            <span>Conversation</span>
-            <strong>{config?.session?.name ?? "New conversation"}</strong>
-            <small>Local session history</small>
-          </div>
-          <div className="context-block">
-            <label htmlFor="model-select">Model</label>
-            <Select
-              value={config?.modelKey || undefined}
-              onValueChange={(value) => { if (value) onModelChange(value); }}
-              disabled={connecting || busy || !config?.models.length}
-              items={(config?.models ?? []).map((model) => ({ label: `${model.name} · ${model.provider}`, value: model.key }))}
-            >
-              <SelectTrigger id="model-select"><SelectValue placeholder={config?.models.length ? "Select a model" : "No model available"} /></SelectTrigger>
-              <SelectContent>
-                {config?.models.map((model) => (
-                  <SelectItem value={model.key} key={model.key}>{model.name} · {model.provider}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="context-block">
-            <label htmlFor="thinking-select">Thinking level</label>
-            <Select
-              value={config?.thinkingLevel ?? "medium"}
-              onValueChange={(level) => { if (level) onThinkingChange(level as ThinkingLevel); }}
-              disabled={connecting || busy || !config}
-              items={thinkingOptions.map((level) => ({ label: level, value: level }))}
-            >
-              <SelectTrigger id="thinking-select"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {thinkingOptions.map((level) => <SelectItem value={level} key={level}>{level}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="eyebrow tools-title">Tools</div>
-          <Separator className="context-separator" />
-          <ul className="tool-list">
-            {(config?.tools ?? ["read", "bash", "edit", "write", "grep", "find", "ls"]).map((tool) => (
-              <li key={tool}><Wrench aria-hidden="true" /><strong>{tool}</strong></li>
-            ))}
-          </ul>
-        </ScrollArea>
-      </SidebarContent>
-      <SidebarFooter className="context-footer">
-        <p className="boundary-note">Local-first. Pi works inside this folder and can read, search, edit files, and run commands in it.</p>
-      </SidebarFooter>
-    </SidebarShell>
-  );
+function AgentAvatar({ agent }: { agent: AgentProfile }) {
+  return <span className="agent-avatar">{agent.initials}</span>;
 }
 
 function AgentSidebar({
-  agents,
-  activeAgentId,
-  sessions,
-  activePath,
+  data,
   busy,
-  connecting,
-  historyOpen,
-  onSelectAgent,
-  onNewAgent,
-  onManageAgents,
-  onToggleHistory,
-  onNewSession,
+  expanded,
+  onToggle,
+  onSelect,
+  onNewChat,
+  onSettings,
   onOpenSession,
+  onDeleteSession,
 }: {
-  agents: AgentProfile[];
-  activeAgentId?: AgentId;
-  sessions: SessionSummary[];
-  activePath?: string;
+  data: PiBootstrap;
   busy: boolean;
-  connecting: boolean;
-  historyOpen: boolean;
-  onSelectAgent: (agentId: AgentId) => void;
-  onNewAgent: () => void;
-  onManageAgents: () => void;
-  onToggleHistory: () => void;
-  onNewSession: () => void;
+  expanded: Record<string, boolean>;
+  onToggle: (agentId: AgentId) => void;
+  onSelect: (agentId: AgentId) => void;
+  onNewChat: () => void;
+  onSettings: () => void;
   onOpenSession: (session: SessionSummary) => void;
+  onDeleteSession: (session: SessionSummary) => void;
 }) {
-  const visibleAgents = agents.filter((agent) => !agent.archived);
-  const archivedCount = agents.filter((agent) => agent.archived).length;
-
+  const agents = data.agents.filter((agent) => !agent.archived);
   return (
-    <SidebarShell side="left" collapsible="icon" className="a-sidebar">
-      <SidebarHeader>
-        <header className="brand">
-          <span className="brand-mark"><Bot aria-hidden="true" /></span>
-          <span className="sidebar-label">Pi Bot</span>
-          <SidebarTrigger />
-        </header>
-      </SidebarHeader>
-      <SidebarContent className="sidebar-content-shell">
-        <ScrollArea className="sidebar-scroll-shell" viewportClassName="sidebar-scroll">
-          <SidebarGroup>
-            <div className="sidebar-heading">
-              <SidebarGroupLabel className="eyebrow sidebar-label">Agents</SidebarGroupLabel>
-              <div className="sidebar-agent-actions">
-                <SidebarMenuButton
-                  className="sidebar-action sidebar-label-button"
-                  onClick={onManageAgents}
-                  disabled={busy || connecting}
-                  aria-label="Manage agents"
-                  tooltip="Manage agents"
-                >
-                  <Settings2 />
-                  <span className="sidebar-label">Manage</span>
-                </SidebarMenuButton>
-                <SidebarMenuButton
-                  className="sidebar-action add"
-                  onClick={onNewAgent}
-                  disabled={busy || connecting}
-                  aria-label="Create agent"
-                  tooltip="Create agent"
-                >
-                  <Plus />
-                </SidebarMenuButton>
-              </div>
-            </div>
-            <SidebarMenu className="agent-list" aria-label="Agents">
-              {visibleAgents.map((agent) => (
-                <SidebarMenuItem key={agent.id}>
-                  <SidebarMenuButton
-                    className="agent-item"
-                    isActive={agent.id === activeAgentId}
-                    onClick={() => onSelectAgent(agent.id)}
-                    disabled={busy || connecting}
-                    aria-current={agent.id === activeAgentId ? "page" : undefined}
-                    aria-label={`${agent.name} agent`}
-                    tooltip={agent.description}
-                  >
-                    <span className={`agent-avatar agent-${agent.id}`}>{agent.initials}</span>
-                    <span className="agent-copy sidebar-label">
-                      <strong>{agent.name}</strong>
-                      <small className={busy && agent.id === activeAgentId ? "agent-status working" : "agent-status"}>{busy && agent.id === activeAgentId ? "Working" : agent.builtIn ? "Template" : "Custom"}</small>
-                    </span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-            {archivedCount > 0 && (
-              <SidebarMenuButton className="archived-hint" onClick={onManageAgents} tooltip={`${archivedCount} archived agent${archivedCount === 1 ? "" : "s"}`}>
-                <span className="sidebar-label">+ {archivedCount} archived agent{archivedCount === 1 ? "" : "s"}</span>
-              </SidebarMenuButton>
-            )}
-            <SidebarMenu className="sidebar-primary-actions">
-              <SidebarMenuItem>
-                <SidebarMenuButton className="new-agent" onClick={onNewAgent} disabled={busy || connecting} aria-label="New agent" tooltip="New agent">
-                  <Plus /><span className="sidebar-label">New agent</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton className="new-chat" onClick={onNewSession} disabled={busy || connecting} aria-label="New conversation" tooltip="New conversation">
-                  <MessageSquarePlus /><span className="sidebar-label">New conversation</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-            <Collapsible open={historyOpen} onOpenChange={onToggleHistory} className="history-section">
-              <CollapsibleTrigger asChild>
-                <button className="history-toggle" type="button" aria-expanded={historyOpen} title="History">
-                  <span><HistoryIcon /><span className="sidebar-label">History</span></span>
-                  <span className="history-toggle-meta"><Badge variant="secondary" className="sidebar-label">{sessions.length}</Badge><ChevronDown className={historyOpen ? "history-chevron open" : "history-chevron"} /></span>
+    <aside className="app-sidebar">
+      <div className="sidebar-brand"><span className="brand-mark"><Bot /></span><strong>Pi Bot</strong></div>
+      <Button className="new-chat-button" onClick={onNewChat} disabled={!data.activeAgentId}><MessageSquarePlus /> New chat</Button>
+      <div className="sidebar-section-label">Agents</div>
+      <div className="agent-list">
+        {agents.map((agent) => {
+          const sessions = data.sessionsByAgent[agent.id] ?? [];
+          const isOpen = Boolean(expanded[agent.id]);
+          return (
+            <div className={`agent-group ${agent.id === data.activeAgentId ? "active" : ""}`} key={agent.id}>
+              <div className="agent-row">
+                <button className="agent-main-button" type="button" onClick={() => onSelect(agent.id)}>
+                  <AgentAvatar agent={agent} />
+                  <span className="agent-row-copy"><strong>{agent.name}</strong><small>{sessions.length ? `${sessions.length} chat${sessions.length === 1 ? "" : "s"}` : "No chats yet"}</small></span>
                 </button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="history-list">
-                {sessions.length === 0 && <p className="history-empty sidebar-label">No saved chats for {findAgent(agents, activeAgentId).name} yet.</p>}
-                <SidebarMenu>
-                  {sessions.map((session) => (
-                    <SidebarMenuItem key={session.path}>
-                      <SidebarMenuButton
-                        className="history-item"
-                        isActive={session.path === activePath}
-                        onClick={() => onOpenSession(session)}
-                        disabled={busy || connecting}
-                        tooltip={session.name}
-                      >
-                        <MessageCircle className="history-icon" />
-                        <span className="history-copy sidebar-label"><strong>{session.name}</strong><small>{shortDate(session.modified)}</small></span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </CollapsibleContent>
-            </Collapsible>
-          </SidebarGroup>
-        </ScrollArea>
-      </SidebarContent>
-      <SidebarFooter className="sidebar-footer">
-        <span className="sidebar-label">Coding teammate</span>
-      </SidebarFooter>
-    </SidebarShell>
+                <button className="history-chevron-button" type="button" onClick={() => onToggle(agent.id)} aria-label={`${isOpen ? "Collapse" : "Expand"} ${agent.name} chat history`}>
+                  {isOpen ? <ChevronDown /> : <ChevronRight />}
+                </button>
+              </div>
+              {isOpen && <div className="nested-history">
+                {sessions.length === 0 && <p className="history-empty">No chat history yet.</p>}
+                {sessions.map((chat) => (
+                  <div className={`history-row ${chat.path === data.config.session?.path ? "selected" : ""}`} key={chat.path}>
+                    <button type="button" onClick={() => onOpenSession(chat)}>
+                      <span className="history-dot" />
+                      <span><strong>{chat.name}</strong><small>{shortDate(chat.modified)}</small></span>
+                    </button>
+                    <button className="delete-chat-button" type="button" onClick={() => onDeleteSession(chat)} disabled={busy} aria-label={`Delete ${chat.name}`}><Trash2 /></button>
+                  </div>
+                ))}
+              </div>}
+            </div>
+          );
+        })}
+      </div>
+      {agents.length === 0 && <div className="no-agents-sidebar"><p>No active agents.</p><Button variant="outline" onClick={onSettings}>Create agent</Button></div>}
+      <div className="sidebar-spacer" />
+      <button className="settings-button" type="button" onClick={onSettings}><Settings2 /> App Settings</button>
+    </aside>
   );
 }
 
-type AgentDialogState = {
-  mode: "manage" | "new" | "edit";
-  agentId?: AgentId;
-};
-
-type AgentFormState = {
-  name: string;
-  initials: string;
-  description: string;
-  systemPrompt: string;
-  templateId: AgentId | "";
-};
-
-const emptyAgentForm: AgentFormState = {
-  name: "",
-  initials: "AI",
-  description: "",
-  systemPrompt: "",
-  templateId: "",
-};
-
-function formFromAgent(agent?: AgentProfile): AgentFormState {
-  if (!agent) return emptyAgentForm;
-  return {
-    name: agent.name,
-    initials: agent.initials,
-    description: agent.description,
-    systemPrompt: agent.systemPrompt,
-    templateId: "",
-  };
+function ErrorBanner({ message }: { message?: string }) {
+  if (!message) return null;
+  return <div className="error-line"><CircleAlert /><div><strong>Couldn’t complete that</strong><span>{message}</span></div></div>;
 }
 
-function AgentDialog({
-  dialog,
-  agents,
+function ChatView({
+  data,
   busy,
   error,
-  onClose,
-  onNew,
-  onEdit,
+  onPrompt,
+  onAbort,
+  onModelChange,
+  onThinkingChange,
+}: {
+  data: PiBootstrap;
+  busy: boolean;
+  error?: string;
+  onPrompt: (message: string) => void;
+  onAbort: () => void;
+  onModelChange: (key: string) => void;
+  onThinkingChange: (level: ThinkingLevel) => void;
+}) {
+  const agent = findAgent(data.agents, data.activeAgentId);
+  const blocked = !agent || !data.config.modelAvailable;
+  const responding = busy || data.config.streaming;
+  return (
+    <main className="chat-pane">
+      <header className="chat-header">
+        <div className="chat-header-agent">{agent && <AgentAvatar agent={agent} />}<div><h1>{agent?.name ?? "No active agent"}</h1><span>{data.config.session?.name ?? "New chat"}</span></div></div>
+        {responding && <span className="responding-indicator"><i /> Responding</span>}
+      </header>
+      <ErrorBanner message={error} />
+      {!data.authenticated && <div className="notice-line"><KeyRound /><span>Add a provider credential in App Settings to start chatting.</span></div>}
+      {data.authenticated && blocked && agent && <div className="notice-line"><CircleAlert /><span>This agent’s model is unavailable. Choose another model in App Settings.</span></div>}
+      <EventRows items={data.transcript} agent={agent} />
+      <Composer busy={responding} disabled={blocked || responding} agentName={agent?.name ?? "Assistant"} config={data.config} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
+    </main>
+  );
+}
+
+function AgentEditor({
+  agent,
+  models,
+  isNew,
+  busy,
   onCreate,
-  onUpdate,
-  onDuplicate,
+  onSave,
+  onChooseFolder,
+  onTrustWorkspace,
   onArchive,
   onDelete,
+  onModelChange,
 }: {
-  dialog: AgentDialogState;
-  agents: AgentProfile[];
+  agent?: AgentProfile;
+  models: PiModelOption[];
+  isNew: boolean;
   busy: boolean;
-  error: string;
-  onClose: () => void;
-  onNew: () => void;
-  onEdit: (agentId: AgentId) => void;
-  onCreate: (draft: AgentDraft) => Promise<boolean>;
-  onUpdate: (agent: AgentProfile) => Promise<boolean>;
-  onDuplicate: (agentId: AgentId) => Promise<boolean>;
-  onArchive: (agentId: AgentId, archived: boolean) => Promise<boolean>;
-  onDelete: (agentId: AgentId) => Promise<boolean>;
+  onCreate: (name: string, initials: string) => void;
+  onSave: (agent: AgentProfile) => void;
+  onChooseFolder: (agentId: AgentId) => void;
+  onTrustWorkspace: (agentId: AgentId) => void;
+  onArchive: (agent: AgentProfile) => void;
+  onDelete: (agent: AgentProfile) => void;
+  onModelChange: (agentId: AgentId, key: string) => void;
 }) {
-  const editingAgent = agents.find((agent) => agent.id === dialog.agentId);
-  const [form, setForm] = useState<AgentFormState>(() => formFromAgent(editingAgent));
-
+  const [name, setName] = useState(agent?.name ?? "");
+  const [initials, setInitials] = useState(agent?.initials ?? "");
+  const [instructions, setInstructions] = useState(agent?.instructions ?? "");
   useEffect(() => {
-    setForm(dialog.mode === "edit" ? formFromAgent(editingAgent) : emptyAgentForm);
-  }, [dialog.mode, dialog.agentId, editingAgent]);
+    setName(agent?.name ?? "");
+    setInitials(agent?.initials ?? "");
+    setInstructions(agent?.instructions ?? "");
+  }, [agent?.id, agent?.name, agent?.initials, agent?.instructions, isNew]);
 
-  function setField(field: keyof AgentFormState, value: string) {
-    setForm((current) => ({ ...current, [field]: value }));
+  if (isNew) {
+    return <section className="settings-detail"><div className="detail-heading"><div><span className="eyebrow">New agent</span><h2>Create an agent</h2><p>Give this teammate a name. Its workspace starts isolated and empty.</p></div></div><div className="settings-form"><label className="form-field"><span>Name</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Release helper" /></label><label className="form-field compact-field"><span>Initials <em>optional</em></span><Input maxLength={4} value={initials} onChange={(event) => setInitials(event.target.value.toUpperCase())} placeholder="Auto" /></label><div className="settings-actions"><Button onClick={() => onCreate(name, initials)} disabled={busy || !name.trim()}><Plus /> Create agent</Button></div></div></section>;
   }
 
-  function applyTemplate(templateId: AgentId | "") {
-    if (!templateId) {
-      setForm(emptyAgentForm);
-      return;
-    }
-    const template = agents.find((agent) => agent.id === templateId);
-    if (!template) return;
-    setForm({
-      name: template.name,
-      initials: template.initials,
-      description: template.description,
-      systemPrompt: template.systemPrompt,
-      templateId,
-    });
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    const draft = {
-      name: form.name.trim(),
-      initials: form.initials.trim().toUpperCase(),
-      description: form.description.trim(),
-      systemPrompt: form.systemPrompt.trim(),
-    };
-    if (!draft.name || !draft.description) return;
-    if (dialog.mode === "edit" && editingAgent) {
-      await onUpdate({ ...editingAgent, ...draft });
-      return;
-    }
-    await onCreate({ ...draft, templateId: form.templateId || undefined });
-  }
-
-  if (dialog.mode === "manage") {
-    return (
-      <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-        <DialogContent className="agent-modal manager-modal" closeDisabled={busy}>
-          <DialogHeader className="modal-header">
-            <div>
-              <div className="eyebrow">Agent workspace</div>
-              <DialogTitle id="agent-manager-title">Manage agents</DialogTitle>
-              <DialogDescription className="modal-description">Templates give you a starting point. Custom agents keep their own role and conversation history.</DialogDescription>
-            </div>
-          </DialogHeader>
-          {error && <div className="modal-error" role="alert"><CircleAlert />{error}</div>}
-          <div className="manager-list">
-            {agents.map((agent) => (
-              <article className={agent.archived ? "manager-agent archived" : "manager-agent"} key={agent.id}>
-                <span className={`agent-avatar agent-${agent.id}`}>{agent.initials}</span>
-                <div className="manager-agent-copy">
-                  <div className="manager-agent-title"><strong>{agent.name}</strong><span>{agent.builtIn ? "Template" : "Custom"}{agent.archived ? " · Archived" : ""}</span></div>
-                  <p>{agent.description}</p>
-                </div>
-                <div className="manager-agent-actions">
-                  <Button variant="outline" size="sm" onClick={() => onEdit(agent.id)} disabled={busy}>Edit</Button>
-                  <Button variant="outline" size="sm" onClick={() => void onDuplicate(agent.id)} disabled={busy}>Duplicate</Button>
-                  {!agent.builtIn && <Button variant="outline" size="sm" onClick={() => void onArchive(agent.id, !agent.archived)} disabled={busy}>{agent.archived ? "Restore" : "Archive"}</Button>}
-                  {!agent.builtIn && <Button variant="destructive" size="sm" onClick={() => void onDelete(agent.id)} disabled={busy}>Delete</Button>}
-                </div>
-              </article>
-            ))}
-          </div>
-          <DialogFooter className="modal-footer">
-            <Button variant="outline" onClick={onClose} disabled={busy}>Done</Button>
-            <Button onClick={onNew} disabled={busy}><Plus /> New agent</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    );
-  }
-
+  if (!agent) return <section className="settings-detail empty-settings"><Bot /><h2>No active agents</h2><p>Create an agent to begin.</p></section>;
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="agent-modal form-modal" closeDisabled={busy}>
-        <DialogHeader className="modal-header">
-          <div>
-            <div className="eyebrow">{dialog.mode === "edit" ? "Customize agent" : "New agent"}</div>
-            <DialogTitle id="agent-form-title">{dialog.mode === "edit" ? `Customize ${editingAgent?.name ?? "agent"}` : "Create an agent"}</DialogTitle>
-            <DialogDescription className="modal-description">Give this teammate one clear job. You can change its instructions later.</DialogDescription>
-          </div>
-        </DialogHeader>
-        {error && <div className="modal-error" role="alert"><CircleAlert />{error}</div>}
-        <form className="agent-form" onSubmit={submit}>
-          {dialog.mode === "new" && (
-            <label className="form-field">
-              <span>Start from template</span>
-              <Select
-                value={form.templateId || "blank"}
-                onValueChange={(value) => applyTemplate(value === "blank" ? "" : (value ?? ""))}
-                disabled={busy}
-                items={[{ label: "Blank agent", value: "blank" }, ...agents.filter((agent) => agent.builtIn).map((agent) => ({ label: agent.name, value: agent.id }))]}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="blank">Blank agent</SelectItem>
-                  {agents.filter((agent) => agent.builtIn).map((agent) => <SelectItem value={agent.id} key={agent.id}>{agent.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </label>
-          )}
-          <div className="form-grid">
-            <label className="form-field">
-              <span>Name</span>
-              <Input value={form.name} onChange={(event) => setField("name", event.target.value)} placeholder="e.g. Release Reviewer" maxLength={80} disabled={busy} required />
-            </label>
-            <label className="form-field">
-              <span>Initials</span>
-              <Input value={form.initials} onChange={(event) => setField("initials", event.target.value)} maxLength={4} disabled={busy} required />
-            </label>
-          </div>
-          <label className="form-field">
-            <span>Description</span>
-            <Input value={form.description} onChange={(event) => setField("description", event.target.value)} placeholder="What outcome does this agent own?" maxLength={180} disabled={busy} required />
-          </label>
-          <label className="form-field">
-            <span>Instructions</span>
-            <Textarea value={form.systemPrompt} onChange={(event) => setField("systemPrompt", event.target.value)} placeholder="Optional: describe the role, method, and boundaries…" rows={7} maxLength={8000} disabled={busy} />
-          </label>
-          <div className="permission-note"><strong>Capability boundary</strong><span>All agents use the local coding tools: read, bash, edit, write, grep, find, and ls. They can change files and run shell commands in the selected workspace.</span></div>
-          <DialogFooter className="modal-footer">
-            <Button variant="outline" type="button" onClick={onClose} disabled={busy}>Cancel</Button>
-            <Button type="submit" disabled={busy || !form.name.trim() || !form.description.trim()}>{busy ? "Saving…" : dialog.mode === "edit" ? "Save changes" : "Create agent"}</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <section className="settings-detail">
+      <div className="detail-heading"><div className="detail-agent-title"><AgentAvatar agent={{ ...agent, initials: initials || agent.initials }} /><div><span className="eyebrow">Agent settings</span><h2>{agent.name}</h2><p>Identity, instructions, workspace, and default model for new chats.</p></div></div></div>
+      <div className="settings-form">
+        <div className="form-grid"><label className="form-field"><span>Name</span><Input value={name} onChange={(event) => setName(event.target.value)} disabled={busy} /></label><label className="form-field compact-field"><span>Initials</span><Input maxLength={4} value={initials} onChange={(event) => setInitials(event.target.value.toUpperCase())} disabled={busy} /></label></div>
+        <label className="form-field"><span>Instructions <em>saved to this agent’s AGENTS.md</em></span><Textarea className="instructions-field" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Leave empty to use Pi’s default behavior." disabled={busy} /></label>
+        <div className="settings-card"><div className="settings-card-heading"><div><span className="eyebrow">Workspace</span><strong>{agent.workspaceKind === "app" ? "App-owned workspace" : "External workspace"}</strong></div><FolderOpen /></div><p className="workspace-path" title={agent.workspace}>{agent.workspace || "No workspace"}</p><div className="settings-card-actions"><Button variant="outline" size="sm" onClick={() => onChooseFolder(agent.id)} disabled={busy}><FolderOpen /> Change workspace</Button>{agent.workspaceKind === "external" && !agent.workspaceTrusted && <Button variant="outline" size="sm" onClick={() => onTrustWorkspace(agent.id)} disabled={busy}><ShieldCheck /> Trust skills</Button>}</div><small>{agent.workspaceTrusted ? "Workspace skills are available from .agents/skills." : "Skills are disabled until this workspace is trusted."}</small></div>
+        <div className="form-field"><span>Default model <em>applies to new chats</em></span><ModelSelect value={agent.defaultModelKey} models={models} onChange={(key) => onModelChange(agent.id, key)} disabled={busy || models.length === 0} className="field-select-trigger" /></div>
+        <div className="settings-actions"><Button onClick={() => onSave({ ...agent, name: name.trim() || agent.name, initials: initials.trim().slice(0, 4) || agent.initials, instructions })} disabled={busy || !name.trim()}><Check /> Save changes</Button></div>
+      </div>
+      <div className="danger-zone"><span className="eyebrow">Lifecycle</span><div className="danger-actions"><Button variant="outline" size="sm" onClick={() => onArchive(agent)} disabled={busy}>{agent.archived ? <RotateCcw /> : <Archive />}{agent.archived ? "Restore agent" : "Archive agent"}</Button><Button variant="destructive" size="sm" onClick={() => onDelete(agent)} disabled={busy}><Trash2 /> Delete permanently</Button></div><p>Archiving hides this agent from chat. Deleting removes its sessions; an external workspace folder is never deleted.</p></div>
+    </section>
   );
+}
+
+function AuthProviderRow({ provider, busy, onApiKey, onOAuth, onLogout }: { provider: ProviderInfo; busy: boolean; onApiKey: (provider: ProviderInfo) => void; onOAuth: (provider: ProviderInfo) => void; onLogout: (provider: ProviderInfo) => void }) {
+  return <div className="provider-row"><div className="provider-copy"><strong>{provider.name}</strong><small>{provider.configured ? `Connected${provider.label ? ` · ${provider.label}` : ""}` : provider.methods.length ? "Not connected" : "Environment or external setup"}</small></div><div className="provider-actions">{provider.methods.includes("api_key") && <Button variant="outline" size="sm" onClick={() => onApiKey(provider)} disabled={busy}><KeyRound /> API key</Button>}{provider.methods.includes("oauth") && <Button variant="outline" size="sm" onClick={() => onOAuth(provider)} disabled={busy}><ExternalLink /> Sign in</Button>}{provider.configured && <Button variant="ghost" size="sm" onClick={() => onLogout(provider)} disabled={busy}>Disconnect</Button>}</div></div>;
+}
+
+function ModelsSettings({ data, busy, onApiKey, onOAuth, onLogout, onImport }: { data: PiBootstrap; busy: boolean; onApiKey: (provider: ProviderInfo, apiKey?: string) => void; onOAuth: (provider: ProviderInfo) => void; onLogout: (provider: ProviderInfo) => void; onImport: () => void }) {
+  const connected = data.setup.providers.filter((provider) => provider.configured).length;
+  const [apiProvider, setApiProvider] = useState<ProviderInfo>();
+  const [apiKey, setApiKey] = useState("");
+  return <section className="settings-detail"><div className="detail-heading"><div><span className="eyebrow">App settings</span><h2>Models & authentication</h2><p>Credentials are global. Each agent chooses its own default model.</p></div></div><div className="settings-card security-card"><LockKeyhole /><div><strong>{connected ? `${connected} provider${connected === 1 ? "" : "s"} connected` : "No provider connected"}</strong><small>Stored in the app’s {data.setup.credentialStorage === "os-keychain" ? "OS keychain" : "protected app file"}.</small></div></div>{apiProvider && <div className="inline-auth-card"><div><span className="eyebrow">Connect provider</span><strong>{apiProvider.name}</strong></div><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste an API key" autoFocus /><div className="settings-card-actions"><Button onClick={() => { onApiKey(apiProvider, apiKey); setApiKey(""); setApiProvider(undefined); }} disabled={busy || !apiKey.trim()}><KeyRound /> Save key</Button><Button variant="ghost" onClick={() => setApiProvider(undefined)}>Cancel</Button></div></div>}<div className="provider-list">{data.setup.providers.length ? data.setup.providers.map((provider) => <AuthProviderRow provider={provider} busy={busy} onApiKey={(selected) => setApiProvider(selected)} onOAuth={onOAuth} onLogout={onLogout} key={provider.id} />) : <p className="muted-copy">No provider authentication methods are available.</p>}</div>{data.setup.canImportPiAuth && <div className="import-card"><div><strong>Import from Pi</strong><p>One-time import of all credentials detected from your local Pi installation.</p></div><Button variant="outline" onClick={onImport} disabled={busy}><KeyRound /> Import Pi auth</Button></div>}<p className="settings-footnote">Pi Bot works without the Pi desktop app or CLI. Existing Pi credentials are only copied when you choose the one-time import.</p></section>;
+}
+
+function SettingsPage({
+  data,
+  busy,
+  onBack,
+  onUpdate,
+  onCreate,
+  onChooseFolder,
+  onTrustWorkspace,
+  onArchive,
+  onDelete,
+  onModelChange,
+  onApiKey,
+  onOAuth,
+  onLogout,
+  onImport,
+}: {
+  data: PiBootstrap;
+  busy: boolean;
+  onBack: () => void;
+  onUpdate: (profile: AgentProfile) => void;
+  onCreate: (name: string, initials: string) => void;
+  onChooseFolder: (agentId: AgentId) => void;
+  onTrustWorkspace: (agentId: AgentId) => void;
+  onArchive: (agent: AgentProfile) => void;
+  onDelete: (agent: AgentProfile) => void;
+  onModelChange: (agentId: AgentId, key: string) => void;
+  onApiKey: (provider: ProviderInfo, apiKey?: string) => void;
+  onOAuth: (provider: ProviderInfo) => void;
+  onLogout: (provider: ProviderInfo) => void;
+  onImport: () => void;
+}) {
+  const [section, setSection] = useState<SettingsSection>("agents");
+  const [selectedId, setSelectedId] = useState<AgentId | "new">(data.activeAgentId ?? (data.agents[0]?.id ?? "new"));
+  useEffect(() => {
+    if (selectedId !== "new" && !data.agents.some((agent) => agent.id === selectedId)) setSelectedId(data.agents[0]?.id ?? "new");
+  }, [data.agents, selectedId]);
+  const selected = selectedId === "new" ? undefined : data.agents.find((agent) => agent.id === selectedId);
+  return <main className="settings-page"><header className="settings-header"><Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to chat"><ArrowLeft /></Button><div><span className="eyebrow">Pi Bot</span><h1>App Settings</h1></div></header><div className="settings-layout"><nav className="settings-nav"><button className={section === "agents" ? "selected" : ""} onClick={() => setSection("agents")}><Bot /><span>Agents</span><small>{data.agents.length}</small></button><button className={section === "models" ? "selected" : ""} onClick={() => setSection("models")}><KeyRound /><span>Models & authentication</span></button></nav>{section === "models" ? <ModelsSettings data={data} busy={busy} onApiKey={onApiKey} onOAuth={onOAuth} onLogout={onLogout} onImport={onImport} /> : <div className="agent-settings-layout"><aside className="settings-agent-list"><div className="settings-list-heading"><span className="eyebrow">All agents</span><Button variant="outline" size="icon-sm" onClick={() => setSelectedId("new")} disabled={busy} aria-label="Create agent"><Plus /></Button></div>{data.agents.map((agent) => <button className={`settings-agent-item ${selectedId === agent.id ? "selected" : ""} ${agent.archived ? "archived" : ""}`} key={agent.id} onClick={() => setSelectedId(agent.id)}><AgentAvatar agent={agent} /><span><strong>{agent.name}</strong><small>{agent.archived ? "Archived" : agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span></button>)}{data.agents.length === 0 && <p className="muted-copy">No agents yet.</p>}</aside><AgentEditor agent={selected} models={data.config.models} isNew={selectedId === "new"} busy={busy} onCreate={(name, initials) => onCreate(name, initials)} onSave={onUpdate} onChooseFolder={onChooseFolder} onTrustWorkspace={onTrustWorkspace} onArchive={onArchive} onDelete={onDelete} onModelChange={onModelChange} /></div>}</div></main>;
+}
+
+function AuthPromptCard({ prompt, notice, onRespond }: { prompt: { id: string; prompt: AuthPrompt }; notice?: string; onRespond: (value: string) => void }) {
+  const [value, setValue] = useState("");
+  return <div className="auth-prompt-card"><span className="eyebrow">Provider sign-in</span><h3>{prompt.prompt.message}</h3>{notice && <p className="auth-notice">{notice}</p>}{prompt.prompt.type === "select" ? <select className="field-select" value={value} onChange={(event) => setValue(event.target.value)}><option value="">Choose an option</option>{prompt.prompt.options?.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select> : <Input autoFocus type={prompt.prompt.type === "secret" ? "password" : "text"} value={value} onChange={(event) => setValue(event.target.value)} placeholder={prompt.prompt.placeholder} /> }<Button onClick={() => onRespond(value)} disabled={!value.trim()}><Check /> Continue</Button></div>;
+}
+
+function SetupPage({ data, busy, error, onImport, onApiKey, onOAuth }: { data: PiBootstrap; busy: boolean; error?: string; onImport: () => void; onApiKey: (providerId: string, apiKey: string) => void; onOAuth: (provider: ProviderInfo) => void }) {
+  const apiProviders = data.setup.providers.filter((provider) => provider.methods.includes("api_key"));
+  const [providerId, setProviderId] = useState(apiProviders[0]?.id ?? "");
+  const [apiKey, setApiKey] = useState("");
+  const provider = data.setup.providers.find((item) => item.id === providerId);
+  return <main className="setup-page"><div className="setup-card"><div className="setup-mark"><Bot /></div><span className="eyebrow">First setup</span><h1>Set up Pi Bot</h1><p className="setup-lede">Connect a provider and start chatting with a workspace teammate.</p><ErrorBanner message={error} />{apiProviders.length > 0 ? <div className="setup-auth-form"><label className="form-field"><span>Provider</span><select className="field-select" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{apiProviders.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label className="form-field"><span>API key</span><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste a provider API key" /></label><Button className="setup-primary" onClick={() => onApiKey(providerId, apiKey)} disabled={busy || !apiKey.trim() || !providerId}>{busy ? <LoaderCircle className="spin" /> : <KeyRound />} Connect provider</Button>{provider?.methods.includes("oauth") && <Button variant="outline" onClick={() => onOAuth(provider)} disabled={busy}><ExternalLink /> Sign in with subscription</Button>}</div> : <p className="muted-copy">No direct API-key provider is available. You can import credentials from Pi if they are detected.</p>}{data.setup.canImportPiAuth && <div className="setup-import"><div><strong>Already use Pi?</strong><p>Import all detected Pi credentials once. The original auth stays untouched.</p></div><Button variant="outline" onClick={onImport} disabled={busy}><KeyRound /> Import auth from Pi</Button></div>}<p className="setup-storage"><LockKeyhole /> Credentials are stored in the app’s {data.setup.credentialStorage === "os-keychain" ? "OS keychain" : "protected app file"}.</p></div></main>;
 }
 
 export function App() {
-  const [config, setConfig] = useState<PiConfig | null>(null);
-  const [items, setItems] = useState<TimelineItem[]>([]);
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [agents, setAgents] = useState<AgentProfile[]>(initialAgents);
-  const [activeAgentId, setActiveAgentId] = useState<AgentId>("planner");
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(() => {
-    try {
-      return window.localStorage.getItem("pi-bot.sidebar-open") !== "false";
-    } catch {
-      return true;
-    }
-  });
-  const [busy, setBusy] = useState(false);
+  const [data, setData] = useState<PiBootstrap | null>(null);
   const [connecting, setConnecting] = useState(true);
-  const [error, setError] = useState("");
-  const [agentDialog, setAgentDialog] = useState<AgentDialogState | null>(null);
-  const activeAssistantId = useRef("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const [view, setView] = useState<View>("chat");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [authPrompt, setAuthPrompt] = useState<{ id: string; prompt: AuthPrompt }>();
+  const [authNotice, setAuthNotice] = useState<string>();
+  const currentData = data ?? emptyBootstrap();
 
   useEffect(() => {
     const unsubscribe = window.piBot.onEvent((event: PiEvent) => {
-      if (event.type === "agent-start") setBusy(true);
-      if (event.type === "agent-end" && !event.retrying) {
-        setBusy(false);
-        setItems((current) => current.map((item) =>
-          item.id === activeAssistantId.current && item.status === "running" ? { ...item, status: "done" } : item,
-        ));
-      }
-      if (event.type === "agent-settled") {
-        setBusy(false);
-        setItems((current) => current.map((item) =>
-          item.id === activeAssistantId.current && item.status === "running" ? { ...item, status: "done" } : item,
-        ));
-      }
-      if (event.type === "aborted") {
-        setBusy(false);
-        setError("");
-      }
       if (event.type === "assistant-delta") {
-        setItems((current) => current.map((item) =>
-          item.id === activeAssistantId.current
-            ? { ...item, body: item.body + event.delta, status: "running" }
-            : item,
-        ));
-      }
-      if (event.type === "tool-start") {
-        setItems((current) => [...current, {
-          id: event.id,
-          kind: "tool",
-          label: `Tool · ${event.name}`,
-          body: event.detail,
-          timestamp: time(),
-          status: "running",
-        }]);
-      }
-      if (event.type === "tool-update") {
-        setItems((current) => current.map((item) => item.id === event.id ? { ...item, body: event.detail } : item));
-      }
-      if (event.type === "tool-end") {
-        setItems((current) => current.map((item) => item.id === event.id
-          ? { ...item, body: event.detail, status: event.failed ? "failed" : "done" }
-          : item));
-      }
-      if (event.type === "error") setError(event.message);
-      if (event.type === "session-sync") {
-        setItems(event.transcript);
-        setSessions(event.sessions);
-        setConfig(event.config);
-        setActiveAgentId(event.config.agentId);
-        setAgents(event.agents);
-      }
+        setData((previous) => {
+          if (!previous) return previous;
+          const transcript = [...previous.transcript];
+          const last = transcript.at(-1);
+          if (last?.kind === "assistant" && last.status === "running") transcript[transcript.length - 1] = { ...last, body: `${last.body}${event.delta}`, status: "running" };
+          else transcript.push({ id: `assistant-${Date.now()}`, kind: "assistant", label: findAgent(previous.agents, previous.activeAgentId)?.name ?? "Assistant", body: event.delta, status: "running", timestamp: timeNow() });
+          return { ...previous, transcript };
+        });
+      } else if (event.type === "tool-start") {
+        setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: event.id, kind: "tool", label: `Tool · ${event.name}`, body: event.detail, status: "running", timestamp: timeNow() }] } : previous);
+      } else if (event.type === "tool-update") {
+        setData((previous) => {
+          if (!previous) return previous;
+          return { ...previous, transcript: previous.transcript.map((item) => item.id === event.id ? { ...item, body: event.detail } : item) };
+        });
+      } else if (event.type === "tool-end") {
+        setData((previous) => previous ? { ...previous, transcript: previous.transcript.map((item) => item.id === event.id ? { ...item, body: event.detail, status: event.failed ? "failed" : "done" } : item) } : previous);
+      } else if (event.type === "agent-start") setBusy(true);
+      else if (event.type === "agent-settled" || event.type === "aborted") setBusy(false);
+      else if (event.type === "agent-end" && !event.retrying) setBusy(false);
+      else if (event.type === "error") { setBusy(false); setError(event.message); }
+      else if (event.type === "auth-prompt") setAuthPrompt({ id: event.id, prompt: event.prompt });
+      else if (event.type === "auth-notify") setAuthNotice(event.event.message || event.event.instructions || (event.event.url ? `Continue in your browser: ${event.event.url}` : undefined));
+      else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId } : previous);
     });
-
-    window.piBot.connect()
-      .then((data) => {
-        hydrate(data, setConfig, setItems, setSessions, setAgents);
-        setActiveAgentId(data.config.agentId);
-      })
-      .catch((reason) => setError(readableError(reason)))
-      .finally(() => setConnecting(false));
-
+    window.piBot.connect().then((result) => { setData(result); setConnecting(false); }).catch((reason) => { setError(readableError(reason)); setConnecting(false); });
     return unsubscribe;
   }, []);
 
-  const activePath = config?.session?.path;
-  const activeAgent = findAgent(agents, activeAgentId);
-  const title = config?.session?.name ?? "New conversation";
-  const interactionDisabled = connecting || !config;
-
-  useEffect(() => {
+  async function perform(action: () => Promise<PiBootstrap | null>) {
+    setBusy(true);
+    setError(undefined);
     try {
-      window.localStorage.setItem("pi-bot.sidebar-open", String(sidebarOpen));
-    } catch {
-      // Renderer-only preference; failure should not affect the workspace.
-    }
-  }, [sidebarOpen]);
-
-  const perform = useMemo(() => async (
-    operation: () => Promise<PiBootstrap | null>,
-    onData?: (data: PiBootstrap) => void,
-  ) => {
-    setConnecting(true);
-    setError("");
-    try {
-      const data = await operation();
-      if (data) {
-        hydrate(data, setConfig, setItems, setSessions, setAgents);
-        onData?.(data);
+      const next = await action();
+      if (next) {
+        setData(next);
+        setBusy(next.config.streaming);
+      } else {
+        setBusy(false);
       }
-      setBusy(false);
-      return true;
+      return next;
     } catch (reason) {
       setError(readableError(reason));
-      return false;
-    } finally {
-      setConnecting(false);
-    }
-  }, []);
-
-  function onPrompt(message: string) {
-    const assistantId = `assistant-${Date.now()}`;
-    activeAssistantId.current = assistantId;
-    setError("");
-    setItems((current) => [...current,
-      { id: `user-${Date.now()}`, kind: "user", label: "You", body: message, timestamp: time() },
-      { id: assistantId, kind: "assistant", label: "Pi Bot", body: "", timestamp: time(), status: "running" },
-    ]);
-    setBusy(true);
-    window.piBot.prompt(message).catch((reason) => {
       setBusy(false);
-      if (isAbortError(reason)) {
-        setError("");
-        return;
-      }
-      setError(readableError(reason));
-      setItems((current) => current.map((item) => item.id === assistantId && !item.body ? { ...item, status: "failed", body: readableError(reason) } : item));
-    });
+      throw reason;
+    }
   }
 
-  function onAbort() {
-    window.piBot.abort().catch((reason) => {
-      if (!isAbortError(reason)) setError(readableError(reason));
-    });
+  async function prompt(message: string) {
+    setError(undefined);
+    setBusy(true);
+    setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: `user-${Date.now()}`, kind: "user", label: "You", body: message, timestamp: timeNow() }] } : previous);
+    try { await window.piBot.prompt(message); } catch (reason) { setError(readableError(reason)); setBusy(false); }
   }
 
-  function onSelectAgent(agentId: AgentId) {
-    if (agentId === activeAgentId || busy || connecting) return;
-    void perform(() => window.piBot.selectAgent(agentId), (data) => setActiveAgentId(data.config.agentId));
+  async function authenticate(action: () => Promise<PiBootstrap | null>) {
+    try { const next = await perform(action); setAuthPrompt(undefined); setAuthNotice(undefined); setView("chat"); return next; } catch { return undefined; }
   }
 
-  async function createAgent(draft: AgentDraft) {
-    const success = await perform(() => window.piBot.createAgent(draft));
-    if (success) setAgentDialog(null);
-    return success;
+  if (connecting || !data) return <div className="loading-screen"><LoaderCircle className="spin" /><span>Opening Pi Bot…</span></div>;
+  if (data.setup.required) return <><SetupPage data={data} busy={busy} error={error} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onApiKey={(providerId, apiKey) => void authenticate(() => window.piBot.setProviderApiKey(providerId, apiKey))} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} />{authPrompt && <AuthPromptCard prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} />}</>;
+
+  const agent = findAgent(data.agents, data.activeAgentId);
+  const activeId = data.activeAgentId;
+  const updateWith = (action: () => Promise<PiBootstrap | null>) => void perform(action);
+  function navigateToChat(action: () => Promise<PiBootstrap | null>) {
+    setError(undefined);
+    setView("chat");
+    void perform(action).catch(() => undefined);
+  }
+  function deleteSession(chat: SessionSummary) {
+    if (!window.confirm(`Delete “${chat.name}” permanently? This chat cannot be restored.`)) return;
+    updateWith(() => window.piBot.deleteSession(chat.path));
+  }
+  function deleteAgent(profile: AgentProfile) {
+    const deletesWorkspace = profile.workspaceKind === "app" && window.confirm(`Delete ${profile.name}, its sessions, and its app-owned workspace permanently?`);
+    if (profile.workspaceKind !== "app" && !window.confirm(`Delete ${profile.name} and all of its sessions permanently? The external workspace folder will stay.`)) return;
+    updateWith(() => window.piBot.deleteAgent(profile.id, deletesWorkspace));
   }
 
-  async function updateAgent(agent: AgentProfile) {
-    const success = await perform(() => window.piBot.updateAgent(agent), (data) => setActiveAgentId(data.config.agentId));
-    if (success) setAgentDialog(null);
-    return success;
-  }
-
-  function duplicateAgent(agentId: AgentId) {
-    return perform(() => window.piBot.duplicateAgent(agentId));
-  }
-
-  function archiveAgent(agentId: AgentId, archived: boolean) {
-    return perform(() => window.piBot.archiveAgent(agentId, archived), (data) => setActiveAgentId(data.config.agentId));
-  }
-
-  function deleteAgent(agentId: AgentId) {
-    if (!window.confirm("Delete this agent? Its saved conversations will be kept and reassigned to Planner.")) return Promise.resolve(false);
-    return perform(() => window.piBot.deleteAgent(agentId), (data) => setActiveAgentId(data.config.agentId));
-  }
-
-  return (
-    <TooltipProvider>
-      <SidebarProvider asChild open={sidebarOpen} onOpenChange={setSidebarOpen} defaultOpen>
-        <main className="variant-a">
-          <AgentSidebar
-            agents={agents}
-            activeAgentId={activeAgentId}
-            sessions={sessions}
-            activePath={activePath}
-            busy={busy}
-            connecting={connecting}
-            historyOpen={historyOpen}
-            onSelectAgent={onSelectAgent}
-            onNewAgent={() => { setError(""); setAgentDialog({ mode: "new" }); }}
-            onManageAgents={() => { setError(""); setAgentDialog({ mode: "manage" }); }}
-            onToggleHistory={() => setHistoryOpen((open) => !open)}
-            onNewSession={() => void perform(() => window.piBot.newSession())}
-            onOpenSession={(selected) => void perform(() => window.piBot.openSession(selected.path))}
-          />
-
-          <SidebarInset className="a-conversation">
-        <header className="section-header">
-          <div>
-            <div className="eyebrow">{activeAgent.name}</div>
-            <h1>{title}</h1>
-          </div>
-          <span className={busy ? "live-status busy" : "live-status"}><i /> {connecting ? "Connecting" : busy ? "Working" : "Ready"}</span>
-        </header>
-        {error && <div className="error-line" role="alert"><CircleAlert /><div><strong>Pi Bot needs attention</strong><span>{error}</span></div></div>}
-        <EventRows items={items} assistantLabel={activeAgent.name} assistantInitials={activeAgent.initials} />
-        <Composer busy={busy} disabled={interactionDisabled} agentName={activeAgent.name} onPrompt={onPrompt} onAbort={onAbort} />
-          </SidebarInset>
-
-          <ContextPanel
-            agent={activeAgent}
-            config={config}
-            connecting={connecting}
-            busy={busy}
-            onChooseFolder={() => void perform(() => window.piBot.chooseFolder())}
-            onEditAgent={() => { setError(""); setAgentDialog({ mode: "edit", agentId: activeAgent.id }); }}
-            onModelChange={(key) => {
-              window.piBot.setModel(key).then(setConfig).catch((reason) => setError(readableError(reason)));
-            }}
-            onThinkingChange={(level) => {
-              window.piBot.setThinkingLevel(level).then(setConfig).catch((reason) => setError(readableError(reason)));
-            }}
-          />
-          {agentDialog && (
-            <AgentDialog
-              dialog={agentDialog}
-              agents={agents}
-              busy={busy || connecting}
-              error={error}
-              onClose={() => setAgentDialog(null)}
-              onNew={() => { setError(""); setAgentDialog({ mode: "new" }); }}
-              onEdit={(agentId) => { setError(""); setAgentDialog({ mode: "edit", agentId }); }}
-              onCreate={createAgent}
-              onUpdate={updateAgent}
-              onDuplicate={duplicateAgent}
-              onArchive={archiveAgent}
-              onDelete={deleteAgent}
-            />
-          )}
-        </main>
-      </SidebarProvider>
-    </TooltipProvider>
-  );
+  return <div className="app-shell"><AgentSidebar data={data} busy={busy} expanded={expanded} onToggle={(id) => setExpanded((previous) => ({ ...previous, [id]: !previous[id] }))} onSelect={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onSettings={() => { setError(undefined); setView("settings"); }} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path))} onDeleteSession={deleteSession} />{view === "chat" ? <ChatView data={data} busy={busy} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /> : <SettingsPage data={data} busy={busy} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} />}{authPrompt && <AuthPromptCard prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} />}</div>;
 }
