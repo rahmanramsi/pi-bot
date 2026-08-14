@@ -18,6 +18,8 @@ This contract extends [`docs/design-system.md`](docs/design-system.md) with the 
 | `--motion-micro` | `120ms ease-out` | press, hover lift, icon swap |
 | `--motion-standard` | `220ms cubic-bezier(.2,.8,.2,1)` | disclosure, navigation, panel entry |
 | `--motion-emphasis` | `360ms cubic-bezier(.16,1,.3,1)` | workspace and view transitions |
+| `--motion-stream-batch` | `40ms` | coalesce assistant text deltas before a markdown render |
+| `--motion-stream-caret` | `1100ms ease-in-out` | active-generation caret pulse |
 
 Motion spring equivalents live in `src/lib/motion.tsx`:
 
@@ -55,6 +57,7 @@ Motion spring equivalents live in `src/lib/motion.tsx`:
 - Never use motion to conceal an error, delay a destructive action, or create an unexpected focus jump.
 - Keep transitions brief enough that a person can continue working without waiting for an effect.
 - Make cancellation and stop controls respond immediately, even while an enter/exit transition is running.
+- Streamed assistant text is rendered in short batches instead of animating each character. This keeps markdown structure stable and leaves the caret as the only repeating cue for active generation.
 
 ## 6. Review gate
 
