@@ -1,15 +1,22 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
+const { extractFile } = createRequire(import.meta.url)("@electron/asar");
 const testDir = await mkdtemp(path.join(tmpdir(), "pi-bot-smoke-"));
 const resultFile = path.join(testDir, "smoke-test.json");
 const appPath = path.resolve("release/mac-arm64/Pi Bot.app");
+const appAsar = path.join(appPath, "Contents", "Resources", "app.asar");
 
 try {
+  const packagedMain = extractFile(appAsar, "electron/main.mjs").toString();
+  if (packagedMain.includes("safeStorage") || packagedMain.includes("credentials.bin")) {
+    throw new Error("Packaged app still references Electron Safe Storage.");
+  }
   await writeFile(path.join(testDir, ".smoke-test"), "");
   await run("/usr/bin/open", ["-n", appPath, "--args", `--user-data-dir=${testDir}`]);
   let result;

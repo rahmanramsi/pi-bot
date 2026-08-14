@@ -95,7 +95,7 @@ export type PiSetup = {
   canContinue: boolean;
   canImportPiAuth: boolean;
   piAuthPath: string;
-  credentialStorage: "os-keychain" | "protected-app-file" | string;
+  credentialStorage: "protected-app-file";
   providers: ProviderInfo[];
 };
 

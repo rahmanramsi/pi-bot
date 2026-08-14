@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -56,7 +56,7 @@ function settingsFile() {
 }
 
 function credentialsFile() {
-  return userDataPath("credentials.bin");
+  return userDataPath("credentials.json");
 }
 
 function defaultWorkspace(agentId) {
@@ -192,11 +192,7 @@ function saveSettings() {
 function loadCredentials() {
   storedCredentials = {};
   try {
-    const encoded = readFileSync(credentialsFile(), "utf8");
-    const decoded = safeStorage.isEncryptionAvailable()
-      ? safeStorage.decryptString(Buffer.from(encoded, "base64"))
-      : encoded;
-    const parsed = JSON.parse(decoded);
+    const parsed = JSON.parse(readFileSync(credentialsFile(), "utf8"));
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) storedCredentials = parsed;
   } catch {
     // No credentials is the normal first-run state.
@@ -205,12 +201,7 @@ function loadCredentials() {
 
 function saveCredentials() {
   mkdirSync(app.getPath("userData"), { recursive: true });
-  const content = JSON.stringify(storedCredentials);
-  if (safeStorage.isEncryptionAvailable()) {
-    writeFileSync(credentialsFile(), safeStorage.encryptString(content).toString("base64"), { mode: 0o600 });
-  } else {
-    writeFileSync(credentialsFile(), content, { mode: 0o600 });
-  }
+  writeFileSync(credentialsFile(), JSON.stringify(storedCredentials), { mode: 0o600 });
 }
 
 const credentialStore = {
@@ -528,7 +519,7 @@ function setupState() {
     canContinue: availableModels.length > 0,
     canImportPiAuth: !setupComplete && Object.keys(importablePiCredentials()).length > 0,
     piAuthPath: piAuthFile(),
-    credentialStorage: "os-keychain",
+    credentialStorage: "protected-app-file",
     providers: authProviders(),
   };
 }
