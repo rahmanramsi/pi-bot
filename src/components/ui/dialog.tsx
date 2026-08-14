@@ -141,6 +141,13 @@ const DialogContent = React.forwardRef<
     if (!open) setPresent(false);
   }, [open]);
 
+  React.useEffect(() => {
+    if (open || !present) return;
+
+    const exitTimer = window.setTimeout(() => setPresent(false), motionTransitions.standard.duration * 1000);
+    return () => window.clearTimeout(exitTimer);
+  }, [open, present]);
+
   if (!present) return null;
 
   return (
