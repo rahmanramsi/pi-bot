@@ -1,4 +1,4 @@
-import { createElement, FormEvent, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { createElement, forwardRef, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   Bot,
   Check,
-  ChevronDown,
   ChevronRight,
   CircleAlert,
   ChevronLeft,
@@ -45,6 +44,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { AnimatePresence, motion, motionSprings, motionTransitions, useReducedMotion } from "./lib/motion";
 import type {
   AgentId,
   AgentProfile,
@@ -53,7 +53,6 @@ import type {
   PiConfig,
   PiEvent,
   PiModelOption,
-  ProviderAuthMethod,
   ProviderInfo,
   SessionSummary,
   ThinkingLevel,
@@ -148,36 +147,6 @@ function findAgent(agents: AgentProfile[], id?: AgentId | null) {
   return agents.find((agent) => agent.id === id) ?? agents.find((agent) => !agent.archived) ?? agents[0];
 }
 
-function emptyBootstrap(): PiBootstrap {
-  return {
-    config: {
-      agentId: null,
-      workspace: "",
-      workspaceKind: "",
-      workspaceTrusted: false,
-      model: "No model selected",
-      modelKey: "",
-      defaultModelKey: "",
-      modelAvailable: false,
-      provider: "",
-      thinkingLevel: "medium",
-      availableThinkingLevels: [],
-      streaming: false,
-      context: { tokens: null, contextWindow: 0, percent: null },
-      models: [],
-      tools: [],
-      session: null,
-    },
-    transcript: [],
-    sessions: [],
-    sessionsByAgent: {},
-    agents: [],
-    setup: { required: true, canContinue: false, canImportPiAuth: false, piAuthPath: "", credentialStorage: "protected-app-file", providers: [] },
-    authenticated: false,
-    activeAgentId: null,
-  };
-}
-
 function providerLabel(provider: string) {
   const knownLabels: Record<string, string> = {
     anthropic: "Anthropic",
@@ -234,7 +203,7 @@ function ModelSelect({
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent className="model-select-content" align="start" alignItemWithTrigger={false}>
-        <div className="model-select-search" onKeyDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+        <div className="model-select-search" onKeyDown={(event) => { if (event.key === "Escape") { setOpen(false); setQuery(""); return; } event.stopPropagation(); }} onPointerDown={(event) => event.stopPropagation()}>
           <Search aria-hidden="true" />
           <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search models…" aria-label="Search models" />
         </div>
@@ -298,7 +267,7 @@ function Composer({
   const contextLabel = config.context.percent === null ? "—" : config.context.percent > 0 && config.context.percent < 1 ? "<1%" : `${config.context.percent.toFixed(0)}%`;
   const reasoningLevels = config.availableThinkingLevels.length > 0 ? config.availableThinkingLevels : ["off"] as ThinkingLevel[];
 
-  function submit(event: FormEvent) {
+  function submit(event: { preventDefault: () => void }) {
     event.preventDefault();
     const value = message.trim();
     if (!value || busy || disabled) return;
@@ -403,22 +372,26 @@ function ActivityItem({ item }: { item: TimelineItem }) {
   const output = state.status === "running" && item.body === item.input ? "Running…" : item.body || "No output returned.";
   const outcome = state.status === "running" ? "Running" : state.status === "failed" ? "Failed" : "Success";
   return (
-    <details className={`activity-item ${state.status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <motion.details layout className={`activity-item ${state.status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-motion="activity-item">
       <summary>
         <span className="activity-glyph"><Terminal /></span>
         <span className="activity-summary-copy">
           <strong className="activity-summary-closed">{command ? <>Ran <code title={command}>{command}</code></> : title}</strong>
           <strong className="activity-summary-open">{command ? "Ran command" : title}</strong>
         </span>
-        <ChevronRight className="activity-chevron" />
+        <motion.span className="activity-chevron" animate={{ rotate: open ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span>
       </summary>
-      <div className="activity-output-card">
-        <div className="activity-output-heading">{command ? "Shell" : "Details"}</div>
-        {command && <code className="activity-command-full">$ {command}</code>}
-        <pre>{output}</pre>
-        <div className={`activity-outcome ${state.status}`}>{state.icon}<span>{outcome}</span></div>
-      </div>
-    </details>
+      <AnimatePresence initial={false}>
+        {open && <motion.div className="activity-output-motion" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.standard}>
+          <div className="activity-output-card">
+            <div className="activity-output-heading">{command ? "Shell" : "Details"}</div>
+            {command && <code className="activity-command-full">$ {command}</code>}
+            <pre>{output}</pre>
+            <div className={`activity-outcome ${state.status}`}>{state.icon}<span>{outcome}</span></div>
+          </div>
+        </motion.div>}
+      </AnimatePresence>
+    </motion.details>
   );
 }
 
@@ -437,7 +410,7 @@ function ActivityGroup({ items }: { items: TimelineItem[] }) {
       ? `${doneCount} of ${items.length} steps completed`
       : `All ${items.length} ${items.length === 1 ? "step" : "steps"} completed`;
   return (
-    <details className="activity-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <motion.details layout className="activity-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-motion="activity-group">
       <summary>
         <span className="activity-group-glyph" aria-hidden="true"><i /><i /><i /></span>
         <span className="activity-group-copy">
@@ -445,10 +418,10 @@ function ActivityGroup({ items }: { items: TimelineItem[] }) {
           <span>{summary}</span>
         </span>
         <span className="activity-group-toggle">{open ? "Hide details" : "Show details"}</span>
-        <ChevronRight className="activity-group-chevron" />
+        <motion.span className="activity-group-chevron" animate={{ rotate: open ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span>
       </summary>
       <ActivityList items={items} />
-    </details>
+    </motion.details>
   );
 }
 
@@ -518,7 +491,7 @@ function MarkdownContent({ body }: { body: string }) {
 function ChatMessage({ item, agent }: { item: TimelineItem; agent?: AgentProfile }) {
   const isUser = item.kind === "user";
   return (
-    <article className={`chat-message ${isUser ? "user" : "assistant"}`}>
+    <motion.article className={`chat-message ${isUser ? "user" : "assistant"}`} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
       {isUser ? <div className="chat-avatar" aria-hidden="true">YO</div> : agent ? <AgentAvatar agent={agent} className="chat-avatar" /> : <div className="chat-avatar" aria-hidden="true">AS</div>}
       <div className="chat-message-main">
         <div className="chat-message-meta">
@@ -528,20 +501,21 @@ function ChatMessage({ item, agent }: { item: TimelineItem; agent?: AgentProfile
         </div>
         <div className="chat-bubble"><div className="chat-body"><MarkdownContent body={item.body || "Thinking…"} /></div></div>
       </div>
-    </article>
+    </motion.article>
   );
 }
 
 function AgentWorking({ agent }: { agent?: AgentProfile }) {
   const name = agent?.name ?? "Assistant";
+  const reducedMotion = useReducedMotion();
   return (
-    <article className="chat-message assistant agent-working" role="status" aria-label={`${name} is working`}>
+    <motion.article className="chat-message assistant agent-working" layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={motionTransitions.standard} role="status" aria-label={`${name} is working`} data-motion="agent-working">
       {agent ? <AgentAvatar agent={agent} className="chat-avatar" /> : <div className="chat-avatar" aria-hidden="true">AS</div>}
       <div className="chat-message-main">
         <div className="chat-message-meta"><strong>{name}</strong><span className="agent-working-label">Working…</span></div>
-        <div className="chat-bubble"><div className="agent-working-dots" aria-hidden="true"><span /><span /><span /></div></div>
+        <div className="chat-bubble"><div className="agent-working-dots" aria-hidden="true">{[0, 1, 2].map((index) => <motion.span key={index} animate={reducedMotion ? { opacity: 1 } : { opacity: [0.3, 1, 0.3], y: [0, -3, 0] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1, repeat: Infinity, delay: index * 0.12, ease: "easeInOut" }} />)}</div></div>
       </div>
-    </article>
+    </motion.article>
   );
 }
 
@@ -587,10 +561,12 @@ function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?
       ) : (
         <div className="conversation-scroll" ref={scrollRef} onScroll={handleScroll} role="log" aria-label="Conversation">
           <div className="conversation-blocks">
-            {blocks.map((block) => block.kind === "activity"
-              ? <ActivityGroup items={block.items} key={`activity-${block.items[0].id}`} />
-              : <ChatMessage item={block.item} agent={agent} key={block.item.id} />)}
-            {showAgentWorking && <AgentWorking agent={agent} />}
+            <AnimatePresence initial={false}>
+              {blocks.map((block) => block.kind === "activity"
+                ? <ActivityGroup items={block.items} key={`activity-${block.items[0].id}`} />
+                : <ChatMessage item={block.item} agent={agent} key={block.item.id} />)}
+              {showAgentWorking && <AgentWorking agent={agent} key="agent-working" />}
+            </AnimatePresence>
           </div>
         </div>
       )}
@@ -620,50 +596,60 @@ function AgentRail({
 }) {
   const agents = data.agents.filter((agent) => !agent.archived);
   return (
-    <aside className="agent-rail">
+    <motion.aside className="agent-rail" layout data-motion="agent-rail">
       <div className="rail-brand" title="Pi Bot"><img src={theme === "dark" ? "./branding/pi-bot-logo-dark.png" : "./branding/pi-bot-logo.png"} alt="" /></div>
       <div className="rail-agents" aria-label="Agents">
         {agents.map((agent) => (
-          <button className={`rail-agent-button ${agent.id === data.activeAgentId ? "selected" : ""}`} type="button" onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} key={agent.id}>
+          <motion.button className={`rail-agent-button ${agent.id === data.activeAgentId ? "selected" : ""}`} type="button" onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} key={agent.id} whileHover={{ y: -1 }} whileTap={{ scale: 0.96 }} transition={motionSprings.press} data-motion="agent-select">
+            {agent.id === data.activeAgentId && <motion.span className="rail-active-indicator" layoutId="rail-active-indicator" transition={motionSprings.layout} aria-hidden="true" />}
             <AgentAvatar agent={agent} active={agent.id === data.activeAgentId} />
-          </button>
+          </motion.button>
         ))}
       </div>
       <div className="rail-spacer" />
-      <button className="rail-action create" type="button" onClick={onCreateAgent} title="Create agent" aria-label="Create agent"><Plus /></button>
-      <button className="rail-action" type="button" onClick={onToggleTheme} title={theme === "dark" ? "Use light mode" : "Use dark mode"} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>{theme === "dark" ? <Sun /> : <Moon />}</button>
-      <button className="rail-action" type="button" onClick={onSettings} title="App settings" aria-label="App settings"><Settings2 /></button>
-    </aside>
+      <motion.button className="rail-action create" type="button" onClick={onCreateAgent} title="Create agent" aria-label="Create agent" whileHover={{ y: -1 }} whileTap={{ scale: 0.96 }} transition={motionSprings.press} data-motion="rail-action"><Plus /></motion.button>
+      <motion.button className="rail-action" type="button" onClick={onToggleTheme} title={theme === "dark" ? "Use light mode" : "Use dark mode"} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"} whileHover={{ y: -1 }} whileTap={{ scale: 0.96 }} transition={motionSprings.press} data-motion="rail-action"><AnimatePresence initial={false} mode="wait"><motion.span key={theme} initial={{ opacity: 0, rotate: -20, scale: 0.8 }} animate={{ opacity: 1, rotate: 0, scale: 1 }} exit={{ opacity: 0, rotate: 20, scale: 0.8 }} transition={motionTransitions.micro}>{theme === "dark" ? <Sun /> : <Moon />}</motion.span></AnimatePresence></motion.button>
+      <motion.button className="rail-action" type="button" onClick={onSettings} title="App settings" aria-label="App settings" whileHover={{ y: -1 }} whileTap={{ scale: 0.96 }} transition={motionSprings.press} data-motion="rail-action"><Settings2 /></motion.button>
+    </motion.aside>
   );
 }
 
-function SessionSidebar({
-  data,
-  busy,
-  onNewChat,
-  onOpenSession,
-  onDeleteSession,
-  onCollapse,
-}: {
+type SessionSidebarProps = {
   data: PiBootstrap;
   busy: boolean;
   onNewChat: () => void;
   onOpenSession: (session: SessionSummary) => void;
   onDeleteSession: (session: SessionSummary) => void;
   onCollapse: () => void;
-}) {
+};
+
+function SessionMenu({ chat, busy, onDeleteSession }: { chat: SessionSummary; busy: boolean; onDeleteSession: (session: SessionSummary) => void }) {
+  const [open, setOpen] = useState(false);
+  return <details className="session-menu" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary aria-label={`Actions for ${chat.name}`}><MoreHorizontal /></summary>
+    <AnimatePresence initial={false}>{open && <motion.div initial={{ opacity: 0, y: -4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }} transition={motionTransitions.micro}><motion.button type="button" onClick={() => onDeleteSession(chat)} disabled={busy} whileTap={{ scale: 0.98 }} transition={motionSprings.press} data-motion="session-delete"><Trash2 /> Delete session</motion.button></motion.div>}</AnimatePresence>
+  </details>;
+}
+
+const SessionSidebar = forwardRef<HTMLElement, SessionSidebarProps>(function SessionSidebar({
+  data,
+  busy,
+  onNewChat,
+  onOpenSession,
+  onDeleteSession,
+  onCollapse,
+}, ref) {
   const agent = findAgent(data.agents, data.activeAgentId);
   const sessions = agent ? data.sessionsByAgent[agent.id] ?? [] : [];
   const groups = groupSessions(sessions);
-  const agents = data.agents.filter((agent) => !agent.archived);
   return (
-    <aside className="session-sidebar">
+    <motion.aside ref={ref} className="session-sidebar" initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} transition={motionTransitions.standard} layout data-motion="session-sidebar">
       <header className="session-sidebar-header">
         <div>
           <span className="eyebrow">Agent</span>
           <strong>{agent?.name ?? "No active agent"}</strong>
         </div>
-        <button type="button" onClick={onCollapse} aria-label="Hide sessions" title="Hide sessions"><PanelLeftClose /></button>
+        <motion.button type="button" onClick={onCollapse} aria-label="Hide sessions" title="Hide sessions" whileHover={{ y: -1 }} whileTap={{ scale: 0.94 }} transition={motionSprings.press} data-motion="sidebar-toggle"><PanelLeftClose /></motion.button>
       </header>
       <Button className="new-chat-button" onClick={onNewChat} disabled={!data.activeAgentId}><MessageSquarePlus /> New session <Plus /></Button>
       {agent && <p className="session-scope">History is scoped to this agent and workspace.</p>}
@@ -673,14 +659,11 @@ function SessionSidebar({
             <h2>{label}</h2>
             {items.map((chat) => (
               <div className={`session-row ${chat.path === data.config.session?.path ? "selected" : ""}`} key={chat.path}>
-                <button className="session-main" type="button" onClick={() => onOpenSession(chat)}>
+                <motion.button className="session-main" type="button" onClick={() => onOpenSession(chat)} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="session-select">
                   <strong>{chat.name}</strong>
                   <span><time>{shortDate(chat.modified)}</time>{typeof chat.messageCount === "number" && <small>{chat.messageCount} msg{chat.messageCount === 1 ? "" : "s"}</small>}</span>
-                </button>
-                <details className="session-menu">
-                  <summary aria-label={`Actions for ${chat.name}`}><MoreHorizontal /></summary>
-                  <div><button type="button" onClick={() => onDeleteSession(chat)} disabled={busy}><Trash2 /> Delete session</button></div>
-                </details>
+                </motion.button>
+                <SessionMenu chat={chat} busy={busy} onDeleteSession={onDeleteSession} />
               </div>
             ))}
           </section>
@@ -688,13 +671,12 @@ function SessionSidebar({
       </div>
       {agent && sessions.length === 0 && <div className="session-empty"><MessagesSquare /><strong>No sessions yet</strong><p>Start a session with {agent.name}.</p></div>}
       {!agent && <div className="session-empty"><Bot /><strong>No active agents</strong><p>Create an agent from the rail to begin.</p></div>}
-    </aside>
+    </motion.aside>
   );
-}
+});
 
 function ErrorBanner({ message }: { message?: string }) {
-  if (!message) return null;
-  return <div className="error-line"><CircleAlert /><div><strong>Couldn’t complete that</strong><span>{message}</span></div></div>;
+  return <AnimatePresence initial={false}>{message && <motion.div className="error-line" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard} role="alert" data-motion="error-banner"><CircleAlert /><div><strong>Couldn’t complete that</strong><span>{message}</span></div></motion.div>}</AnimatePresence>;
 }
 
 function normalizeBrowserUrl(value: string) {
@@ -792,10 +774,10 @@ function FilesSidebar({ workspace }: { workspace: string }) {
   const renderTree = (items: FileTreeNode[], depth = 0): ReactNode => items.filter((item) => treeMatches(item, normalizedQuery)).map((item) => {
     const isFolder = item.kind === "folder";
     const isOpen = expanded.has(item.path) || Boolean(normalizedQuery);
-    return <div key={item.path}><button type="button" className="file-tree-row" style={{ "--tree-indent": `${depth * 16}px` } as CSSProperties} onClick={() => selectFile(item)} title={item.path}>{isFolder ? <ChevronRight className={isOpen ? "open" : ""} /> : <span className="file-tree-spacer" />}{isFolder ? <Folder /> : <FileText />}<span>{item.name}</span></button>{isFolder && isOpen && renderTree(item.children, depth + 1)}</div>;
+    return <motion.div key={item.path} layout data-motion="file-tree-item"><motion.button type="button" className="file-tree-row" style={{ "--tree-indent": `${depth * 16}px` } as CSSProperties} onClick={() => selectFile(item)} title={item.path} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="file-tree-row">{isFolder ? <motion.span className="file-tree-arrow" animate={{ rotate: isOpen ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span> : <span className="file-tree-spacer" />}{isFolder ? <Folder /> : <FileText />}<span>{item.name}</span></motion.button><AnimatePresence initial={false}>{isFolder && isOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.standard} layout>{renderTree(item.children, depth + 1)}</motion.div>}</AnimatePresence></motion.div>;
   });
 
-  return <div className="workspace-files">{error && <div className="workspace-panel-error"><CircleAlert /><span>{error}</span></div>}<div className="files-filter"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter files…" aria-label="Filter files" /><Button variant="ghost" size="icon-sm" onClick={() => void loadFiles()} disabled={loading} aria-label="Refresh files"><RefreshCw className={loading ? "spin" : ""} /></Button></div>{!loading && !error && files.length === 0 ? <div className="workspace-empty"><Files /><strong>No files yet</strong><p>Files created by your assistant will appear here.</p></div> : <div className="files-tree-list">{renderTree(roots)}</div>}</div>;
+  return <div className="workspace-files"><AnimatePresence initial={false}>{error && <motion.div className="workspace-panel-error" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={motionTransitions.standard}><CircleAlert /><span>{error}</span></motion.div>}</AnimatePresence><div className="files-filter"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter files…" aria-label="Filter files" /><Button variant="ghost" size="icon-sm" onClick={() => void loadFiles()} disabled={loading} aria-label="Refresh files"><RefreshCw className={loading ? "spin" : ""} /></Button></div>{!loading && !error && files.length === 0 ? <motion.div className="workspace-empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><Files /><strong>No files yet</strong><p>Files created by your assistant will appear here.</p></motion.div> : <div className="files-tree-list">{renderTree(roots)}</div>}</div>;
 }
 
 function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; partition: string; onChange: (next: Pick<WorkspaceTab, "url" | "title">) => void }) {
@@ -890,11 +872,13 @@ function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; partiti
       <form className="browser-address" onSubmit={(event) => { event.preventDefault(); navigate(address); }}><LockKeyhole /><input value={address} onChange={(event) => setAddress(event.target.value)} aria-label="Browser address" spellCheck={false} /></form>
       <Button variant="ghost" size="icon-sm" onClick={() => void window.piBot.openExternal(currentUrl).catch(() => undefined)} aria-label="Open in default browser" title="Open in default browser"><ExternalLink /></Button>
     </div>
-    <div className="workspace-browser-frame" ref={frameRef}>{webview}{loadError && <div className="browser-load-error"><CircleAlert /><strong>Couldn’t open this page</strong><p>{loadError}</p><Button variant="outline" size="sm" onClick={() => viewRef.current?.reload()}>Try again</Button></div>}</div>
+    <div className="workspace-browser-frame" ref={frameRef}>{webview}<AnimatePresence initial={false}>{loadError && <motion.div className="browser-load-error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.standard}><CircleAlert /><strong>Couldn’t open this page</strong><p>{loadError}</p><Button variant="outline" size="sm" onClick={() => viewRef.current?.reload()}>Try again</Button></motion.div>}</AnimatePresence></div>
   </div>;
 }
 
-function RightWorkspacePanel({ data, open, storageKey }: { data: PiBootstrap; open: boolean; storageKey: string }) {
+type RightWorkspacePanelProps = { data: PiBootstrap; open: boolean; storageKey: string };
+
+const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(function RightWorkspacePanel({ data, open, storageKey }, ref) {
   const [tabs, setTabs] = useState<WorkspaceTab[]>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(`${storageKey}:tabs`) || "[]");
@@ -940,8 +924,25 @@ function RightWorkspacePanel({ data, open, storageKey }: { data: PiBootstrap; op
     if (activeTabId === id) setActiveTabId(next.at(-1)?.id ?? null);
   };
   const updateBrowserTab = (id: string, next: Pick<WorkspaceTab, "url" | "title">) => setTabs((current) => current.map((tab) => tab.id === id ? { ...tab, ...next } : tab));
-  return <aside className={`right-workspace-panel ${open ? "open" : "closed"}`} aria-label="Workspace panel"><nav className="workspace-tabs" ref={tabsRef} aria-label="Workspace tabs"><div className="workspace-tab-list" ref={tabListRef}>{tabs.map((tab) => <div className={`workspace-tab ${activeTabId === tab.id ? "selected" : ""}`} key={tab.id}><button type="button" className="workspace-tab-main" onClick={() => setActiveTabId(tab.id)} title={tab.kind === "browser" ? browserTabLabel(tab) : "Files"}>{tab.kind === "files" ? "Files" : browserTabLabel(tab)}</button><button type="button" className="workspace-tab-close" onClick={() => closeTab(tab.id)} aria-label={`Close ${tab.kind} tab`}><X /></button></div>)}<div className="workspace-tab-picker" ref={pickerRef}><button type="button" className="workspace-tab-add" onClick={() => setPickerOpen((value) => !value)} aria-label="Add workspace tab" aria-haspopup="menu" aria-expanded={pickerOpen}><Plus /></button></div></div>{pickerOpen && <div className="workspace-tab-menu" role="menu" style={{ left: pickerMenuLeft }}><button type="button" role="menuitem" onClick={() => addTab("files")}><Files />Files</button><button type="button" role="menuitem" onClick={() => addTab("browser")}><Globe2 />Browser</button></div>}</nav><section className="workspace-panel-content">{tabs.map((tab) => <div key={tab.id} hidden={tab.id !== activeTabId}>{tab.kind === "files" ? <FilesSidebar workspace={data.config.workspace} /> : <BrowserPanel tab={tab} partition={browserPartition} onChange={(next) => updateBrowserTab(tab.id, next)} />}</div>)}</section></aside>;
-}
+  return (
+    <motion.aside ref={ref} className="right-workspace-panel" aria-label="Workspace panel" initial={{ opacity: 0, x: "8%" }} animate={{ opacity: open ? 1 : 0, x: open ? 0 : "8%" }} exit={{ opacity: 0, x: "8%" }} transition={motionSprings.panel} style={{ pointerEvents: open ? "auto" : "none" }} data-motion="workspace-panel">
+      <nav className="workspace-tabs" ref={tabsRef} aria-label="Workspace tabs">
+        <div className="workspace-tab-list" ref={tabListRef}>
+          {tabs.map((tab) => <div className={`workspace-tab ${activeTabId === tab.id ? "selected" : ""}`} key={tab.id}>
+            <motion.button type="button" className="workspace-tab-main" onClick={() => setActiveTabId(tab.id)} title={tab.kind === "browser" ? browserTabLabel(tab) : "Files"} whileTap={{ scale: 0.98 }} transition={motionSprings.press} data-motion="workspace-tab">{tab.kind === "files" ? "Files" : browserTabLabel(tab)}</motion.button>
+            <motion.button type="button" className="workspace-tab-close" onClick={() => closeTab(tab.id)} aria-label={`Close ${tab.kind} tab`} whileTap={{ scale: 0.9 }} transition={motionSprings.press} data-motion="workspace-tab-close"><X /></motion.button>
+          </div>)}
+          <div className="workspace-tab-picker" ref={pickerRef}><motion.button type="button" className="workspace-tab-add" onClick={() => setPickerOpen((value) => !value)} aria-label="Add workspace tab" aria-haspopup="menu" aria-expanded={pickerOpen} whileTap={{ scale: 0.9 }} transition={motionSprings.press} data-motion="workspace-tab-add"><Plus /></motion.button></div>
+        </div>
+        <AnimatePresence initial={false}>{pickerOpen && <motion.div className="workspace-tab-menu" role="menu" style={{ left: pickerMenuLeft }} initial={{ opacity: 0, y: -4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }} transition={motionTransitions.micro}>
+          <motion.button type="button" role="menuitem" onClick={() => addTab("files")} whileTap={{ scale: 0.98 }}><Files />Files</motion.button>
+          <motion.button type="button" role="menuitem" onClick={() => addTab("browser")} whileTap={{ scale: 0.98 }}><Globe2 />Browser</motion.button>
+        </motion.div>}</AnimatePresence>
+      </nav>
+      <section className="workspace-panel-content">{tabs.map((tab) => <div key={tab.id} hidden={tab.id !== activeTabId}>{tab.kind === "files" ? <FilesSidebar workspace={data.config.workspace} /> : <BrowserPanel tab={tab} partition={browserPartition} onChange={(next) => updateBrowserTab(tab.id, next)} />}</div>)}</section>
+    </motion.aside>
+  );
+});
 
 function ChatWorkspace({ data, busy, error, sessionSidebarOpen, onOpenSessionSidebar, onPrompt, onAbort, onModelChange, onThinkingChange }: ComponentPropsWithoutRef<typeof ChatView>) {
   const storageKey = `pi-bot.workspace-panel:${workspacePanelSessionKey(data)}`;
@@ -964,7 +965,7 @@ function ChatWorkspace({ data, busy, error, sessionSidebarOpen, onOpenSessionSid
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", end);
   };
-  return <section className={`chat-workspace ${panelOpen ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${panelWidth}px` } as CSSProperties}><ChatView data={data} busy={busy} error={error} sessionSidebarOpen={sessionSidebarOpen} onOpenSessionSidebar={onOpenSessionSidebar} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />{panelOpen && <button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" />}<Button className="workspace-panel-toggle" variant="ghost" size="icon-sm" onClick={() => setPanelOpen((value) => !value)} title={panelOpen ? "Hide workspace" : "Show workspace"} aria-label={panelOpen ? "Hide workspace" : "Show workspace"}>{panelOpen ? <PanelRightClose /> : <PanelRightOpen />}</Button><RightWorkspacePanel data={data} open={panelOpen} storageKey={storageKey} /></section>;
+  return <motion.section layout transition={motionSprings.layout} className={`chat-workspace ${panelOpen ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${panelWidth}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} error={error} sessionSidebarOpen={sessionSidebarOpen} onOpenSessionSidebar={onOpenSessionSidebar} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />{panelOpen && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<Button className="workspace-panel-toggle" variant="ghost" size="icon-sm" onClick={() => setPanelOpen((value) => !value)} title={panelOpen ? "Hide workspace" : "Show workspace"} aria-label={panelOpen ? "Hide workspace" : "Show workspace"}>{panelOpen ? <PanelRightClose /> : <PanelRightOpen />}</Button><AnimatePresence initial={false} mode="popLayout">{panelOpen && <RightWorkspacePanel key="workspace-panel" data={data} open={panelOpen} storageKey={storageKey} />}</AnimatePresence></motion.section>;
 }
 
 function ChatView({
@@ -991,21 +992,22 @@ function ChatView({
   const agent = findAgent(data.agents, data.activeAgentId);
   const blocked = !agent || !data.config.modelAvailable;
   const responding = busy || data.config.streaming;
+  const reducedMotion = useReducedMotion();
   return (
-    <main className="chat-pane">
+    <motion.main className="chat-pane" layout data-motion="chat-view">
       <header className="chat-header">
         <div className="chat-header-leading">
-          {!sessionSidebarOpen && <div className="header-launchers"><button type="button" onClick={onOpenSessionSidebar} title="Show sessions" aria-label="Show sessions"><MessagesSquare /></button></div>}
+          {!sessionSidebarOpen && <div className="header-launchers"><motion.button type="button" onClick={onOpenSessionSidebar} title="Show sessions" aria-label="Show sessions" whileHover={{ y: -1 }} whileTap={{ scale: 0.94 }} transition={motionSprings.press} data-motion="sidebar-toggle"><MessagesSquare /></motion.button></div>}
           <div><h1>{data.config.session?.name ?? "New session"}</h1><span>{agent?.name ?? "No active agent"} · {compactWorkspace(data.config.workspace)}</span></div>
         </div>
-        {responding && <span className="responding-indicator"><i /> Responding</span>}
+        <AnimatePresence initial={false}>{responding && <motion.span className="responding-indicator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.micro}><motion.i animate={reducedMotion ? { opacity: 1 } : { opacity: [0.35, 1, 0.35] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1.2, repeat: Infinity, ease: "easeInOut" }} /> Responding</motion.span>}</AnimatePresence>
       </header>
       <ErrorBanner message={error} />
       {!data.authenticated && <div className="notice-line"><KeyRound /><span>Add a provider credential in App Settings to start chatting.</span></div>}
       {data.authenticated && blocked && agent && <div className="notice-line"><CircleAlert /><span>This agent’s model is unavailable. Choose another model in App Settings.</span></div>}
       <EventRows items={data.transcript} agent={agent} responding={responding} />
       <Composer busy={responding} disabled={blocked || responding} agentName={agent?.name ?? "Assistant"} config={data.config} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
-    </main>
+    </motion.main>
   );
 }
 
@@ -1071,7 +1073,7 @@ function ModelsSettings({ data, busy, onApiKey, onOAuth, onLogout, onImport }: {
   const connected = data.setup.providers.filter((provider) => provider.configured).length;
   const [apiProvider, setApiProvider] = useState<ProviderInfo>();
   const [apiKey, setApiKey] = useState("");
-  return <section className="settings-detail"><div className="detail-heading"><div><span className="eyebrow">App settings</span><h2>Models & authentication</h2><p>Credentials are global. Each agent chooses its own default model.</p></div></div><div className="settings-card security-card"><LockKeyhole /><div><strong>{connected ? `${connected} provider${connected === 1 ? "" : "s"} connected` : "No provider connected"}</strong><small>Stored in the app’s protected app file.</small></div></div>{apiProvider && <div className="inline-auth-card"><div><span className="eyebrow">Connect provider</span><strong>{apiProvider.name}</strong></div><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste an API key" autoFocus /><div className="settings-card-actions"><Button onClick={() => { onApiKey(apiProvider, apiKey); setApiKey(""); setApiProvider(undefined); }} disabled={busy || !apiKey.trim()}><KeyRound /> Save key</Button><Button variant="ghost" onClick={() => setApiProvider(undefined)}>Cancel</Button></div></div>}<div className="provider-list">{data.setup.providers.length ? data.setup.providers.map((provider) => <AuthProviderRow provider={provider} busy={busy} onApiKey={(selected) => setApiProvider(selected)} onOAuth={onOAuth} onLogout={onLogout} key={provider.id} />) : <p className="muted-copy">No provider authentication methods are available.</p>}</div>{data.setup.canImportPiAuth && <div className="import-card"><div><strong>Import from Pi</strong><p>One-time import of all credentials detected from your local Pi installation.</p></div><Button variant="outline" onClick={onImport} disabled={busy}><KeyRound /> Import Pi auth</Button></div>}<p className="settings-footnote">Pi Bot works without the Pi desktop app or CLI. Existing Pi credentials are only copied when you choose the one-time import.</p></section>;
+  return <motion.section className="settings-detail" layout data-motion="models-settings"><div className="detail-heading"><div><span className="eyebrow">App settings</span><h2>Models & authentication</h2><p>Credentials are global. Each agent chooses its own default model.</p></div></div><div className="settings-card security-card"><LockKeyhole /><div><strong>{connected ? `${connected} provider${connected === 1 ? "" : "s"} connected` : "No provider connected"}</strong><small>Stored in the app’s protected app file.</small></div></div><AnimatePresence initial={false}>{apiProvider && <motion.div className="inline-auth-card" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><div><span className="eyebrow">Connect provider</span><strong>{apiProvider.name}</strong></div><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste an API key" autoFocus /><div className="settings-card-actions"><Button onClick={() => { onApiKey(apiProvider, apiKey); setApiKey(""); setApiProvider(undefined); }} disabled={busy || !apiKey.trim()}><KeyRound /> Save key</Button><Button variant="ghost" onClick={() => setApiProvider(undefined)}>Cancel</Button></div></motion.div>}</AnimatePresence><div className="provider-list">{data.setup.providers.length ? data.setup.providers.map((provider) => <motion.div key={provider.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }}><AuthProviderRow provider={provider} busy={busy} onApiKey={(selected) => setApiProvider(selected)} onOAuth={onOAuth} onLogout={onLogout} /></motion.div>) : <p className="muted-copy">No provider authentication methods are available.</p>}</div>{data.setup.canImportPiAuth && <motion.div className="import-card" layout><div><strong>Import from Pi</strong><p>One-time import of all credentials detected from your local Pi installation.</p></div><Button variant="outline" onClick={onImport} disabled={busy}><KeyRound /> Import Pi auth</Button></motion.div>}<p className="settings-footnote">Pi Bot works without the Pi desktop app or CLI. Existing Pi credentials are only copied when you choose the one-time import.</p></motion.section>;
 }
 
 function SettingsPage({
@@ -1113,12 +1115,41 @@ function SettingsPage({
     if (selectedId !== "new" && !data.agents.some((agent) => agent.id === selectedId)) setSelectedId(data.agents[0]?.id ?? "new");
   }, [data.agents, selectedId]);
   const selected = selectedId === "new" ? undefined : data.agents.find((agent) => agent.id === selectedId);
-  return <main className="settings-page"><header className="settings-header"><Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to chat"><ArrowLeft /></Button><div><span className="eyebrow">Pi Bot</span><h1>App Settings</h1></div></header><div className="settings-layout"><nav className="settings-nav"><button className={section === "agents" ? "selected" : ""} onClick={() => setSection("agents")}><Bot /><span>Agents</span><small>{data.agents.length}</small></button><button className={section === "models" ? "selected" : ""} onClick={() => setSection("models")}><KeyRound /><span>Models & authentication</span></button></nav>{section === "models" ? <ModelsSettings data={data} busy={busy} onApiKey={onApiKey} onOAuth={onOAuth} onLogout={onLogout} onImport={onImport} /> : <div className="agent-settings-layout"><aside className="settings-agent-list"><div className="settings-list-heading"><span className="eyebrow">All agents</span><Button variant="outline" size="icon-sm" onClick={() => setSelectedId("new")} disabled={busy} aria-label="Create agent"><Plus /></Button></div>{data.agents.map((agent) => <button className={`settings-agent-item ${selectedId === agent.id ? "selected" : ""} ${agent.archived ? "archived" : ""}`} key={agent.id} onClick={() => setSelectedId(agent.id)}><AgentAvatar agent={agent} /><span><strong>{agent.name}</strong><small>{agent.archived ? "Archived" : agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span></button>)}{data.agents.length === 0 && <p className="muted-copy">No agents yet.</p>}</aside><AgentEditor agent={selected} models={data.config.models} isNew={selectedId === "new"} busy={busy} onCreate={(name, initials) => onCreate(name, initials)} onSave={onUpdate} onChooseFolder={onChooseFolder} onTrustWorkspace={onTrustWorkspace} onArchive={onArchive} onDelete={onDelete} onModelChange={onModelChange} /></div>}</div></main>;
+  return (
+    <motion.main className="settings-page" layout data-motion="settings-page">
+      <header className="settings-header"><Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to chat"><ArrowLeft /></Button><div><span className="eyebrow">Pi Bot</span><h1>App Settings</h1></div></header>
+      <div className="settings-layout">
+        <nav className="settings-nav">
+          <motion.button type="button" className={section === "agents" ? "selected" : ""} onClick={() => setSection("agents")} whileTap={{ scale: 0.98 }} transition={motionSprings.press} data-motion="settings-nav">
+            {section === "agents" && <motion.span className="settings-nav-active" layoutId="settings-nav-active" transition={motionSprings.layout} aria-hidden="true" />}
+            <Bot /><span>Agents</span><small>{data.agents.length}</small>
+          </motion.button>
+          <motion.button type="button" className={section === "models" ? "selected" : ""} onClick={() => setSection("models")} whileTap={{ scale: 0.98 }} transition={motionSprings.press} data-motion="settings-nav">
+            {section === "models" && <motion.span className="settings-nav-active" layoutId="settings-nav-active" transition={motionSprings.layout} aria-hidden="true" />}
+            <KeyRound /><span>Models & authentication</span>
+          </motion.button>
+        </nav>
+        <AnimatePresence initial={false} mode="wait">
+          {section === "models" ? <motion.div key="models" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ModelsSettings data={data} busy={busy} onApiKey={onApiKey} onOAuth={onOAuth} onLogout={onLogout} onImport={onImport} /></motion.div> : <motion.div key="agents" className="agent-settings-layout" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}>
+            <aside className="settings-agent-list"><div className="settings-list-heading"><span className="eyebrow">All agents</span><Button variant="outline" size="icon-sm" onClick={() => setSelectedId("new")} disabled={busy} aria-label="Create agent"><Plus /></Button></div>{data.agents.map((agent) => <motion.button type="button" className={`settings-agent-item ${selectedId === agent.id ? "selected" : ""} ${agent.archived ? "archived" : ""}`} key={agent.id} onClick={() => setSelectedId(agent.id)} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="settings-agent-select">{selectedId === agent.id && <motion.span className="settings-agent-active" layoutId="settings-agent-active" transition={motionSprings.layout} aria-hidden="true" />}<AgentAvatar agent={agent} /><span><strong>{agent.name}</strong><small>{agent.archived ? "Archived" : agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span></motion.button>)}{data.agents.length === 0 && <p className="muted-copy">No agents yet.</p>}</aside>
+            <AgentEditor agent={selected} models={data.config.models} isNew={selectedId === "new"} busy={busy} onCreate={(name, initials) => onCreate(name, initials)} onSave={onUpdate} onChooseFolder={onChooseFolder} onTrustWorkspace={onTrustWorkspace} onArchive={onArchive} onDelete={onDelete} onModelChange={onModelChange} />
+          </motion.div>}
+        </AnimatePresence>
+      </div>
+    </motion.main>
+  );
 }
 
 function AuthPromptCard({ prompt, notice, onRespond, onCancel }: { prompt: { id: string; prompt: AuthPrompt }; notice?: string; onRespond: (value: string) => void; onCancel: () => void }) {
   const [value, setValue] = useState("");
-  return <div className="auth-prompt-card"><span className="eyebrow">Provider sign-in</span><h3>{prompt.prompt.message}</h3>{notice && <p className="auth-notice">{notice}</p>}{prompt.prompt.type === "select" ? <select className="field-select" value={value} onChange={(event) => setValue(event.target.value)}><option value="">Choose an option</option>{prompt.prompt.options?.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select> : <Input autoFocus type={prompt.prompt.type === "secret" ? "password" : "text"} value={value} onChange={(event) => setValue(event.target.value)} placeholder={prompt.prompt.placeholder} /> }<div className="auth-prompt-actions"><Button variant="outline" onClick={onCancel}><X /> Cancel</Button><Button onClick={() => onRespond(value)} disabled={!value.trim()}><Check /> Continue</Button></div></div>;
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onCancel]);
+  return <motion.div className="auth-prompt-card" initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.98 }} transition={motionTransitions.standard} role="dialog" aria-modal="true" data-motion="auth-prompt"><span className="eyebrow">Provider sign-in</span><h3>{prompt.prompt.message}</h3>{notice && <p className="auth-notice">{notice}</p>}{prompt.prompt.type === "select" ? <select className="field-select" value={value} onChange={(event) => setValue(event.target.value)}><option value="">Choose an option</option>{prompt.prompt.options?.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select> : <Input autoFocus type={prompt.prompt.type === "secret" ? "password" : "text"} value={value} onChange={(event) => setValue(event.target.value)} placeholder={prompt.prompt.placeholder} /> }<div className="auth-prompt-actions"><Button variant="outline" onClick={onCancel}><X /> Cancel</Button><Button onClick={() => onRespond(value)} disabled={!value.trim()}><Check /> Continue</Button></div></motion.div>;
 }
 
 function SetupPage({ data, busy, error, onContinue, onImport, onApiKey, onOAuth }: { data: PiBootstrap; busy: boolean; error?: string; onContinue: (accepted: boolean) => void; onImport: (accepted: boolean) => void; onApiKey: (providerId: string, apiKey: string, accepted: boolean) => void; onOAuth: (provider: ProviderInfo, accepted: boolean) => void }) {
@@ -1127,7 +1158,7 @@ function SetupPage({ data, busy, error, onContinue, onImport, onApiKey, onOAuth 
   const [apiKey, setApiKey] = useState("");
   const [executionRiskAccepted, setExecutionRiskAccepted] = useState(false);
   const provider = data.setup.providers.find((item) => item.id === providerId);
-  return <main className="setup-page"><div className="setup-card"><div className="setup-mark"><img src="./branding/pi-bot-logo-dark.png" alt="" /></div><span className="eyebrow">Public Alpha</span><h1>Set up Pi Bot</h1><p className="setup-lede">Connect a provider and start chatting with a workspace teammate.</p><ErrorBanner message={error} /><label className="setup-risk"><input type="checkbox" checked={executionRiskAccepted} onChange={(event) => setExecutionRiskAccepted(event.target.checked)} /><span><strong>I understand the execution risk</strong><small>Pi Bot can run commands and read, create, edit, or delete files in the selected workspace without asking for approval for each action.</small></span></label>{apiProviders.length > 0 ? <div className="setup-auth-form"><label className="form-field"><span>Provider</span><select className="field-select" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{apiProviders.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label className="form-field"><span>API key</span><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste a provider API key" /></label><Button className="setup-primary" onClick={() => onApiKey(providerId, apiKey, executionRiskAccepted)} disabled={busy || !executionRiskAccepted || !apiKey.trim() || !providerId}>{busy ? <LoaderCircle className="spin" /> : <KeyRound />} Connect provider</Button>{provider?.methods.includes("oauth") && <Button variant="outline" onClick={() => onOAuth(provider, executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><ExternalLink /> Sign in with subscription</Button>}</div> : <p className="muted-copy">No direct API-key provider is available. You can import credentials from Pi if they are detected.</p>}{data.setup.canContinue && <Button className="setup-continue" variant="outline" onClick={() => onContinue(executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><Check /> Continue with connected provider</Button>}{data.setup.canImportPiAuth && <div className="setup-import"><div><strong>Already use Pi?</strong><p>Import all detected Pi credentials once. The original auth stays untouched.</p></div><Button variant="outline" onClick={() => onImport(executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><KeyRound /> Import auth from Pi</Button></div>}<p className="setup-storage"><LockKeyhole /> Credentials are stored in the app’s protected app file.</p></div></main>;
+  return <motion.main className="setup-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={motionTransitions.standard} data-motion="setup-page"><motion.div className="setup-card" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...motionTransitions.emphasis, delay: 0.04 }}><div className="setup-mark"><img src="./branding/pi-bot-logo-dark.png" alt="" /></div><span className="eyebrow">Public Alpha</span><h1>Set up Pi Bot</h1><p className="setup-lede">Connect a provider and start chatting with a workspace teammate.</p><ErrorBanner message={error} /><label className="setup-risk"><input type="checkbox" checked={executionRiskAccepted} onChange={(event) => setExecutionRiskAccepted(event.target.checked)} /><span><strong>I understand the execution risk</strong><small>Pi Bot can run commands and read, create, edit, or delete files in the selected workspace without asking for approval for each action.</small></span></label>{apiProviders.length > 0 ? <motion.div className="setup-auth-form" layout><label className="form-field"><span>Provider</span><select className="field-select" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{apiProviders.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label className="form-field"><span>API key</span><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste a provider API key" /></label><Button className="setup-primary" onClick={() => onApiKey(providerId, apiKey, executionRiskAccepted)} disabled={busy || !executionRiskAccepted || !apiKey.trim() || !providerId}>{busy ? <LoaderCircle className="spin" /> : <KeyRound />} Connect provider</Button>{provider?.methods.includes("oauth") && <Button variant="outline" onClick={() => onOAuth(provider, executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><ExternalLink /> Sign in with subscription</Button>}</motion.div> : <p className="muted-copy">No direct API-key provider is available. You can import credentials from Pi if they are detected.</p>}{data.setup.canContinue && <Button className="setup-continue" variant="outline" onClick={() => onContinue(executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><Check /> Continue with connected provider</Button>}{data.setup.canImportPiAuth && <motion.div className="setup-import" layout><div><strong>Already use Pi?</strong><p>Import all detected Pi credentials once. The original auth stays untouched.</p></div><Button variant="outline" onClick={() => onImport(executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><KeyRound /> Import auth from Pi</Button></motion.div>}<p className="setup-storage"><LockKeyhole /> Credentials are stored in the app’s protected app file.</p></motion.div></motion.main>;
 }
 
 export function App() {
@@ -1141,8 +1172,6 @@ export function App() {
   const [createNewAgent, setCreateNewAgent] = useState(false);
   const [authPrompt, setAuthPrompt] = useState<{ id: string; prompt: AuthPrompt }>();
   const [authNotice, setAuthNotice] = useState<string>();
-  const currentData = data ?? emptyBootstrap();
-
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -1232,10 +1261,9 @@ export function App() {
     void window.piBot.cancelAuth(promptId).catch((reason) => setError(readableError(reason)));
   }
 
-  if (connecting || !data) return <div className="loading-screen"><LoaderCircle className="spin" /><span>Opening Pi Bot…</span></div>;
-  if (data.setup.required) return <><SetupPage data={data} busy={busy} error={error} onContinue={(accepted) => void authenticate(() => window.piBot.completeSetup(accepted))} onImport={(accepted) => void authenticate(() => window.piBot.importPiAuth(accepted))} onApiKey={(providerId, apiKey, accepted) => void authenticate(() => window.piBot.setProviderApiKey(providerId, apiKey, accepted))} onOAuth={(provider, accepted) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth", accepted))} />{authPrompt && <AuthPromptCard prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</>;
+  if (connecting || !data) return <motion.div className="loading-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} data-motion="loading-screen"><LoaderCircle className="spin" /><span>Opening Pi Bot…</span></motion.div>;
+  if (data.setup.required) return <><SetupPage data={data} busy={busy} error={error} onContinue={(accepted) => void authenticate(() => window.piBot.completeSetup(accepted))} onImport={(accepted) => void authenticate(() => window.piBot.importPiAuth(accepted))} onApiKey={(providerId, apiKey, accepted) => void authenticate(() => window.piBot.setProviderApiKey(providerId, apiKey, accepted))} onOAuth={(provider, accepted) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth", accepted))} /><AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence></>;
 
-  const agent = findAgent(data.agents, data.activeAgentId);
   const activeId = data.activeAgentId;
   const updateWith = (action: () => Promise<PiBootstrap | null>) => void perform(action);
   function navigateToChat(action: () => Promise<PiBootstrap | null>) {
@@ -1253,10 +1281,12 @@ export function App() {
     updateWith(() => window.piBot.deleteAgent(profile.id, deletesWorkspace));
   }
 
-  return <div className={`app-shell ${sessionSidebarOpen ? "session-sidebar-open" : "session-sidebar-closed"}`}>
+  return <div className={`app-shell ${sessionSidebarOpen ? "session-sidebar-open" : "session-sidebar-closed"}`} data-motion="app-shell">
     <AgentRail data={data} theme={theme} onSelect={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onCreateAgent={() => { setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={() => setTheme((current) => current === "dark" ? "light" : "dark")} onSettings={() => { setError(undefined); setCreateNewAgent(false); setView("settings"); }} />
-    {sessionSidebarOpen && <SessionSidebar data={data} busy={busy} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId))} onDeleteSession={deleteSession} onCollapse={() => setSessionSidebarOpen(false)} />}
-    {view === "chat" ? <ChatWorkspace key={workspacePanelSessionKey(data)} data={data} busy={busy} error={error} sessionSidebarOpen={sessionSidebarOpen} onOpenSessionSidebar={() => setSessionSidebarOpen(true)} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /> : <SettingsPage data={data} busy={busy} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} />}
-    {authPrompt && <AuthPromptCard prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}
+    <AnimatePresence initial={false} mode="popLayout">{sessionSidebarOpen && <SessionSidebar key="session-sidebar" data={data} busy={busy} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId))} onDeleteSession={deleteSession} onCollapse={() => setSessionSidebarOpen(false)} />}</AnimatePresence>
+    <AnimatePresence initial={false} mode="wait">
+      {view === "chat" ? <motion.div className="app-view" key={`chat-${workspacePanelSessionKey(data)}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} error={error} sessionSidebarOpen={sessionSidebarOpen} onOpenSessionSidebar={() => setSessionSidebarOpen(true)} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} /></motion.div>}
+    </AnimatePresence>
+    <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
   </div>;
 }
