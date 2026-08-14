@@ -94,7 +94,7 @@ function SelectContent({
           {...props}
           data-slot="select-content"
           data-align-trigger={alignItemWithTrigger}
-          render={(renderProps) => {
+          render={(renderProps, state) => {
             const {
               onAnimationStart: _onAnimationStart,
               onAnimationEnd: _onAnimationEnd,
@@ -108,8 +108,8 @@ function SelectContent({
               <motion.div
                 {...motionProps}
                 initial={{ opacity: 0, y: -4, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={motionTransitions.standard}
+                animate={state.open ? { opacity: 1, y: 0, scale: 1 } : { opacity: 0, y: -4, scale: 0.98 }}
+                transition={state.open ? motionTransitions.standard : motionTransitions.micro}
                 data-motion="select-content"
               />
             );

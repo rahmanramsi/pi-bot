@@ -35,8 +35,11 @@ requireText("app", /event\.key !== ["']Escape["'][\s\S]*setPickerOpen\(false\)/,
 requireText("button", /data-motion=["']button["']/, "shared Button must expose the motion contract");
 requireText("dialog", /from ["']@\/lib\/motion["']/, "shared Dialog must use the motion boundary");
 requireText("dialog", /data-motion=["']dialog-content["']/, "shared Dialog content must expose the motion contract");
+requireText("dialog", /<DialogPortal forceMount>/, "shared Dialog must remain mounted for its close transition");
+requireText("dialog", /animate=\{\{ opacity: open \? 1 : 0 \}\}/, "shared Dialog must animate its open and closed states");
 requireText("select", /from ["']@\/lib\/motion["']/, "shared Select must use the motion boundary");
 requireText("select", /data-motion=["']select-content["']/, "shared Select content must expose the motion contract");
+requireText("select", /state\.open \? \{ opacity: 1, y: 0, scale: 1 \} : \{ opacity: 0, y: -4, scale: 0\.98 \}/, "shared Select must animate its open and closed states");
 requireText("design", /## 1\. Motion principles/, "root DESIGN.md must define motion principles");
 requireText("design", /## 5\. Accessibility and human factors/, "root DESIGN.md must define accessibility motion rules");
 requireText("design", /prefers-reduced-motion/, "design contract must mention reduced motion");
@@ -54,4 +57,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(JSON.stringify({ status: "GREEN", checks: 16 }, null, 2));
+console.log(JSON.stringify({ status: "GREEN", checks: 19 }, null, 2));
