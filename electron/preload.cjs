@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("piBot", {
+  reportRendererStage: (stage) => ipcRenderer.send("pi:renderer-stage", stage),
   connect: () => ipcRenderer.invoke("pi:connect"),
   chooseFolder: (agentId) => ipcRenderer.invoke("pi:choose-folder", agentId),
   selectAgent: (agentId) => ipcRenderer.invoke("pi:select-agent", agentId),

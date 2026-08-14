@@ -126,6 +126,7 @@ export type PiEvent =
   | { type: "session-sync"; transcript: TimelineItem[]; sessions: SessionSummary[]; sessionsByAgent: Record<AgentId, SessionSummary[]>; config: PiConfig; agents: AgentProfile[]; setup: PiSetup; authenticated: boolean; activeAgentId: AgentId | null };
 
 export type PiBotBridge = {
+  reportRendererStage: (stage: string) => void;
   connect: () => Promise<PiBootstrap>;
   chooseFolder: (agentId?: AgentId | null) => Promise<PiBootstrap | null>;
   selectAgent: (agentId: AgentId) => Promise<PiBootstrap>;

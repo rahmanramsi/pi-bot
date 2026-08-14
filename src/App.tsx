@@ -58,10 +58,6 @@ type Theme = "dark" | "light";
 
 let mermaidDiagramId = 0;
 
-function savedTheme(): Theme {
-  return window.localStorage.getItem("pi-bot-theme") === "light" ? "light" : "dark";
-}
-
 function readableError(reason: unknown) {
   if (reason instanceof Error) return reason.message;
   if (typeof reason === "string") return reason.replace(/^Error:\s*/, "");
@@ -837,7 +833,7 @@ function SetupPage({ data, busy, error, onContinue, onImport, onApiKey, onOAuth 
 
 export function App() {
   const [data, setData] = useState<PiBootstrap | null>(null);
-  const [theme, setTheme] = useState<Theme>(savedTheme);
+  const [theme, setTheme] = useState<Theme>("dark");
   const [connecting, setConnecting] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -851,7 +847,6 @@ export function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.classList.toggle("dark", theme === "dark");
-    window.localStorage.setItem("pi-bot-theme", theme);
   }, [theme]);
 
   useEffect(() => {
@@ -885,6 +880,10 @@ export function App() {
     window.piBot.connect().then((result) => { setData(result); setConnecting(false); }).catch((reason) => { setError(readableError(reason)); setConnecting(false); });
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (data?.setup.required) window.piBot.reportRendererStage("setup-ready");
+  }, [data]);
 
   async function perform(action: () => Promise<PiBootstrap | null>) {
     setBusy(true);

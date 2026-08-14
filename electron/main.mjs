@@ -38,6 +38,14 @@ let modelRuntime;
 let availableModels = [];
 let storedCredentials = {};
 const pendingAuthPrompts = new Map();
+let smokeTest;
+
+ipcMain.on("pi:renderer-stage", (event, stage) => {
+  if (!smokeTest || event.sender.id !== smokeTest.webContentsId || typeof stage !== "string") return;
+  smokeTest.completed = stage === "setup-ready";
+  writeFileSync(smokeTest.resultFile, JSON.stringify({ stage, errors: smokeTest.errors, requests: smokeTest.requests }, null, 2));
+  if (smokeTest.completed) setTimeout(() => app.quit(), 100);
+});
 
 function userDataPath(...parts) {
   return path.join(app.getPath("userData"), ...parts);
@@ -520,7 +528,7 @@ function setupState() {
     canContinue: availableModels.length > 0,
     canImportPiAuth: !setupComplete && Object.keys(importablePiCredentials()).length > 0,
     piAuthPath: piAuthFile(),
-    credentialStorage: safeStorage.isEncryptionAvailable() ? "os-keychain" : "protected-app-file",
+    credentialStorage: "os-keychain",
     providers: authProviders(),
   };
 }
@@ -1113,8 +1121,38 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
-  if (app.isPackaged) window.loadFile(path.join(appRoot, "dist", "index.html"));
-  else window.loadURL("http://127.0.0.1:5173");
+  const isSmokeTest = existsSync(userDataPath(".smoke-test"));
+  if (isSmokeTest) {
+    const resultFile = userDataPath("smoke-test.json");
+    const errors = [];
+    const requests = [];
+    smokeTest = { webContentsId: window.webContents.id, resultFile, errors, requests, completed: false };
+    window.webContents.on("console-message", (_event, _level, message) => errors.push(message));
+    window.webContents.session.webRequest.onCompleted((details) => {
+      if (details.webContentsId === window.webContents.id) requests.push({ url: details.url, statusCode: details.statusCode });
+    });
+    window.webContents.session.webRequest.onErrorOccurred((details) => {
+      if (details.webContentsId === window.webContents.id) requests.push({ url: details.url, error: details.error });
+    });
+    window.webContents.once("did-fail-load", (_event, _errorCode, errorDescription, validatedURL) => {
+      smokeTest.completed = true;
+      writeFileSync(resultFile, JSON.stringify({ error: errorDescription, url: validatedURL, errors, requests }, null, 2));
+    });
+    window.webContents.once("did-finish-load", () => {
+      writeFileSync(resultFile, JSON.stringify({ stage: "loaded", errors, requests }, null, 2));
+    });
+    setTimeout(() => {
+      if (smokeTest.completed) return;
+      writeFileSync(resultFile, JSON.stringify({ error: "Renderer did not become responsive.", errors, requests }, null, 2));
+      app.quit();
+    }, 15000);
+  }
+  const pageLoad = app.isPackaged
+    ? window.loadFile(path.join(appRoot, "dist", "index.html"))
+    : window.loadURL("http://127.0.0.1:5173");
+  pageLoad.catch((error) => {
+    if (isSmokeTest) writeFileSync(userDataPath("smoke-test.json"), JSON.stringify({ error: String(error) }, null, 2));
+  });
 }
 
 app.whenReady().then(() => {

@@ -4,12 +4,12 @@ Pi Bot is a local-first macOS workspace for chatting with configurable AI coding
 
 ## Public Alpha
 
-`v0.1.2` is an Apple Silicon (`arm64`) Public Alpha with ad-hoc signing. It has no auto-update mechanism and no per-action approval policy. Use it only with a workspace you intentionally selected and can recover.
+`v0.1.3` is an Apple Silicon (`arm64`) Public Alpha with ad-hoc signing. It has no auto-update mechanism and no per-action approval policy. Use it only with a workspace you intentionally selected and can recover.
 
 ## Install
 
-1. Download `PiBot-0.1.2-arm64.dmg` and its SHA-256 checksum from the [v0.1.2 release](https://github.com/rahmanramsi/pi-bot/releases/tag/v0.1.2).
-2. Optionally verify the download with `shasum -a 256 PiBot-0.1.2-arm64.dmg`.
+1. Download `PiBot-0.1.3-arm64.dmg` and its SHA-256 checksum from the [v0.1.3 release](https://github.com/rahmanramsi/pi-bot/releases/tag/v0.1.3).
+2. Optionally verify the download with `shasum -a 256 PiBot-0.1.3-arm64.dmg`.
 3. Open the DMG and drag Pi Bot to Applications.
 4. If macOS blocks the first launch, open **System Settings → Privacy & Security**, then click **Open Anyway** for Pi Bot.
 5. On first setup, acknowledge the execution warning, connect a supported provider, and choose a workspace.
@@ -54,7 +54,7 @@ npm run build
 npm run dist
 ```
 
-`npm run dist` creates `release/PiBot-0.1.2-arm64.dmg`.
+`npm run dist` creates `release/PiBot-0.1.3-arm64.dmg`.
 
 ## Report a bug
 
@@ -62,7 +62,7 @@ Open an issue at [github.com/rahmanramsi/pi-bot/issues](https://github.com/rahma
 
 ## Development notes
 
-There is no automated test suite yet. The release gate is TypeScript validation, a production build, and a manual smoke test from the exact DMG being released: first setup, provider connection, agent creation, workspace selection, one prompt/tool run, and restart/session persistence.
+The release gate runs TypeScript validation, a production build, an asset-path check, and `npm run smoke:packaged`, which opens the packaged app through first setup. A provider connection, agent creation, workspace selection, one prompt/tool run, and restart/session persistence still require a credentialed manual test.
 
 ## License
 

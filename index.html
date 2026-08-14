@@ -3,12 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/png" href="/branding/pi-bot-icon-dark-512.png" />
+    <link rel="icon" type="image/png" href="./branding/pi-bot-icon-dark-512.png" />
     <title>Pi Bot</title>
     <script>
-      const theme = localStorage.getItem("pi-bot-theme") === "light" ? "light" : "dark";
-      document.documentElement.dataset.theme = theme;
-      document.documentElement.classList.toggle("dark", theme === "dark");
+      document.documentElement.dataset.theme = "dark";
+      document.documentElement.classList.add("dark");
     </script>
   </head>
   <body>
