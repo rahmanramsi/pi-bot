@@ -1,6 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session as electronSession, shell } from "electron";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
@@ -12,11 +12,21 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import {
+  copyLegacySessionFiles,
+  legacySessionPaths,
+  recoverPendingSessions,
+  removePendingSession,
+  savePendingSession,
+} from "./session-persistence.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
 const codingTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const browserPartitionPrefix = "persist:pi-bot-browser-";
+const configuredBrowserPartitions = new Set();
+const maxWorkspaceFiles = 500;
 const settingsVersion = 2;
 const defaultAgentId = "assistant";
 
@@ -81,6 +91,75 @@ function cleanText(value, fallback, maxLength = 4000) {
   return value.trim().slice(0, maxLength);
 }
 
+function isAllowedBrowserUrl(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+function isPiBotBrowserPartition(value) {
+  return typeof value === "string" && value.startsWith(browserPartitionPrefix);
+}
+
+function configureBrowserSession(partition) {
+  if (configuredBrowserPartitions.has(partition)) return;
+  configuredBrowserPartitions.add(partition);
+  const browserSession = electronSession.fromPartition(partition);
+  browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  browserSession.setPermissionCheckHandler(() => false);
+  browserSession.on("will-download", (event) => event.preventDefault());
+}
+
+function isInsideWorkspace(workspace, target) {
+  const relative = path.relative(workspace, target);
+  return Boolean(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function activeWorkspaceRoot() {
+  const workspace = activeProfile()?.workspace;
+  if (!workspace) throw new Error("Select an agent workspace first.");
+  return realpathSync(workspace);
+}
+
+function resolveWorkspaceFile(relativePath) {
+  if (typeof relativePath !== "string" || !relativePath || relativePath.length > 1200) throw new Error("Invalid file path.");
+  const workspace = activeWorkspaceRoot();
+  const target = realpathSync(path.resolve(workspace, relativePath));
+  if (!isInsideWorkspace(workspace, target)) throw new Error("That file is outside the active workspace.");
+  return target;
+}
+
+function listWorkspaceFiles() {
+  const workspace = activeWorkspaceRoot();
+  const items = [];
+  const skippedNames = new Set([".git", "node_modules", "dist", "build", "release", "coverage", ".next", ".venv"]);
+  const visit = (directory, depth) => {
+    if (items.length >= maxWorkspaceFiles || depth > 4) return;
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((left, right) => Number(right.isDirectory()) - Number(left.isDirectory()) || left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      if (items.length >= maxWorkspaceFiles || skippedNames.has(entry.name) || entry.isSymbolicLink()) continue;
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        items.push({ path: path.relative(workspace, absolutePath), kind: "folder" });
+        visit(absolutePath, depth + 1);
+      } else if (entry.isFile()) {
+        items.push({ path: path.relative(workspace, absolutePath), kind: "file" });
+      }
+    }
+  };
+  visit(workspace, 0);
+  return items;
+}
+
 function initialsFor(name) {
   const initials = name
     .split(/\s+/)
@@ -143,7 +222,10 @@ function loadSettings() {
   sessionRecords = {};
   try {
     const saved = JSON.parse(readFileSync(settingsFile(), "utf8"));
-    if (saved?.schemaVersion !== settingsVersion) return;
+    if (saved?.schemaVersion !== settingsVersion) {
+      migrateLegacySettings(saved);
+      return;
+    }
 
     const entries = Array.isArray(saved.agents)
       ? saved.agents.map((value) => [value?.id, value])
@@ -169,6 +251,33 @@ function loadSettings() {
   } catch {
     // A missing file, or a pre-v2 file, starts with a clean Assistant profile.
   }
+}
+
+function migrateLegacySettings(saved) {
+  if (!saved || saved.schemaVersion !== undefined || typeof saved.workspace !== "string" || !existsSync(saved.workspace)) return;
+  const profile = normalizeProfile(defaultAgentId, {
+    ...defaultAgentProfile(),
+    workspace: saved.workspace,
+    workspaceKind: "external",
+    defaultModelKey: saved.modelKey,
+    thinkingLevel: saved.thinkingLevel,
+  });
+  const directory = sessionDirectory(defaultAgentId, profile.workspace);
+  const legacyFiles = legacySessionPaths(saved).filter((file) => existsSync(file));
+  const { copied } = copyLegacySessionFiles(legacyFiles, directory);
+  agentProfiles = { [defaultAgentId]: profile };
+  activeAgentId = defaultAgentId;
+  if (thinkingLevels.includes(saved.thinkingLevel)) preferredThinkingLevel = saved.thinkingLevel;
+  for (const file of copied) sessionRecords[file] = { agentId: defaultAgentId, workspace: profile.workspace };
+  const legacySessions = saved.agentSessions;
+  const legacyCurrent = typeof legacySessions?.[saved.activeAgentId] === "string"
+    ? legacySessions[saved.activeAgentId]
+    : legacySessions?.[saved.workspace]?.[saved.activeAgentId];
+  if (typeof legacyCurrent === "string") {
+    const migratedCurrent = path.join(directory, path.basename(legacyCurrent));
+    if (existsSync(migratedCurrent)) currentSessions[defaultAgentId] = migratedCurrent;
+  }
+  saveSettings();
 }
 
 function saveSettings() {
@@ -605,6 +714,7 @@ async function sendSessionSync(runtime) {
 
 function relay(runtime, event) {
   updateRuntimeTranscript(runtime, event);
+  updatePendingSession(runtime, event);
   if (runtime.key !== activeRuntimeKey) return;
   if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
     send({ type: "assistant-delta", delta: event.assistantMessageEvent.delta });
@@ -625,6 +735,22 @@ function relay(runtime, event) {
   if (event.type === "agent_start") send({ type: "agent-start" });
   if (event.type === "agent_end") send({ type: "agent-end", retrying: event.willRetry });
   if (event.type === "agent_settled") send({ type: "agent-settled" });
+}
+
+function updatePendingSession(runtime, event) {
+  if (event.type !== "message_end") return;
+  const sessionFile = runtime.sessionManager.getSessionFile();
+  if (!sessionFile) return;
+  if (event.message?.role === "user") {
+    queueMicrotask(() => {
+      savePendingSession(sessionFile, [runtime.sessionManager.getHeader(), ...runtime.sessionManager.getEntries()].filter(Boolean));
+    });
+  }
+  if (event.message?.role === "assistant") {
+    queueMicrotask(() => {
+      if (existsSync(sessionFile)) removePendingSession(sessionFile);
+    });
+  }
 }
 
 async function refreshRuntime() {
@@ -976,6 +1102,7 @@ ipcMain.handle("pi:delete-session", async (_event, sessionPath) => {
   if (runtime) await disposeRuntime(runtime.key);
   else if (wasCurrent) await closeCurrentSession();
   try { rmSync(sessionPath, { force: true }); } catch { /* The file may already be gone. */ }
+  removePendingSession(sessionPath);
   delete sessionRecords[sessionPath];
   if (currentSessions[activeAgentId] === sessionPath) delete currentSessions[activeAgentId];
   saveSettings();
@@ -1096,7 +1223,21 @@ ipcMain.handle("pi:import-pi-auth", async (_event, accepted) => {
 
 ipcMain.handle("pi:auth-respond", (_event, promptId, value) => respondToAuthPrompt(promptId, value));
 ipcMain.handle("pi:auth-cancel", (_event, promptId) => cancelAuthPrompt(promptId));
-
+ipcMain.handle("pi:list-workspace-files", () => listWorkspaceFiles());
+ipcMain.handle("pi:open-workspace-file", async (_event, relativePath) => {
+  const target = resolveWorkspaceFile(relativePath);
+  if (!lstatSync(target).isFile()) throw new Error("That item is not a file.");
+  const error = await shell.openPath(target);
+  if (error) throw new Error(error);
+});
+ipcMain.handle("pi:reveal-workspace-file", (_event, relativePath) => {
+  const target = resolveWorkspaceFile(relativePath);
+  shell.showItemInFolder(target);
+});
+ipcMain.handle("pi:open-external", async (_event, url) => {
+  if (typeof url !== "string" || !isAllowedBrowserUrl(url)) throw new Error("Only safe HTTP(S) links can be opened.");
+  await shell.openExternal(url);
+});
 function createWindow() {
   window = new BrowserWindow({
     width: 1440,
@@ -1105,12 +1246,36 @@ function createWindow() {
     minHeight: 700,
     title: "Pi Bot",
     titleBarStyle: "hidden",
+    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 18, y: 20 } } : {}),
     backgroundColor: "#111214",
     webPreferences: {
       preload: path.join(here, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webviewTag: true,
     },
+  });
+  window.webContents.on("will-attach-webview", (event, preferences, params) => {
+    delete preferences.preload;
+    preferences.nodeIntegration = false;
+    preferences.nodeIntegrationInSubFrames = false;
+    preferences.contextIsolation = true;
+    preferences.sandbox = true;
+    preferences.webSecurity = true;
+    preferences.allowRunningInsecureContent = false;
+    preferences.webviewTag = false;
+    if (!isPiBotBrowserPartition(params.partition) || !isAllowedBrowserUrl(params.src)) {
+      event.preventDefault();
+      return;
+    }
+    configureBrowserSession(params.partition);
+  });
+  window.webContents.on("did-attach-webview", (_event, contents) => {
+    contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    contents.on("will-navigate", (event, url) => { if (!isAllowedBrowserUrl(url)) event.preventDefault(); });
+    contents.on("will-redirect", (event, url) => { if (!isAllowedBrowserUrl(url)) event.preventDefault(); });
+    contents.on("will-frame-navigate", (event, url) => { if (!isAllowedBrowserUrl(url)) event.preventDefault(); });
   });
   const isSmokeTest = existsSync(userDataPath(".smoke-test"));
   if (isSmokeTest) {
@@ -1148,6 +1313,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   loadSettings();
+  recoverPendingSessions(userDataPath("sessions"));
   loadCredentials();
   ensureAllWorkspaces();
   createWindow();

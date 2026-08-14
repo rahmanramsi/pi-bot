@@ -1,4 +1,4 @@
-import { FormEvent, isValidElement, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { createElement, FormEvent, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -10,8 +10,13 @@ import {
   ChevronDown,
   ChevronRight,
   CircleAlert,
+  ChevronLeft,
   ExternalLink,
+  FileText,
+  Files,
+  Folder,
   FolderOpen,
+  Globe2,
   KeyRound,
   LoaderCircle,
   LockKeyhole,
@@ -20,8 +25,11 @@ import {
   MoreHorizontal,
   Moon,
   PanelLeftClose,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   RotateCcw,
+  RefreshCw,
   Search,
   Send,
   Settings2,
@@ -50,11 +58,31 @@ import type {
   SessionSummary,
   ThinkingLevel,
   TimelineItem,
+  WorkspaceFile,
 } from "./types";
 
 type View = "chat" | "settings";
 type SettingsSection = "agents" | "models";
 type Theme = "dark" | "light";
+type WorkspaceTabKind = "files" | "browser";
+
+type WorkspaceTab = {
+  id: string;
+  kind: WorkspaceTabKind;
+  url?: string;
+  title?: string;
+};
+
+const defaultBrowserUrl = "https://www.google.com/";
+
+type FileTreeNode = WorkspaceFile & {
+  name: string;
+  children: FileTreeNode[];
+};
+
+function workspacePanelSessionKey(data: PiBootstrap) {
+  return data.config.session?.path ?? data.config.session?.id ?? data.activeAgentId ?? "no-session";
+}
 
 let mermaidDiagramId = 0;
 
@@ -638,6 +666,7 @@ function SessionSidebar({
         <button type="button" onClick={onCollapse} aria-label="Hide sessions" title="Hide sessions"><PanelLeftClose /></button>
       </header>
       <Button className="new-chat-button" onClick={onNewChat} disabled={!data.activeAgentId}><MessageSquarePlus /> New session <Plus /></Button>
+      {agent && <p className="session-scope">History is scoped to this agent and workspace.</p>}
       <div className="session-groups">
         {groups.map(([label, items]) => (
           <section className="session-group" key={label}>
@@ -666,6 +695,276 @@ function SessionSidebar({
 function ErrorBanner({ message }: { message?: string }) {
   if (!message) return null;
   return <div className="error-line"><CircleAlert /><div><strong>Couldn’t complete that</strong><span>{message}</span></div></div>;
+}
+
+function normalizeBrowserUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return defaultBrowserUrl;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.includes(".") && !trimmed.includes(" ")) return `https://${trimmed}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+}
+
+function browserTabLabel(tab: Pick<WorkspaceTab, "url" | "title">) {
+  if (tab.title?.trim()) return tab.title.trim();
+  try {
+    return new URL(tab.url || defaultBrowserUrl).hostname.replace(/^www\./, "");
+  } catch {
+    return "Browser";
+  }
+}
+
+function browserPartitionForSession(storageKey: string) {
+  let hash = 5381;
+  for (const character of storageKey) hash = (hash * 33) ^ character.charCodeAt(0);
+  return `persist:pi-bot-browser-${(hash >>> 0).toString(36)}`;
+}
+
+type BrowserView = HTMLElement & {
+  loadURL: (url: string) => Promise<void>;
+  getURL: () => string;
+  getTitle: () => string;
+  canGoBack: () => boolean;
+  canGoForward: () => boolean;
+  goBack: () => void;
+  goForward: () => void;
+  reload: () => void;
+  stop: () => void;
+};
+
+function makeFileTree(files: WorkspaceFile[]) {
+  const roots: FileTreeNode[] = [];
+  const nodes = new Map<string, FileTreeNode>();
+  for (const file of files) {
+    const parts = file.path.split("/").filter(Boolean);
+    const name = parts.at(-1);
+    if (!name) continue;
+    const node: FileTreeNode = { ...file, name, children: [] };
+    nodes.set(file.path, node);
+    const parent = nodes.get(parts.slice(0, -1).join("/"));
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+  return roots;
+}
+
+function treeMatches(node: FileTreeNode, query: string): boolean {
+  return !query || node.name.toLocaleLowerCase().includes(query) || node.children.some((child) => treeMatches(child, query));
+}
+
+function FilesSidebar({ workspace }: { workspace: string }) {
+  const [files, setFiles] = useState<WorkspaceFile[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const loadFiles = async () => {
+    setLoading(true);
+    setError(undefined);
+    try {
+      setFiles(await window.piBot.listWorkspaceFiles());
+    } catch (reason) {
+      setFiles([]);
+      setError(readableError(reason));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void loadFiles(); }, [workspace]);
+
+  const roots = useMemo(() => makeFileTree(files), [files]);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const selectFile = (file: FileTreeNode) => {
+    if (file.kind === "folder") {
+      setExpanded((current) => {
+        const next = new Set(current);
+        if (next.has(file.path)) next.delete(file.path);
+        else next.add(file.path);
+        return next;
+      });
+      return;
+    }
+    setError(undefined);
+    void window.piBot.openWorkspaceFile(file.path).catch((reason) => setError(readableError(reason)));
+  };
+  const renderTree = (items: FileTreeNode[], depth = 0): ReactNode => items.filter((item) => treeMatches(item, normalizedQuery)).map((item) => {
+    const isFolder = item.kind === "folder";
+    const isOpen = expanded.has(item.path) || Boolean(normalizedQuery);
+    return <div key={item.path}><button type="button" className="file-tree-row" style={{ "--tree-indent": `${depth * 16}px` } as CSSProperties} onClick={() => selectFile(item)} title={item.path}>{isFolder ? <ChevronRight className={isOpen ? "open" : ""} /> : <span className="file-tree-spacer" />}{isFolder ? <Folder /> : <FileText />}<span>{item.name}</span></button>{isFolder && isOpen && renderTree(item.children, depth + 1)}</div>;
+  });
+
+  return <div className="workspace-files">{error && <div className="workspace-panel-error"><CircleAlert /><span>{error}</span></div>}<div className="files-filter"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter files…" aria-label="Filter files" /><Button variant="ghost" size="icon-sm" onClick={() => void loadFiles()} disabled={loading} aria-label="Refresh files"><RefreshCw className={loading ? "spin" : ""} /></Button></div>{!loading && !error && files.length === 0 ? <div className="workspace-empty"><Files /><strong>No files yet</strong><p>Files created by your assistant will appear here.</p></div> : <div className="files-tree-list">{renderTree(roots)}</div>}</div>;
+}
+
+function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; partition: string; onChange: (next: Pick<WorkspaceTab, "url" | "title">) => void }) {
+  const viewRef = useRef<BrowserView | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [view, setView] = useState<BrowserView | null>(null);
+  const initialUrl = tab.url || defaultBrowserUrl;
+  const [address, setAddress] = useState(initialUrl);
+  const [currentUrl, setCurrentUrl] = useState(initialUrl);
+  const [loading, setLoading] = useState(false);
+  const [canBack, setCanBack] = useState(false);
+  const [canForward, setCanForward] = useState(false);
+  const [loadError, setLoadError] = useState<string>();
+  const setBrowserView = useCallback((node: BrowserView | null) => {
+    viewRef.current = node;
+    setView(node);
+  }, []);
+
+  const sync = () => {
+    const view = viewRef.current;
+    if (!view) return;
+    try {
+      const url = view.getURL();
+      if (url) {
+        setCurrentUrl(url);
+        setAddress(url);
+        onChange({ url, title: view.getTitle().trim() || undefined });
+      }
+      setCanBack(view.canGoBack());
+      setCanForward(view.canGoForward());
+    } catch { /* The guest can be recreated while Electron reloads. */ }
+  };
+
+  const navigate = (value: string) => {
+    const url = normalizeBrowserUrl(value);
+    setAddress(url);
+    setLoadError(undefined);
+    void viewRef.current?.loadURL(url).catch(() => undefined);
+  };
+
+  useEffect(() => {
+    if (!view) return;
+    const start = () => { setLoading(true); setLoadError(undefined); };
+    const stop = () => { setLoading(false); sync(); };
+    const navigate = () => sync();
+    const failed = (event: Event & { errorCode?: number; errorDescription?: string }) => {
+      if (event.errorCode === -3) return;
+      setLoading(false);
+      setLoadError(event.errorDescription || "This page could not be loaded.");
+    };
+    view.addEventListener("did-start-loading", start);
+    view.addEventListener("did-stop-loading", stop);
+    view.addEventListener("did-navigate", navigate);
+    view.addEventListener("did-navigate-in-page", navigate);
+    view.addEventListener("did-fail-load", failed);
+    return () => {
+      view.removeEventListener("did-start-loading", start);
+      view.removeEventListener("did-stop-loading", stop);
+      view.removeEventListener("did-navigate", navigate);
+      view.removeEventListener("did-navigate-in-page", navigate);
+      view.removeEventListener("did-fail-load", failed);
+    };
+  }, [view]);
+
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!view || !frame) return;
+    const resizeView = () => {
+      const { width, height } = frame.getBoundingClientRect();
+      view.style.width = `${Math.round(width)}px`;
+      view.style.height = `${Math.round(height)}px`;
+    };
+    const observer = new ResizeObserver(resizeView);
+    observer.observe(frame);
+    resizeView();
+    return () => observer.disconnect();
+  }, [view]);
+
+  const webview = createElement("webview" as never, {
+    ref: setBrowserView,
+    src: initialUrl,
+    className: "workspace-browser-view",
+    partition,
+    webpreferences: "contextIsolation=yes,sandbox=yes,nodeIntegration=no",
+  });
+
+  return <div className="workspace-browser">
+    <div className="browser-toolbar">
+      <Button variant="ghost" size="icon-sm" disabled={!canBack} onClick={() => viewRef.current?.goBack()} aria-label="Back" title="Back"><ChevronLeft /></Button>
+      <Button variant="ghost" size="icon-sm" disabled={!canForward} onClick={() => viewRef.current?.goForward()} aria-label="Forward" title="Forward"><ChevronRight /></Button>
+      <Button variant="ghost" size="icon-sm" onClick={() => loading ? viewRef.current?.stop() : viewRef.current?.reload()} aria-label={loading ? "Stop loading" : "Reload"} title={loading ? "Stop loading" : "Reload"}>{loading ? <X /> : <RefreshCw />}</Button>
+      <form className="browser-address" onSubmit={(event) => { event.preventDefault(); navigate(address); }}><LockKeyhole /><input value={address} onChange={(event) => setAddress(event.target.value)} aria-label="Browser address" spellCheck={false} /></form>
+      <Button variant="ghost" size="icon-sm" onClick={() => void window.piBot.openExternal(currentUrl).catch(() => undefined)} aria-label="Open in default browser" title="Open in default browser"><ExternalLink /></Button>
+    </div>
+    <div className="workspace-browser-frame" ref={frameRef}>{webview}{loadError && <div className="browser-load-error"><CircleAlert /><strong>Couldn’t open this page</strong><p>{loadError}</p><Button variant="outline" size="sm" onClick={() => viewRef.current?.reload()}>Try again</Button></div>}</div>
+  </div>;
+}
+
+function RightWorkspacePanel({ data, open, storageKey }: { data: PiBootstrap; open: boolean; storageKey: string }) {
+  const [tabs, setTabs] = useState<WorkspaceTab[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(`${storageKey}:tabs`) || "[]");
+      if (Array.isArray(saved) && saved.every((tab) => typeof tab?.id === "string" && (tab.kind === "files" || tab.kind === "browser"))) return saved;
+    } catch { /* A malformed local preference starts fresh. */ }
+    return [{ id: "files-default", kind: "files" }];
+  });
+  const [activeTabId, setActiveTabId] = useState<string | null>(() => localStorage.getItem(`${storageKey}:active-tab`) || "files-default");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerMenuLeft, setPickerMenuLeft] = useState(8);
+  const tabsRef = useRef<HTMLElement>(null);
+  const tabListRef = useRef<HTMLDivElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { localStorage.setItem(`${storageKey}:tabs`, JSON.stringify(tabs)); }, [storageKey, tabs]);
+  useEffect(() => { if (activeTabId) localStorage.setItem(`${storageKey}:active-tab`, activeTabId); else localStorage.removeItem(`${storageKey}:active-tab`); }, [activeTabId, storageKey]);
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const updatePickerMenuPosition = () => {
+      const tabsElement = tabsRef.current;
+      const pickerElement = pickerRef.current;
+      if (!tabsElement || !pickerElement) return;
+      setPickerMenuLeft(pickerElement.getBoundingClientRect().left - tabsElement.getBoundingClientRect().left);
+    };
+    updatePickerMenuPosition();
+    const tabList = tabListRef.current;
+    tabList?.addEventListener("scroll", updatePickerMenuPosition);
+    window.addEventListener("resize", updatePickerMenuPosition);
+    return () => {
+      tabList?.removeEventListener("scroll", updatePickerMenuPosition);
+      window.removeEventListener("resize", updatePickerMenuPosition);
+    };
+  }, [pickerOpen, tabs]);
+  const browserPartition = browserPartitionForSession(storageKey);
+  const addTab = (kind: WorkspaceTabKind) => {
+    const id = `${kind}-${Date.now()}`;
+    setTabs((current) => [...current, { id, kind, ...(kind === "browser" ? { url: defaultBrowserUrl } : {}) }]);
+    setActiveTabId(id);
+    setPickerOpen(false);
+  };
+  const closeTab = (id: string) => {
+    const next = tabs.filter((tab) => tab.id !== id);
+    setTabs(next);
+    if (activeTabId === id) setActiveTabId(next.at(-1)?.id ?? null);
+  };
+  const updateBrowserTab = (id: string, next: Pick<WorkspaceTab, "url" | "title">) => setTabs((current) => current.map((tab) => tab.id === id ? { ...tab, ...next } : tab));
+  return <aside className={`right-workspace-panel ${open ? "open" : "closed"}`} aria-label="Workspace panel"><nav className="workspace-tabs" ref={tabsRef} aria-label="Workspace tabs"><div className="workspace-tab-list" ref={tabListRef}>{tabs.map((tab) => <div className={`workspace-tab ${activeTabId === tab.id ? "selected" : ""}`} key={tab.id}><button type="button" className="workspace-tab-main" onClick={() => setActiveTabId(tab.id)} title={tab.kind === "browser" ? browserTabLabel(tab) : "Files"}>{tab.kind === "files" ? "Files" : browserTabLabel(tab)}</button><button type="button" className="workspace-tab-close" onClick={() => closeTab(tab.id)} aria-label={`Close ${tab.kind} tab`}><X /></button></div>)}<div className="workspace-tab-picker" ref={pickerRef}><button type="button" className="workspace-tab-add" onClick={() => setPickerOpen((value) => !value)} aria-label="Add workspace tab" aria-haspopup="menu" aria-expanded={pickerOpen}><Plus /></button></div></div>{pickerOpen && <div className="workspace-tab-menu" role="menu" style={{ left: pickerMenuLeft }}><button type="button" role="menuitem" onClick={() => addTab("files")}><Files />Files</button><button type="button" role="menuitem" onClick={() => addTab("browser")}><Globe2 />Browser</button></div>}</nav><section className="workspace-panel-content">{tabs.map((tab) => <div key={tab.id} hidden={tab.id !== activeTabId}>{tab.kind === "files" ? <FilesSidebar workspace={data.config.workspace} /> : <BrowserPanel tab={tab} partition={browserPartition} onChange={(next) => updateBrowserTab(tab.id, next)} />}</div>)}</section></aside>;
+}
+
+function ChatWorkspace({ data, busy, error, sessionSidebarOpen, onOpenSessionSidebar, onPrompt, onAbort, onModelChange, onThinkingChange }: ComponentPropsWithoutRef<typeof ChatView>) {
+  const storageKey = `pi-bot.workspace-panel:${workspacePanelSessionKey(data)}`;
+  const [panelOpen, setPanelOpen] = useState(() => localStorage.getItem(`${storageKey}:open`) !== "false");
+  const [panelWidth, setPanelWidth] = useState(() => Math.min(520, Math.max(280, Number(localStorage.getItem(`${storageKey}:width`)) || 340)));
+  const resize = useRef<{ x: number; width: number } | undefined>(undefined);
+  useEffect(() => { localStorage.setItem(`${storageKey}:open`, String(panelOpen)); }, [panelOpen, storageKey]);
+  useEffect(() => { localStorage.setItem(`${storageKey}:width`, String(panelWidth)); }, [panelWidth, storageKey]);
+  const startResize = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    resize.current = { x: event.clientX, width: panelWidth };
+    const move = (next: MouseEvent) => {
+      if (!resize.current) return;
+      setPanelWidth(Math.min(520, Math.max(280, resize.current.width + resize.current.x - next.clientX)));
+    };
+    const end = () => {
+      resize.current = undefined;
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", end);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", end);
+  };
+  return <section className={`chat-workspace ${panelOpen ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${panelWidth}px` } as CSSProperties}><ChatView data={data} busy={busy} error={error} sessionSidebarOpen={sessionSidebarOpen} onOpenSessionSidebar={onOpenSessionSidebar} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />{panelOpen && <button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" />}<Button className="workspace-panel-toggle" variant="ghost" size="icon-sm" onClick={() => setPanelOpen((value) => !value)} title={panelOpen ? "Hide workspace" : "Show workspace"} aria-label={panelOpen ? "Hide workspace" : "Show workspace"}>{panelOpen ? <PanelRightClose /> : <PanelRightOpen />}</Button><RightWorkspacePanel data={data} open={panelOpen} storageKey={storageKey} /></section>;
 }
 
 function ChatView({
@@ -957,7 +1256,7 @@ export function App() {
   return <div className={`app-shell ${sessionSidebarOpen ? "session-sidebar-open" : "session-sidebar-closed"}`}>
     <AgentRail data={data} theme={theme} onSelect={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onCreateAgent={() => { setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={() => setTheme((current) => current === "dark" ? "light" : "dark")} onSettings={() => { setError(undefined); setCreateNewAgent(false); setView("settings"); }} />
     {sessionSidebarOpen && <SessionSidebar data={data} busy={busy} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId))} onDeleteSession={deleteSession} onCollapse={() => setSessionSidebarOpen(false)} />}
-    {view === "chat" ? <ChatView data={data} busy={busy} error={error} sessionSidebarOpen={sessionSidebarOpen} onOpenSessionSidebar={() => setSessionSidebarOpen(true)} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /> : <SettingsPage data={data} busy={busy} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} />}
+    {view === "chat" ? <ChatWorkspace key={workspacePanelSessionKey(data)} data={data} busy={busy} error={error} sessionSidebarOpen={sessionSidebarOpen} onOpenSessionSidebar={() => setSessionSidebarOpen(true)} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /> : <SettingsPage data={data} busy={busy} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} />}
     {authPrompt && <AuthPromptCard prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}
   </div>;
 }
