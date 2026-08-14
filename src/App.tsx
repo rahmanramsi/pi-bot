@@ -39,6 +39,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -385,26 +386,28 @@ function ActivityItem({ item }: { item: TimelineItem }) {
   const output = state.status === "running" && item.body === item.input ? "Running…" : item.body || "No output returned.";
   const outcome = state.status === "running" ? "Running" : state.status === "failed" ? "Failed" : "Success";
   return (
-    <motion.details className={`activity-item ${state.status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-motion="activity-item">
-      <summary>
+    <Accordion className="activity-item-accordion" value={open ? ["activity"] : []} onValueChange={(next) => setOpen(next.includes("activity"))} data-motion="activity-item">
+      <AccordionItem value="activity" className={`activity-item ${state.status}`}>
+        <AccordionTrigger className="activity-item-trigger">
         <span className="activity-glyph"><Terminal /></span>
         <span className="activity-summary-copy">
           <strong className="activity-summary-closed">{command ? <>Ran <code title={command}>{command}</code></> : title}</strong>
           <strong className="activity-summary-open">{command ? "Ran command" : title}</strong>
         </span>
         <motion.span className="activity-chevron" animate={{ rotate: open ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span>
-      </summary>
-      <AnimatePresence initial={false}>
-        {open && <motion.div className="activity-output-motion" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.standard}>
-          <div className="activity-output-card">
-            <div className="activity-output-heading">{command ? "Shell" : "Details"}</div>
-            {command && <code className="activity-command-full">$ {command}</code>}
-            <pre>{output}</pre>
-            <div className={`activity-outcome ${state.status}`}>{state.icon}<span>{outcome}</span></div>
+        </AccordionTrigger>
+        <AccordionContent className="activity-output-content">
+          <div className="activity-output-motion">
+            <div className="activity-output-card">
+              <div className="activity-output-heading">{command ? "Shell" : "Details"}</div>
+              {command && <code className="activity-command-full">$ {command}</code>}
+              <pre>{output}</pre>
+              <div className={`activity-outcome ${state.status}`}>{state.icon}<span>{outcome}</span></div>
+            </div>
           </div>
-        </motion.div>}
-      </AnimatePresence>
-    </motion.details>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 }
 
@@ -423,8 +426,9 @@ function ActivityGroup({ items }: { items: TimelineItem[] }) {
       ? `${doneCount} of ${items.length} steps completed`
       : `All ${items.length} ${items.length === 1 ? "step" : "steps"} completed`;
   return (
-    <motion.details className="activity-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-motion="activity-group">
-      <summary>
+    <Accordion className="activity-group" value={open ? ["activity"] : []} onValueChange={(next) => setOpen(next.includes("activity"))} data-motion="activity-group">
+      <AccordionItem value="activity" className="activity-group-item">
+        <AccordionTrigger className="activity-group-trigger">
         <span className="activity-group-glyph" aria-hidden="true"><i /><i /><i /></span>
         <span className="activity-group-copy">
           <strong>Agent activity</strong>
@@ -432,20 +436,14 @@ function ActivityGroup({ items }: { items: TimelineItem[] }) {
         </span>
         <span className="activity-group-toggle">{open ? "Hide details" : "Show details"}</span>
         <motion.span className="activity-group-chevron" animate={{ rotate: open ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span>
-      </summary>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            className="activity-list-motion"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={motionTransitions.standard}
-          >
+        </AccordionTrigger>
+        <AccordionContent className="activity-group-content">
+          <div className="activity-list-motion">
             <ActivityList items={items} />
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.details>
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 }
 

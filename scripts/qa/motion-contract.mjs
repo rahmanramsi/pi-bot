@@ -9,6 +9,7 @@ const files = {
   streaming: "src/lib/streaming.ts",
   main: "src/main.tsx",
   app: "src/App.tsx",
+  accordion: "src/components/ui/accordion.tsx",
   button: "src/components/ui/button.tsx",
   dialog: "src/components/ui/dialog.tsx",
   select: "src/components/ui/select.tsx",
@@ -34,9 +35,10 @@ requireText("motion", /streamBatchMs: 40/, "streaming motion must use the docume
 requireText("design", /--motion-stream-caret.*1100ms/, "streaming caret timing must be documented");
 requireText("main", /<MotionProvider>/, "renderer root must use MotionProvider");
 requireText("app", /AnimatePresence/, "interaction surfaces must use AnimatePresence");
-requireText("app", /function ActivityItem[\s\S]*?<motion\.details(?![^>]*\blayout\b)[^>]*className=\{?[`"']activity-item/, "activity items should not animate layout reflow");
-requireText("app", /function ActivityGroup[\s\S]*?<motion\.details(?![^>]*\blayout\b)[^>]*className=["']activity-group/, "activity groups should not animate layout reflow");
-requireText("app", /className=["']activity-list-motion["'][\s\S]*?initial=\{\{ opacity: 0 \}\}[\s\S]*?animate=\{\{ opacity: 1 \}\}/, "activity group details should use an opacity-only fade");
+requireText("app", /function ActivityItem[\s\S]*?<Accordion className=["']activity-item-accordion["']/, "activity items should use the shared Accordion");
+requireText("app", /function ActivityGroup[\s\S]*?<Accordion className=["']activity-group["']/, "activity groups should use the shared Accordion");
+requireText("app", /className=["']activity-list-motion["']/, "activity group details should expose the fade surface");
+requireText("accordion", /AccordionPrimitive\.Panel[\s\S]*?className=["']overflow-hidden text-sm["']/, "activity Accordion panels should not animate layout reflow");
 requireText("app", /layoutId=/, "selection or navigation needs a shared layout indicator");
 requireText("app", /whileTap=/, "actionable interaction surfaces need press feedback");
 requireText("app", /createStreamDeltaBatcher/, "assistant deltas must use the stream batcher");
@@ -60,12 +62,19 @@ requireText("design", /prefers-reduced-motion/, "design contract must mention re
 requireText("styles", /data-motion=\"streaming-caret\"\]\s*>\s*:last-child::after/, "streaming caret must stay inline with the final markdown block");
 requireText("styles", /prefers-reduced-motion[\s\S]*streaming-caret/, "streaming caret must have a reduced-motion CSS path");
 
+requireText("styles", /@keyframes activity-fade-in/, "activity Accordion details should define an opacity-only fade");
+requireText("styles", /animation: activity-fade-in 220ms ease-out both/, "activity Accordion details should animate opacity without reflow");
+requireText("styles", /activity-fade-in[\s\S]*prefers-reduced-motion/, "activity Accordion fade must have a reduced-motion path");
+
 const directLayoutAnimation = /animate=\{[^}]*\b(?:width|height|top|right|bottom|left|margin|padding)\s*:/s;
 if (directLayoutAnimation.test(sources.app) || directLayoutAnimation.test(sources.motion)) {
   failures.push("layout properties must not be directly animated with Motion");
 }
 if (/@keyframes agent-working-enter/.test(sources.styles)) {
   failures.push("Motion-owned agent entry must not retain a duplicate transform keyframe");
+}
+if (/animate-accordion-(?:down|up)/.test(sources.accordion)) {
+  failures.push("activity Accordion panels must not use height reflow animation");
 }
 
 if (failures.length > 0) {
