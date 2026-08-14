@@ -32,7 +32,7 @@ export type SessionSummary = {
   path: string;
   id: string;
   name: string;
-  agentId?: AgentId;
+  agentId: AgentId;
   workspace?: string;
   created?: string;
   modified?: string;
@@ -133,7 +133,7 @@ export type PiBotBridge = {
   deleteAgent: (agentId: AgentId, deleteWorkspace?: boolean) => Promise<PiBootstrap>;
   trustWorkspace: (agentId: AgentId) => Promise<PiBootstrap>;
   newSession: () => Promise<PiBootstrap>;
-  openSession: (sessionPath: string) => Promise<PiBootstrap>;
+  openSession: (sessionPath: string, agentId: AgentId) => Promise<PiBootstrap>;
   deleteSession: (sessionPath: string) => Promise<PiBootstrap>;
   getSessions: (agentId?: AgentId | null) => Promise<SessionSummary[]>;
   prompt: (message: string) => Promise<void>;

@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld("piBot", {
   deleteAgent: (agentId, deleteWorkspace) => ipcRenderer.invoke("pi:delete-agent", agentId, deleteWorkspace),
   trustWorkspace: (agentId) => ipcRenderer.invoke("pi:trust-workspace", agentId),
   newSession: () => ipcRenderer.invoke("pi:new-session"),
-  openSession: (sessionPath) => ipcRenderer.invoke("pi:open-session", sessionPath),
+  openSession: (sessionPath, agentId) => ipcRenderer.invoke("pi:open-session", sessionPath, agentId),
   deleteSession: (sessionPath) => ipcRenderer.invoke("pi:delete-session", sessionPath),
   getSessions: (agentId) => ipcRenderer.invoke("pi:get-sessions", agentId),
   prompt: (message) => ipcRenderer.invoke("pi:prompt", message),

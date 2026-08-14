@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Popover } from "@base-ui/react/popover";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -24,7 +25,6 @@ import {
   ShieldCheck,
   Square,
   Trash2,
-  Wrench,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -204,6 +204,46 @@ function ThinkingSelect({
   );
 }
 
+function ComposerSettings({
+  config,
+  busy,
+  reasoningLevels,
+  onModelChange,
+  onThinkingChange,
+}: {
+  config: PiConfig;
+  busy: boolean;
+  reasoningLevels: ThinkingLevel[];
+  onModelChange: (key: string) => void;
+  onThinkingChange: (level: ThinkingLevel) => void;
+}) {
+  const model = config.models.find((item) => item.key === config.modelKey);
+  return (
+    <Popover.Root>
+      <Popover.Trigger className="composer-settings-trigger" disabled={busy || config.models.length === 0} aria-label="Model and reasoning settings">
+        <span>{model?.name ?? "Choose a model"}</span>
+        <i aria-hidden="true">·</i>
+        <span>{labelThinkingLevel(config.thinkingLevel)}</span>
+        <ChevronDown aria-hidden="true" />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner className="composer-settings-positioner" side="top" align="end" sideOffset={8}>
+          <Popover.Popup className="composer-settings-popup" initialFocus={false}>
+            <div className="composer-settings-row">
+              <span>Model</span>
+              <ModelSelect value={config.modelKey} models={config.models} onChange={onModelChange} disabled={busy || config.models.length === 0} className="composer-settings-select model" />
+            </div>
+            <div className="composer-settings-row">
+              <span>Reasoning</span>
+              <ThinkingSelect value={config.thinkingLevel} levels={reasoningLevels} onChange={onThinkingChange} disabled={busy || !config.modelAvailable} />
+            </div>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 function Composer({
   busy,
   disabled,
@@ -225,6 +265,7 @@ function Composer({
 }) {
   const [message, setMessage] = useState("");
   const contextPercent = config.context.percent === null ? 0 : Math.min(100, Math.max(0, config.context.percent));
+  const contextLabel = config.context.percent === null ? "—" : config.context.percent > 0 && config.context.percent < 1 ? "<1%" : `${config.context.percent.toFixed(0)}%`;
   const reasoningLevels = config.availableThinkingLevels.length > 0 ? config.availableThinkingLevels : ["off"] as ThinkingLevel[];
 
   function submit(event: FormEvent) {
@@ -237,40 +278,35 @@ function Composer({
 
   return (
     <form className="composer" onSubmit={submit}>
-      <div className="composer-entry">
-        <span className="composer-prefix" aria-hidden="true">+</span>
-        <Input
-          className="composer-input"
-          aria-label={`Message ${agentName}`}
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          placeholder={`Message ${agentName}…`}
-          disabled={disabled}
-        />
-        {busy ? (
-          <Button className="stop-button" variant="destructive" type="button" onClick={onAbort}>
-            <Square />
-            <span>Stop</span>
-          </Button>
-        ) : (
-          <Button className="send-button" size="icon" type="submit" aria-label="Send message" disabled={disabled}>
-            <ArrowUp />
-          </Button>
-        )}
-      </div>
-      <div className="composer-controls">
-        <div className="composer-control">
-          <span>Model</span>
-          <ModelSelect value={config.modelKey} models={config.models} onChange={onModelChange} disabled={busy || config.models.length === 0} className="composer-model-trigger" />
+      <Textarea
+        className="composer-input"
+        aria-label={`Message ${agentName}`}
+        value={message}
+        onChange={(event) => setMessage(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+          event.preventDefault();
+          event.currentTarget.form?.requestSubmit();
+        }}
+        placeholder={`Message ${agentName}…`}
+        disabled={disabled}
+        rows={2}
+      />
+      <div className="composer-toolbar">
+        <div className="composer-toolbar-left">
+          <span className="composer-prefix" aria-hidden="true">+</span>
+          <div className="composer-context" title={`${formatTokenCount(config.context.tokens)} of ${formatTokenCount(config.context.contextWindow)} tokens used`}>
+            <div className="context-meter" role="progressbar" aria-label="Context usage" aria-valuemin={0} aria-valuemax={100} aria-valuenow={contextPercent}><span style={{ width: `${contextPercent}%` }} /></div>
+            <span>Context {contextLabel}</span>
+          </div>
         </div>
-        <div className="composer-control">
-          <span>Reasoning</span>
-          <ThinkingSelect value={config.thinkingLevel} levels={reasoningLevels} onChange={onThinkingChange} disabled={busy || !config.modelAvailable} />
-        </div>
-        <div className="context-status" title="Estimated context used by this session">
-          <div className="context-status-copy"><span>Context</span><strong>{formatTokenCount(config.context.tokens)} / {formatTokenCount(config.context.contextWindow)}</strong></div>
-          <div className="context-meter" role="progressbar" aria-label="Context usage" aria-valuemin={0} aria-valuemax={100} aria-valuenow={contextPercent}><span style={{ width: `${contextPercent}%` }} /></div>
-          <small>{config.context.percent === null ? "Waiting for usage" : `${config.context.percent.toFixed(0)}% used`}</small>
+        <div className="composer-actions">
+          <ComposerSettings config={config} busy={busy} reasoningLevels={reasoningLevels} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
+          {busy ? (
+            <Button className="stop-button" size="icon" type="button" onClick={onAbort} aria-label="Stop response"><Square /></Button>
+          ) : (
+            <Button className="send-button" size="icon" type="submit" aria-label="Send message" disabled={disabled || !message.trim()}><ArrowUp /></Button>
+          )}
         </div>
       </div>
     </form>
@@ -281,30 +317,47 @@ function activityLabel(item: TimelineItem) {
   return item.label.replace(/^Tool\s*·\s*/, "");
 }
 
-function ActivityCluster({ items }: { items: TimelineItem[] }) {
-  const hasRunning = items.some((item) => item.status === "running");
-  const hasFailed = items.some((item) => item.status === "failed");
-  const status = hasFailed ? "failed" : hasRunning ? "running" : "done";
+function activityStatus(item: TimelineItem) {
+  const status = item.status ?? "done";
+  return {
+    status,
+    label: status === "running" ? "Working" : status === "failed" ? "Failed" : "Done",
+    icon: status === "running" ? <LoaderCircle className="spin" /> : status === "failed" ? <CircleAlert /> : <Check />,
+  };
+}
+
+function ActivityItem({ item }: { item: TimelineItem }) {
+  const state = activityStatus(item);
   return (
-    <details className={`activity-cluster ${status}`} open={hasRunning}>
+    <details className={`activity-item ${state.status}`} open={state.status === "running"}>
       <summary>
-        <span className="activity-glyph"><Wrench /></span>
-        <span className="activity-title">Activity</span>
-        <span className="activity-count">{items.length} {items.length === 1 ? "step" : "steps"}</span>
-        <Badge variant={status === "failed" ? "destructive" : "outline"}>{hasFailed ? "Failed" : hasRunning ? "Working" : "Done"}</Badge>
+        <span className="activity-glyph">{state.icon}</span>
+        <strong>{activityLabel(item)}</strong>
+        <time>{item.timestamp}</time>
+        <span className={`activity-status ${state.status}`}>{state.label}</span>
+        <ChevronRight className="activity-chevron" />
       </summary>
-      <div className="activity-list">
-        {items.map((item) => (
-          <div className="activity-line" key={item.id}>
-            <div className="activity-line-header">
-              <strong>{activityLabel(item)}</strong>
-              <time>{item.timestamp}</time>
-              <span className={`activity-line-status ${item.status ?? "done"}`}>{item.status ?? "done"}</span>
-            </div>
-            <pre>{item.body || (item.status === "running" ? "Working…" : "No detail returned.")}</pre>
-          </div>
-        ))}
-      </div>
+      <pre>{item.body || (state.status === "running" ? "Working…" : "No detail returned.")}</pre>
+    </details>
+  );
+}
+
+function ActivityList({ items }: { items: TimelineItem[] }) {
+  return <div className="activity-list">{items.map((item) => <ActivityItem item={item} key={item.id} />)}</div>;
+}
+
+function ActivityGroup({ items }: { items: TimelineItem[] }) {
+  const names = items.map(activityLabel);
+  const preview = names.length <= 2 ? names.join(", ") : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+  return (
+    <details className="activity-group">
+      <summary>
+        <span className="activity-group-glyph" aria-hidden="true"><i /><i /><i /></span>
+        <strong>{items.length} tool {items.length === 1 ? "activity" : "activities"}</strong>
+        <span className="activity-group-preview">{preview}</span>
+        <ChevronRight className="activity-group-chevron" />
+      </summary>
+      <ActivityList items={items} />
     </details>
   );
 }
@@ -341,7 +394,20 @@ function ChatMessage({ item, agent }: { item: TimelineItem; agent?: AgentProfile
   );
 }
 
-function EventRows({ items, agent }: { items: TimelineItem[]; agent?: AgentProfile }) {
+function AgentWorking({ agent }: { agent?: AgentProfile }) {
+  const name = agent?.name ?? "Assistant";
+  return (
+    <article className="chat-message assistant agent-working" role="status" aria-label={`${name} is working`}>
+      <div className="chat-avatar" aria-hidden="true">{agent?.initials ?? "AS"}</div>
+      <div className="chat-message-main">
+        <div className="chat-message-meta"><strong>{name}</strong><span className="agent-working-label">Working…</span></div>
+        <div className="chat-bubble"><div className="agent-working-dots" aria-hidden="true"><span /><span /><span /></div></div>
+      </div>
+    </article>
+  );
+}
+
+function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?: AgentProfile; responding: boolean }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [following, setFollowing] = useState(true);
   const blocks: Array<{ kind: "message"; item: TimelineItem } | { kind: "activity"; items: TimelineItem[] }> = [];
@@ -352,10 +418,13 @@ function EventRows({ items, agent }: { items: TimelineItem[]; agent?: AgentProfi
     else if (activity) blocks.push({ kind: "activity", items: [item] });
     else blocks.push({ kind: "message", item });
   }
+  const latest = items.at(-1);
+  const assistantIsStreaming = latest?.kind === "assistant" && latest.status === "running";
+  const showAgentWorking = responding && !assistantIsStreaming;
 
   useEffect(() => {
     if (following && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [items.length, items.at(-1)?.body, following]);
+  }, [items.length, items.at(-1)?.body, following, showAgentWorking]);
 
   function handleScroll() {
     const element = scrollRef.current;
@@ -381,8 +450,9 @@ function EventRows({ items, agent }: { items: TimelineItem[]; agent?: AgentProfi
         <div className="conversation-scroll" ref={scrollRef} onScroll={handleScroll} role="log" aria-label="Conversation">
           <div className="conversation-blocks">
             {blocks.map((block) => block.kind === "activity"
-              ? <ActivityCluster items={block.items} key={`activity-${block.items[0].id}`} />
+              ? <ActivityGroup items={block.items} key={`activity-${block.items[0].id}`} />
               : <ChatMessage item={block.item} agent={agent} key={block.item.id} />)}
+            {showAgentWorking && <AgentWorking agent={agent} />}
           </div>
         </div>
       )}
@@ -494,7 +564,7 @@ function ChatView({
       <ErrorBanner message={error} />
       {!data.authenticated && <div className="notice-line"><KeyRound /><span>Add a provider credential in App Settings to start chatting.</span></div>}
       {data.authenticated && blocked && agent && <div className="notice-line"><CircleAlert /><span>This agent’s model is unavailable. Choose another model in App Settings.</span></div>}
-      <EventRows items={data.transcript} agent={agent} />
+      <EventRows items={data.transcript} agent={agent} responding={responding} />
       <Composer busy={responding} disabled={blocked || responding} agentName={agent?.name ?? "Assistant"} config={data.config} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
     </main>
   );
@@ -712,5 +782,5 @@ export function App() {
     updateWith(() => window.piBot.deleteAgent(profile.id, deletesWorkspace));
   }
 
-  return <div className="app-shell"><AgentSidebar data={data} busy={busy} expanded={expanded} onToggle={(id) => setExpanded((previous) => ({ ...previous, [id]: !previous[id] }))} onSelect={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onSettings={() => { setError(undefined); setView("settings"); }} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path))} onDeleteSession={deleteSession} />{view === "chat" ? <ChatView data={data} busy={busy} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /> : <SettingsPage data={data} busy={busy} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} />}{authPrompt && <AuthPromptCard prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} />}</div>;
+  return <div className="app-shell"><AgentSidebar data={data} busy={busy} expanded={expanded} onToggle={(id) => setExpanded((previous) => ({ ...previous, [id]: !previous[id] }))} onSelect={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onSettings={() => { setError(undefined); setView("settings"); }} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId))} onDeleteSession={deleteSession} />{view === "chat" ? <ChatView data={data} busy={busy} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /> : <SettingsPage data={data} busy={busy} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} />}{authPrompt && <AuthPromptCard prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} />}</div>;
 }

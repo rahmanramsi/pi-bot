@@ -938,11 +938,12 @@ ipcMain.handle("pi:trust-workspace", async (_event, agentId) => {
 
 ipcMain.handle("pi:new-session", () => createSession({ mode: "new", agentId: activeAgentId }));
 
-ipcMain.handle("pi:open-session", async (_event, sessionPath) => {
+ipcMain.handle("pi:open-session", async (_event, sessionPath, agentId) => {
   if (typeof sessionPath !== "string" || !sessionPath) throw new Error("Invalid session path.");
-  const sessions = await listSessions(activeAgentId);
+  if (!isAgentId(agentId)) throw new Error("Invalid agent.");
+  const sessions = await listSessions(agentId);
   if (!sessions.some((entry) => entry.path === sessionPath)) throw new Error("That conversation is not in this workspace.");
-  return createSession({ mode: "open", sessionPath, agentId: activeAgentId });
+  return createSession({ mode: "open", sessionPath, agentId });
 });
 
 ipcMain.handle("pi:get-sessions", (_event, agentId = activeAgentId) => listSessions(agentId));
