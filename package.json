@@ -1,6 +1,6 @@
 {
   "name": "pi-bot",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A local-first macOS workspace for Pi coding agents.",
   "author": "Rahman Ramsi",
   "homepage": "https://github.com/rahmanramsi/pi-bot#readme",
@@ -17,7 +17,8 @@
     "dev": "concurrently -k -s first \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
-    "dist": "npm run build && electron-builder --mac --arm64"
+    "verify:renderer": "node scripts/check-packaged-renderer.mjs",
+    "dist": "npm run build && npm run verify:renderer && electron-builder --mac --arm64"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.1"
