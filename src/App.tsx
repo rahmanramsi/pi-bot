@@ -385,7 +385,7 @@ function ActivityItem({ item }: { item: TimelineItem }) {
   const output = state.status === "running" && item.body === item.input ? "Running…" : item.body || "No output returned.";
   const outcome = state.status === "running" ? "Running" : state.status === "failed" ? "Failed" : "Success";
   return (
-    <motion.details layout className={`activity-item ${state.status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-motion="activity-item">
+    <motion.details className={`activity-item ${state.status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-motion="activity-item">
       <summary>
         <span className="activity-glyph"><Terminal /></span>
         <span className="activity-summary-copy">
@@ -423,7 +423,7 @@ function ActivityGroup({ items }: { items: TimelineItem[] }) {
       ? `${doneCount} of ${items.length} steps completed`
       : `All ${items.length} ${items.length === 1 ? "step" : "steps"} completed`;
   return (
-    <motion.details layout className="activity-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-motion="activity-group">
+    <motion.details className="activity-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-motion="activity-group">
       <summary>
         <span className="activity-group-glyph" aria-hidden="true"><i /><i /><i /></span>
         <span className="activity-group-copy">
@@ -433,7 +433,18 @@ function ActivityGroup({ items }: { items: TimelineItem[] }) {
         <span className="activity-group-toggle">{open ? "Hide details" : "Show details"}</span>
         <motion.span className="activity-group-chevron" animate={{ rotate: open ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span>
       </summary>
-      <ActivityList items={items} />
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            className="activity-list-motion"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={motionTransitions.standard}
+          >
+            <ActivityList items={items} />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.details>
   );
 }

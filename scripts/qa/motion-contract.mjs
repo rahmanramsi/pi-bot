@@ -34,6 +34,9 @@ requireText("motion", /streamBatchMs: 40/, "streaming motion must use the docume
 requireText("design", /--motion-stream-caret.*1100ms/, "streaming caret timing must be documented");
 requireText("main", /<MotionProvider>/, "renderer root must use MotionProvider");
 requireText("app", /AnimatePresence/, "interaction surfaces must use AnimatePresence");
+requireText("app", /function ActivityItem[\s\S]*?<motion\.details(?![^>]*\blayout\b)[^>]*className=\{?[`"']activity-item/, "activity items should not animate layout reflow");
+requireText("app", /function ActivityGroup[\s\S]*?<motion\.details(?![^>]*\blayout\b)[^>]*className=["']activity-group/, "activity groups should not animate layout reflow");
+requireText("app", /className=["']activity-list-motion["'][\s\S]*?initial=\{\{ opacity: 0 \}\}[\s\S]*?animate=\{\{ opacity: 1 \}\}/, "activity group details should use an opacity-only fade");
 requireText("app", /layoutId=/, "selection or navigation needs a shared layout indicator");
 requireText("app", /whileTap=/, "actionable interaction surfaces need press feedback");
 requireText("app", /createStreamDeltaBatcher/, "assistant deltas must use the stream batcher");

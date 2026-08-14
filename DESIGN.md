@@ -34,7 +34,7 @@ Motion spring equivalents live in `src/lib/motion.tsx`:
 | Shared `Button` | stable | subtle hover lift and press compression | none | focus ring remains visible |
 | Agent/session navigation | selected state | active indicator uses shared layout | old indicator leaves with the layout transition | selection is still clear without motion |
 | Chat message/activity row | stable reading position | fade and translate a small distance | fade out only when removed | transcript order never changes |
-| Disclosure/details | native closed/open state | content fades and reflows with layout | content fades | `summary` remains keyboard native |
+| Disclosure/details | native closed/open state | content fades in; use layout only when spatial continuity is needed | native details closes immediately unless an explicit exit is visible | `summary` remains keyboard native |
 | Workspace panel | closed/open state | panel moves in with the control | panel moves out while its state remains announced | no direct width/height animation |
 | Dialog/auth prompt | modal surface | fade and rise slightly | fade and lower slightly | focus and escape behavior remain unchanged |
 | Async status | compact indicator | opacity/transform communicates working | immediate when complete | no distracting infinite decoration |
