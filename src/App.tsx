@@ -912,6 +912,16 @@ const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(fu
       window.removeEventListener("resize", updatePickerMenuPosition);
     };
   }, [pickerOpen, tabs]);
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setPickerOpen(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [pickerOpen]);
   const browserPartition = browserPartitionForSession(storageKey);
   const addTab = (kind: WorkspaceTabKind) => {
     const id = `${kind}-${Date.now()}`;

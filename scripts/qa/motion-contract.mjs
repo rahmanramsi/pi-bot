@@ -31,6 +31,7 @@ requireText("app", /AnimatePresence/, "interaction surfaces must use AnimatePres
 requireText("app", /layoutId=/, "selection or navigation needs a shared layout indicator");
 requireText("app", /whileTap=/, "actionable interaction surfaces need press feedback");
 requireText("app", /behavior:\s*reducedMotion\s*\?\s*["']auto["']\s*:\s*["']smooth["']/, "interaction-triggered scrolling must honor reduced motion");
+requireText("app", /event\.key !== ["']Escape["'][\s\S]*setPickerOpen\(false\)/, "workspace tab picker must close with Escape");
 requireText("button", /data-motion=["']button["']/, "shared Button must expose the motion contract");
 requireText("dialog", /from ["']@\/lib\/motion["']/, "shared Dialog must use the motion boundary");
 requireText("dialog", /data-motion=["']dialog-content["']/, "shared Dialog content must expose the motion contract");
