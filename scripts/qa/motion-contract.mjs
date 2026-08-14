@@ -35,7 +35,9 @@ requireText("app", /event\.key !== ["']Escape["'][\s\S]*setPickerOpen\(false\)/,
 requireText("button", /data-motion=["']button["']/, "shared Button must expose the motion contract");
 requireText("dialog", /from ["']@\/lib\/motion["']/, "shared Dialog must use the motion boundary");
 requireText("dialog", /data-motion=["']dialog-content["']/, "shared Dialog content must expose the motion contract");
-requireText("dialog", /<DialogPortal forceMount>/, "shared Dialog must remain mounted for its close transition");
+requireText("dialog", /const DialogMotionContext/, "shared Dialog must track open state for exit cleanup");
+requireText("dialog", /const \[present, setPresent\] = React\.useState\(open\)/, "shared Dialog must keep its portal present during exit");
+requireText("dialog", /if \(!open\) setPresent\(false\)/, "shared Dialog must unmount after its close animation");
 requireText("dialog", /animate=\{\{ opacity: open \? 1 : 0 \}\}/, "shared Dialog must animate its open and closed states");
 requireText("select", /from ["']@\/lib\/motion["']/, "shared Select must use the motion boundary");
 requireText("select", /data-motion=["']select-content["']/, "shared Select content must expose the motion contract");
