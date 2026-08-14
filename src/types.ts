@@ -90,6 +90,11 @@ export type TimelineItem = {
   timestamp: string;
 };
 
+export type WorkspaceFile = {
+  path: string;
+  kind: "file" | "folder";
+};
+
 export type PiSetup = {
   required: boolean;
   canContinue: boolean;
@@ -151,6 +156,10 @@ export type PiBotBridge = {
   importPiAuth: (accepted?: boolean) => Promise<PiBootstrap>;
   respondAuth: (promptId: string, value: string) => Promise<void>;
   cancelAuth: (promptId: string) => Promise<void>;
+  listWorkspaceFiles: () => Promise<WorkspaceFile[]>;
+  openWorkspaceFile: (path: string) => Promise<void>;
+  revealWorkspaceFile: (path: string) => Promise<void>;
+  openExternal: (url: string) => Promise<void>;
   onEvent: (listener: (event: PiEvent) => void) => () => void;
 };
 
