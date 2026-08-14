@@ -85,6 +85,7 @@ export type TimelineItem = {
   kind: "user" | "assistant" | "tool" | "status";
   label: string;
   body: string;
+  input?: string;
   status?: "running" | "done" | "failed";
   timestamp: string;
 };
@@ -146,6 +147,7 @@ export type PiBotBridge = {
   logoutProvider: (providerId: string) => Promise<PiBootstrap>;
   importPiAuth: () => Promise<PiBootstrap>;
   respondAuth: (promptId: string, value: string) => Promise<void>;
+  cancelAuth: (promptId: string) => Promise<void>;
   onEvent: (listener: (event: PiEvent) => void) => () => void;
 };
 

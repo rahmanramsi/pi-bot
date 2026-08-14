@@ -1,110 +1,125 @@
-# Spec: Pi Bot Stage 2 — Stable Agent Workspace
+# Pi Bot next stage — safe, testable local agents
+
+Status: planned; do not treat the items below as shipped.
 
 ## Objective
 
-Make the published Pi Bot MVP dependable for repeated local use. The selected agent, its custom instructions, and its conversation history must remain understandable and correct across agent switching, new conversations, restarts, streaming responses, and recoverable errors.
+Make the current local Electron prototype dependable for repeated use, with explicit permission decisions for write-capable tools and automated coverage for persistence and IPC behavior.
 
-The primary user task remains: choose an agent, ask about the selected workspace, and understand the answer and the work it performed.
+The primary user task remains: select an agent, ask it to work in its configured workspace, and understand both the answer and every consequential action it performed.
 
-## Assumptions
+## Current baseline
 
-1. Pi remains local-first and continues to use the user's existing local Pi authentication.
-2. Agent creation and customization are in scope; built-in agents remain protected templates.
-3. Custom instructions may be intentionally empty. Tool permissions are controlled by the runtime allowlist, not by a user-written instruction.
-4. `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls` are the enabled tools in this stage.
-5. This stage targets the existing Electron desktop app, not a web or mobile build.
+Already implemented:
 
-## Scope
+- Custom agent lifecycle and per-agent workspaces/instructions.
+- App-owned and external workspaces with skill trust.
+- Provider authentication and model selection.
+- Agent-scoped persistent sessions and streaming tool events.
+- Conversation/activity separation, visible commands, Stop, autosizing composer, themes, settings, and design tokens.
+- Narrow context-isolated Electron bridge.
 
-### P0 — Contract and data integrity
+Known gaps:
 
-- Bring `docs/mvp-spec.md`, `README.md`, and task notes in line with the implemented custom-agent and chat behavior.
-- Verify create, edit, duplicate, archive/restore, and delete behavior for custom agents.
-- Preserve empty custom instructions without replacing them with user-visible filler text.
-- Keep agent-scoped session mappings isolated across workspace changes and app restarts.
-- Prevent built-in agents from being deleted or archived.
+- `bash`, `edit`, and `write` are enabled without a sandbox or approval policy.
+- No automated test command or test suite.
+- Credentials fall back to a permission-restricted app file when Electron encryption is unavailable.
+- No packaged release/update workflow.
 
-### P0 — Conversation reliability
+## P0 — permission and execution safety
 
-- Keep user messages on the right rail and agent responses on the left rail at desktop and narrow window sizes.
-- Keep streaming text in one assistant message; keep tool activity grouped and secondary.
-- Follow new output only when the reader is near the bottom; preserve the reader's position otherwise.
-- Make Stop, retry, and failure states recoverable without a stuck composer or duplicate session.
-- Ensure keyboard focus, disclosure controls, and status text remain usable without relying on color alone.
+- Define explicit `allow` / `ask` / `deny` rules per tool and relevant resource scope.
+- Require approval before write, edit, and shell actions unless a deliberately configured narrow rule allows them.
+- Show the command, target, and expected effect before approval.
+- Keep denied/cancelled actions visible in Agent activity without converting them into assistant prose.
+- Decide whether shell/filesystem execution remains on the host or moves into a sandboxed workspace runtime.
+- Keep credential, workspace, and tool-policy state out of the renderer.
 
-### P1 — Verification and maintainability
+## P0 — automated contracts
 
-- Extract pure validation/normalization and transcript-event mapping logic where needed so it can be tested without launching Electron.
-- Add automated tests for agent persistence, empty instructions, session selection, event grouping, and error/abort transitions.
-- Add a repeatable Electron manual QA matrix covering first run, restart, agent switching, history, streaming, scroll, stop, and runtime failure.
-- Keep the renderer behind the existing narrow, context-isolated IPC bridge.
+- Add the smallest suitable test runner and an `npm test` script.
+- Test agent normalization and persistence, including empty instructions.
+- Test agent/workspace/session isolation and first-prompt title derivation.
+- Test archive, restore, delete, and external-workspace preservation.
+- Test provider prompt response/cancellation and credential-store boundaries without real secrets.
+- Test transcript reconstruction and tool start/update/end mapping.
+- Test autosize helpers and follow-latest behavior as pure logic where practical.
+- Test IPC validation for invalid agent, session, model, reasoning, and auth payloads.
 
-### Deferred
+## P1 — reliability and recovery
 
-- Browser automation, arbitrary extensions, and permission approvals.
-- Automatic multi-agent orchestration, handoffs, background jobs, and schedules.
-- Cloud sync, accounts, billing, team collaboration, and provider/API-key management.
-- Attachments, export, structured artifact cards, and packaged auto-update distribution.
+- Add retry/reconnect actions for failures where the runtime exposes a safe recovery path.
+- Preserve scroll position while reading older content and keep the Latest affordance reliable during streaming.
+- Prevent model, reasoning, workspace, agent, or session changes while their active operation is still streaming.
+- Define and test settings-schema migration before incrementing `settingsVersion`.
+- Improve status semantics for Ready, Working, Error, and Needs input without implying background/cloud execution.
+
+## P1 — maintainability
+
+- Split `src/App.tsx` only when a boundary has clear state ownership; avoid component extraction that merely moves JSX.
+- Keep design tokens in `src/styles.css` and shared controls in `src/components/ui`.
+- Extract pure runtime validation and transcript-mapping functions when doing so enables tests.
+- Document every new persisted field, IPC method, tool capability, and destructive behavior in the same change.
+
+## Deferred
+
+- MCP, connectors, browser/computer use, and arbitrary extensions.
+- Subagents, handoffs, parallel tasks, background jobs, routines, and schedules.
+- Cloud sync, accounts, billing, or collaboration.
+- Attachments and structured artifact cards.
+- Packaged distribution and auto-update until the interaction/security model is stable.
 
 ## Commands
+
+Current commands:
 
 ```bash
 npm install
 npm run dev
 npm run typecheck
 npm run build
+```
+
+Planned addition:
+
+```bash
 npm test
 ```
 
-`npm test` is a Stage 2 addition and should use the smallest test runner that fits the existing project; prefer a built-in or already-installed option before adding a dependency.
+Do not document `npm test` as available until the script and tests exist.
 
-## Project Structure
+## Project structure
 
 ```text
-src/                   renderer state, chat layout, accessibility
-electron/main.mjs      Pi session lifecycle, persistence, IPC validation
-electron/preload.cjs   narrow renderer bridge
-tests/                 pure domain and IPC-adjacent tests
-docs/                  product/spec and research artifacts
-tasks/                 ordered implementation plan and checklist
+electron/main.mjs       runtime, persistence, sessions, providers, IPC
+electron/preload.cjs    narrow renderer bridge
+src/App.tsx             renderer state and application surfaces
+src/styles.css          theme and design-system tokens
+src/components/ui/      shared interface primitives
+src/types.ts            renderer and IPC types
+docs/                   current specs and research artifacts
+tests/                  planned automated tests; not present yet
 ```
-
-## Code Style
-
-Keep domain decisions explicit and boring. Prefer small pure functions over hidden state transitions:
-
-```ts
-function canDeleteAgent(agent: AgentProfile): boolean {
-  return !agent.builtIn && !agent.archived;
-}
-```
-
-Use existing TypeScript types, preserve the current IPC naming convention, and avoid adding a compatibility layer unless a concrete persisted-data migration requires it.
-
-## Testing Strategy
-
-- **Pure tests:** agent normalization, empty instruction handling, session-to-agent mapping, event grouping, and title derivation.
-- **IPC contract tests:** valid and invalid payloads for agent/session actions, with no renderer access to Node APIs.
-- **Build gate:** `npm run typecheck` and `npm run build` from a clean checkout.
-- **Manual Electron QA:** first run, restart, create/edit/duplicate/archive/restore/delete custom agent, empty instruction, switch agent, new/open history session, long streaming response, scroll-up while streaming, stop, retryable error, and narrow-window alignment.
 
 ## Boundaries
 
-- **Always:** validate IPC inputs, keep secrets out of the repository, run typecheck/build/tests before a commit, and show actionable failure states.
-- **Ask first:** adding a new runtime dependency, changing Pi tool permissions, changing the persisted settings schema, or adding a packaged release workflow.
-- **Never:** commit credentials, expose Node APIs to the renderer, or claim an agent changed files when it did not.
+- **Always:** validate IPC input, keep secrets out of the repository and renderer, show real tool activity, and run typecheck/build.
+- **Ask first:** new runtime dependencies, tool-policy changes, settings-schema changes, credential-storage changes, or packaged releases.
+- **Never:** claim sandboxing or approvals exist before they are implemented; expose Node APIs to the renderer; delete an external workspace; hide a command that was actually executed.
 
-## Success Criteria
+## Success criteria
 
-1. The written MVP/spec docs describe the behavior that is actually shipped, including custom agents and optional instructions.
-2. A custom agent with an empty instruction can be created, reopened after restart, edited, duplicated, archived/restored, and deleted according to its state rules.
-3. Switching agents or sessions never shows another agent's transcript or settings.
-4. User and agent messages use stable right/left rails, and the layout remains readable at the supported narrow window width.
-5. Streaming, tool activity, stop, retry, and error states do not strand the composer or lose the active session.
-6. Automated tests plus the manual QA matrix pass, while `npm run typecheck` and `npm run build` remain green.
+1. Every write-capable action is governed by an explicit, visible policy.
+2. Denied and cancelled actions leave the session recoverable.
+3. Automated tests cover agent, session, auth-prompt, transcript, and IPC contracts.
+4. Agent/workspace/session data remains isolated across switching and restart.
+5. Current Electron manual QA still passes in light and dark modes at the minimum window size.
+6. Documentation, implementation, and exposed product capabilities describe the same boundary.
 
-## Open Questions
+## Open decisions
 
-- Should session titles remain derived from the first prompt, or should Stage 2 add explicit rename?
-- Should archived custom agents remain visible in the sidebar by default, or only through the archived section?
-- Is macOS packaging needed immediately after Stage 2, or only once the interaction model is stable?
+- Which operations may be safely pre-approved, if any?
+- Is host execution acceptable for this product, or is a sandbox required before broader use?
+- Should encrypted credential storage be mandatory instead of allowing the current file fallback?
+- Is macOS packaging needed immediately after the safety/test stage?
+

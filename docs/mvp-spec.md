@@ -1,57 +1,98 @@
-# Pi Bot Agent Conversation Workspace MVP
+# Pi Bot local agent workspace — current prototype specification
+
+Status: implemented and verified as an Electron prototype.
 
 ## Goal
 
-Turn the selected Agent Conversation Workspace design into a small, local-first Electron app that lets a person choose a coding Pi teammate and talk to it while keeping the work anchored to a folder on their computer.
+Let a person create or select an AI coding agent, choose the workspace it can operate in, and understand both its answer and the tool activity used to produce that answer.
 
 ## Primary task
 
-Choose Planner, Researcher, or Coder in the sidebar, ask that agent a question about the selected workspace, and see the answer stream in place, including the tools Pi uses.
+Select an agent from the permanent rail, open or create an agent-scoped chat, send a message, and review the streamed response plus its command and tool activity.
 
-## MVP scope
+## Shipped scope
 
-- One agent-first Conversation Workspace interface (variant A).
-- Planner, Researcher, and Coder agent navigation in the primary sidebar.
-- A separate real Pi SDK session with streaming assistant text for each selected agent.
-- Persistent Pi session history per workspace and agent.
-- New chat, secondary history selection, and session titles derived from the first prompt.
-- Native folder selection and remembered last workspace.
-- Model selection and thinking-level selection.
-- Tool activity for the coding tools (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`).
-- Stop while a response is streaming.
-- Visible loading, empty, no-model, and error states.
-- Local Electron/Vite build and manual QA against a real model.
+- Local Electron app with a React/Vite renderer.
+- Configurable agent profiles with name, initials, instructions, workspace, default model, reasoning level, and archive state.
+- One isolated app-owned workspace by default for every agent; an external folder can be selected instead.
+- Agent instructions persisted in the selected workspace's `AGENTS.md`.
+- Skills loaded from `.agents/skills` only for trusted workspaces.
+- Agent-scoped Pi `SessionManager` history, new chat, reopen chat, and permanent chat deletion.
+- Session titles derived from the first prompt.
+- Provider setup through API key, supported sign-in flow, or one-time Pi credential import during first setup.
+- Provider disconnect and cancellable interactive sign-in prompts.
+- Per-agent default model and per-session model selection.
+- Supported reasoning-level selection and context-window usage.
+- Streaming Markdown responses and Stop.
+- Inline, collapsible Agent activity with the executed command, full command/output, and status.
+- Compact composer that autosizes vertically for longer messages.
+- Always-visible agent rail and collapsible session sidebar; no permanent right-side Context panel.
+- Light and dark themes using shared design tokens.
+- Visible loading, setup, unauthenticated, working, empty, error, and disabled states.
 
 ## Explicit non-goals
 
-- Cloud sync, accounts, billing, team collaboration, or web deployment.
-- Browser automation, or arbitrary extensions.
-- Automatic multi-agent orchestration, agent-to-agent handoffs, and custom agent creation.
-- Provider/API-key management. Pi's existing local authentication remains the source of available models.
+- Cloud sync, Pi Bot accounts, billing, or team collaboration.
+- Browser automation, computer use, connectors, MCP, or arbitrary runtime extensions.
+- Automatic multi-agent orchestration, agent-to-agent handoffs, background jobs, routines, or schedules.
+- Attachments, generated artifact previews, Git workflow automation, or packaged auto-update distribution.
+- A production sandbox or finished permission/approval policy.
 
-## Product decisions
+## Product and data decisions
 
-- Pi runs locally through the Electron main process and SDK; the renderer never receives Node access.
-- The selected workspace is the session's `cwd` and is persisted in Electron's user-data directory.
-- The sidebar is primarily agent navigation. History is a collapsible secondary surface scoped to the selected agent.
-- Each agent has its own persistent `SessionManager` session for the selected workspace and can be reopened from history.
-- Pi's persistent `SessionManager` is the source of truth for history. The renderer only keeps the current view state.
-- A session is created lazily for a new chat and can be reopened from the selected agent's history list.
-- Tools are the local coding toolset. The UI states this in the context panel.
+- The Electron main process owns Pi, models, credentials, files, sessions, and lifecycle.
+- The renderer receives only the explicit API exposed by `electron/preload.cjs`.
+- Each agent owns one current workspace and a separate session directory for each workspace identity.
+- The app persists agent profiles and current-session mappings in Electron user data.
+- App-owned workspaces are created below Electron user data with empty `AGENTS.md` and `.agents/skills/` paths.
+- Switching an agent to an external workspace starts a new session and asks whether workspace skills may load.
+- Archiving hides an agent from the rail. Restoring makes it selectable again.
+- Deleting an agent removes its sessions. Its app-owned workspace is deleted only after separate confirmation; external folders are never deleted.
+- Provider credentials are global. Agent default-model choices remain agent-specific.
+- The light/dark preference is renderer-local under `pi-bot-theme`.
+
+## Interface contract
+
+- Left rail: permanent agent identity and global actions.
+- Session sidebar: collapsible history scoped to the active agent.
+- Main area: either chat or App Settings.
+- Chat: user messages on the right, agent messages on the left, and tool/status events grouped as activity.
+- Agent identity: the same initials and color appear in the rail, settings, messages, and working state.
+- Activity: commands are visible in collapsed rows; expansion reveals Shell, full command, output, and outcome.
+- Composer: compact with short input, vertical autosize for long input, maximum height `150px`.
+- Typography: body and control text share a 14px base through semantic design tokens.
+
+See [design-system.md](design-system.md) for the complete visual contract.
+
+## Current security boundary
+
+- `contextIsolation: true`; `nodeIntegration: false`.
+- No direct Node/filesystem access from the renderer.
+- Enabled Pi tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`.
+- No sandbox and no allow/ask/deny approval layer yet.
+- External-workspace trust gates `.agents/skills`, not `AGENTS.md`.
+- Pi extensions, implicit context files, prompt templates, and runtime themes are disabled.
+
+This boundary is suitable for a controlled local prototype, not untrusted autonomous execution.
 
 ## Acceptance criteria
 
-1. `npm run build` passes from a clean checkout.
-2. Launching the app resumes the last selected agent and its session for the remembered workspace, or shows an actionable empty state.
-3. Selecting Planner, Researcher, or Coder changes the active agent, conversation transcript, and agent shown in Context.
-4. Sending a prompt creates a user row, streams an assistant row for the selected agent, and shows tool start/update/end rows when tools run.
-5. Stop ends the active generation without leaving the composer stuck in a busy state.
-6. Closing and reopening the app keeps the workspace, selected agent, and each agent's session history available.
-7. Expanding History shows only sessions for the selected agent; opening an item restores its transcript and New chat starts a separate persistent session.
-8. Changing model or thinking level affects the active Pi session and is reflected in the context panel.
-9. Missing Pi authentication and runtime failures appear as readable errors instead of a blank window.
+1. `npm run typecheck` and `npm run build` pass.
+2. First setup can connect a provider or import available Pi credentials; interactive provider prompts can be cancelled.
+3. Agent create/edit/archive/restore/delete operations survive an app restart.
+4. Agent identity, workspace, model, sessions, transcript, and avatar remain consistent when switching agents.
+5. Sending a prompt creates one user message, streams one agent message, and records discrete tool activity.
+6. Command activity exposes both the executed command and its output/status.
+7. Stop ends streaming without leaving the composer busy.
+8. The composer stays compact for short text and grows downward for multiline input.
+9. The agent rail remains visible; only the session sidebar collapses.
+10. Light mode uses a white chat canvas and both themes remain readable.
+11. Closing and reopening the app restores the active agent and available session history.
+12. Destructive session/agent operations require confirmation and external workspaces are preserved.
 
 ## Verification strategy
 
-- TypeScript check plus Vite production build.
-- Manual Electron QA: connect, switch between all three agents, verify each conversation changes, expand agent-scoped history, switch workspace, create a session, send a prompt, observe streamed text/tool activity, scroll a long conversation, stop a longer response, reopen history, and restart the app.
+- TypeScript validation and Vite production build.
+- Manual Electron QA for first setup, provider cancellation, theme switching, agent lifecycle, workspace trust, session lifecycle, long chats, activity disclosure, composer autosize, Stop, minimum window size, and restart persistence.
+- Automated regression tests are not implemented yet and are part of the next-stage plan.
+
