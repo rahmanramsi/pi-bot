@@ -865,7 +865,8 @@ Setiap entri mencatat:
 - The current app lets agents have isolated app-owned or external workspaces, stores agent instructions in AGENTS.md, and asks before loading external workspace skills.
 - [electron/preload.cjs](../electron/preload.cjs) exposes a narrow IPC bridge; the BrowserWindow uses contextIsolation true and nodeIntegration false.
 - The current renderer has agent selection, sessions/history, model selection, thinking level, streaming events, tool events, stop, provider authentication, and settings surfaces.
-- [docs/mvp-spec.md](mvp-spec.md) still describes an earlier boundary in a few places, including provider management/custom-agent non-goals. For this assessment, current source code is the implementation evidence and the spec is a product-history reference.
+- [docs/mvp-spec.md](mvp-spec.md) now describes the shipped prototype boundary, while [docs/next-stage-spec.md](next-stage-spec.md) separates planned permission/testing work from implemented behavior.
+- [docs/design-system.md](design-system.md) documents the permanent agent rail, collapsible session sidebar, conversation/activity hierarchy, compact autosizing composer, themes, and semantic type scale implemented by the renderer.
 
 ### Recommended fit lenses
 
@@ -942,6 +943,5 @@ Setiap entri mencatat:
 - Pin version/commit untuk setiap open-source repository before making a build or licensing decision.
 - Recheck commercial pricing and plan entitlements before purchase; pricing in this document is a dated snapshot.
 - Verify actual sandbox/network behavior with runnable bounded tests; documentation alone is not enough for high-risk execution.
-- Decide whether Pi Bot wants a read-only/review mode and a write-capable mode before adding more tools.
+- Decide whether Pi Bot should add a read-only/review mode alongside its current write-capable tools before adding more tool power.
 - Treat browser credentials, MCP servers, and background agents as security boundaries, not feature checkboxes.
-

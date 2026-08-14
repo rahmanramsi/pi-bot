@@ -340,7 +340,8 @@ function transcriptFromManager(manager, profile = activeProfile()) {
       }
       for (const part of message.content ?? []) {
         if (part?.type !== "toolCall") continue;
-        const tool = { id: part.id, kind: "tool", label: `Tool · ${part.name}`, body: stringify(part.arguments), timestamp, status: "done" };
+        const input = stringify(part.arguments);
+        const tool = { id: part.id, kind: "tool", label: `Tool · ${part.name}`, body: input, input, timestamp, status: "done" };
         items.push(tool);
         toolRows.set(part.id, tool);
       }
@@ -558,6 +559,7 @@ function updateRuntimeTranscript(runtime, event) {
       kind: "tool",
       label: `Tool · ${event.toolName}`,
       body: stringify(event.args),
+      input: stringify(event.args),
       status: "running",
       timestamp: displayTime(Date.now()),
     });
@@ -795,6 +797,13 @@ async function respondToAuthPrompt(promptId, value) {
   if (!pending) return;
   pendingAuthPrompts.delete(promptId);
   pending.resolve(String(value ?? ""));
+}
+
+async function cancelAuthPrompt(promptId) {
+  const pending = pendingAuthPrompts.get(promptId);
+  if (!pending) return;
+  pendingAuthPrompts.delete(promptId);
+  pending.reject(new Error("Authentication was cancelled."));
 }
 
 function authInteraction() {
@@ -1067,6 +1076,7 @@ ipcMain.handle("pi:import-pi-auth", async () => {
 });
 
 ipcMain.handle("pi:auth-respond", (_event, promptId, value) => respondToAuthPrompt(promptId, value));
+ipcMain.handle("pi:auth-cancel", (_event, promptId) => cancelAuthPrompt(promptId));
 
 function createWindow() {
   window = new BrowserWindow({
@@ -1076,7 +1086,7 @@ function createWindow() {
     minHeight: 700,
     title: "Pi Bot",
     titleBarStyle: "hidden",
-    backgroundColor: "#fbfaf6",
+    backgroundColor: "#111214",
     webPreferences: {
       preload: path.join(here, "preload.cjs"),
       contextIsolation: true,

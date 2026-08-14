@@ -1,163 +1,130 @@
 # Grok Bot research for Pi Bot
 
-Research date: 2026-08-12
+Research date: 2026-08-12  
+Pi Bot implementation review: 2026-08-14
 
-This note investigates the first-party Grok Bot product and the adjacent Grok/Grok Build surfaces that xAI documents. It separates verified product behavior from design inferences and recommendations for this repository. No application code was changed.
+This note records the first-party Grok Bot product research that informed Pi Bot's interaction model. External product claims remain a dated research snapshot. Pi-specific status is updated against the current repository.
 
 ## Decision summary
 
-Grok Bot is a cloud agent product, not just a chat screen. xAI describes each Bot as a durable, named teammate with a job, its own conversation, persistent working context, access to a shared cloud computer, connected tools, and the ability to continue work in the background and hand work to other Bots ([Grok Bot overview](https://docs.x.ai/grok-bot/overview), [Grok Bot FAQ](https://docs.x.ai/grok-bot/faq)).
+Grok Bot is a cloud agent product, not only a chat interface. xAI documents durable named Bots, persistent cloud computers, connected tools, background work, files/results, approvals, groups, and handoffs ([overview](https://docs.x.ai/grok-bot/overview), [FAQ](https://docs.x.ai/grok-bot/faq)).
 
-Pi Bot deliberately has a smaller contract: a local Electron app with three fixed roles, one persistent read-only Pi session per role/workspace, no cloud sync, no account layer, no writes, no shell, no browser, and no automatic multi-agent orchestration ([MVP scope and non-goals](mvp-spec.md)). The responsible reuse is therefore the *interaction model*, not Grok Bot's cloud execution model or brand voice.
+Pi Bot intentionally keeps a smaller local desktop contract:
 
-Recommended direction for Pi Bot:
+- Local Electron main-process runtime with a context-isolated renderer.
+- User-created agents with separate workspaces, instructions, models, and sessions.
+- No Pi Bot account, cloud sync, team collaboration, background work, or handoffs.
+- Provider authentication is local to the application.
+- The current runtime does have read, shell, edit, and write tools; therefore permission policy is the next safety priority.
 
-1. Keep the current local/read-only boundary as the product promise.
-2. Make each role's job, source scope, and capability boundary more visible in the UI.
-3. Keep the timeline legible as a reviewable work log: assistant result, tool activity, status, error, and (later) evidence/inference labels.
-4. Add attention-oriented states and actionable errors before adding new powers.
-5. Treat groups, handoffs, skills, routines, connectors, attachments, and write approvals as later products with separate security decisions—not as cosmetic Grok features.
+The responsible reuse is the interaction contract—named agents, visible work, inspectable activity, and explicit boundaries—not Grok's cloud execution model or brand.
 
 ## Evidence labels
 
-- **Verified** means the behavior is stated in an official xAI/Grok or X help page linked next to the claim.
-- **Inference** is a design implication drawn from one or more verified behaviors; it is not a claim about hidden implementation.
-- **Recommendation** is a concrete, scoped suggestion for Pi Bot.
+- **Verified** — stated in an official xAI/Grok or X page linked to the claim.
+- **Inference** — a design implication, not a claim about hidden Grok implementation.
+- **Recommendation** — a scoped proposal for Pi Bot; not shipped unless listed in the current baseline.
 
-The xAI pages used here were retrieved on 2026-08-12 and mostly show “Last updated: August 11, 2026.” Product behavior and availability can change; the linked pages are the source of truth.
+The external pages were retrieved on 2026-08-12. Their current availability and behavior may change.
 
-## What Grok Bot is (verified)
+## Grok Bot patterns verified in the original research
 
-### Durable, named roles
+### Durable named agents
 
-A Bot has a name, a job, its own conversation, and working context that develops over time. xAI recommends a focused operational role with explicit ownership, tools/sources, working style, approval boundary, and (when relevant) schedule; it says a vague “General Helper” role is less reusable ([Create and manage Bots](https://docs.x.ai/grok-bot/bots)).
+A Bot has a name, focused job, conversation, and working context. xAI recommends explicit ownership, sources/tools, working style, approval boundaries, and schedules where relevant ([Bots](https://docs.x.ai/grok-bot/bots), [get started](https://docs.x.ai/grok-bot/get-started)).
 
-The onboarding flow asks for an outcome, sources, constraints, deliverable, and review point. The Bot profile holds durable rules; the conversation carries task-specific instructions ([Get started](https://docs.x.ai/grok-bot/get-started), [Create and manage Bots](https://docs.x.ai/grok-bot/bots)).
+### Persistent computer and background work
 
-### Persistent cloud computer and background work
+Grok Bot runs on a persistent cloud VM with browser, filesystem, terminal, connectors, and computer use. Work can continue after the client closes ([overview](https://docs.x.ai/grok-bot/overview), [computer and apps](https://docs.x.ai/grok-bot/computer-and-apps), [FAQ](https://docs.x.ai/grok-bot/faq)).
 
-Each Bot runs on a persistent cloud VM with a browser, filesystem, and terminal. It can use connectors/MCP and computer use for sites without a clean API; work can continue when the desktop, laptop, or iPhone is closed ([Grok Bot overview](https://docs.x.ai/grok-bot/overview), [Use the computer and apps](https://docs.x.ai/grok-bot/computer-and-apps), [Grok Bot FAQ](https://docs.x.ai/grok-bot/faq)).
+### Messaging and inspectable results
 
-All Bots for one account share that account's persistent computer, including files, browser sessions, and command-line credentials. xAI explicitly warns that separate Bots are not a security boundary. Bots get separate screens for parallel computer-use work, but the underlying data boundary is shared ([Use the computer and apps](https://docs.x.ai/grok-bot/computer-and-apps), [Approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy)).
+Users message a teammate while the transcript can expose tool activity, computer use, files, questions, and approval requests. Files and tool results can appear as previewable cards ([chat and collaboration](https://docs.x.ai/grok-bot/chat-and-collaboration), [files and results](https://docs.x.ai/grok-bot/files-and-results)).
 
-### Messaging-style work surface
+### Skills, routines, groups, and handoffs
 
-The documented interaction is “message a teammate”: paste text, links, or images; attach local files; reference a saved skill with `/`; mention a Bot, group, routine, or connector with `@`; reply in a thread; react; and send another instruction while work is in progress. The transcript can show tool activity, computer use, created files, questions, and approval requests beside ordinary messages ([Message and collaborate](https://docs.x.ai/grok-bot/chat-and-collaboration)).
+Grok documents reusable skills, scheduled/event-triggered routines, groups, and asynchronous Bot-to-Bot handoffs ([skills and routines](https://docs.x.ai/grok-bot/skills-routines-and-automations), [chat and collaboration](https://docs.x.ai/grok-bot/chat-and-collaboration)).
 
-The user can redirect work with a new message or send “Stop now.” Stopping does not undo actions already completed ([Message and collaborate](https://docs.x.ai/grok-bot/chat-and-collaboration)).
+### Approval and recovery
 
-### Collaboration and handoffs
+Consequential actions can stop for scoped approval. Attention, errors, and recovery are visible product states rather than hidden runtime details ([approvals and security](https://docs.x.ai/grok-bot/approvals-security-and-privacy), [settings and notifications](https://docs.x.ai/grok-bot/settings-and-notifications), [troubleshooting](https://docs.x.ai/grok-bot/troubleshooting)).
 
-Groups contain two to six Bots. Users can direct a message with `@`, mention multiple Bots when each is needed, or let the participants decide who responds. Bots can send asynchronous messages to one another; the receiving Bot wakes, handles the request, and replies later. The docs recommend one owner per stage because too many handoffs create duplicate work and noisy updates ([Message and collaborate](https://docs.x.ai/grok-bot/chat-and-collaboration)).
+## Feature map for current Pi Bot
 
-### Files, links, and reviewable results
+| Surface | Useful Grok pattern | Current Pi Bot status |
+| --- | --- | --- |
+| Agent roster | Durable named teammates with explicit jobs. | **Implemented differently:** create/edit/archive/restore/delete agent profiles; permanent left rail; instructions live in each workspace's `AGENTS.md`. |
+| Agent workspace | Durable context separated from one-off prompts. | **Implemented locally:** one app-owned or external workspace per agent; `.agents/skills` load only after trust. |
+| Composer | Input exposes only valid next actions. | **Implemented:** compact autosizing text composer, model/reasoning controls, Send/Stop; no fake attachment affordance. |
+| Transcript | Messages coexist with inspectable tool activity. | **Implemented:** right/left conversation rails and grouped Agent activity with visible commands, output, and status. |
+| History | Durable conversations have explicit scope. | **Implemented:** Pi `SessionManager` history scoped by agent and workspace. |
+| Provider/model | Agent capability should be discoverable. | **Implemented:** local provider setup, cancellable sign-in prompts, global credentials, agent default model, and session model. |
+| Skills | Reusable methods require visible scope. | **Partially implemented:** trusted workspace skills can load from `.agents/skills`; no skill-management UI, routines, or scheduler. |
+| Approval | Consequential actions stop before execution. | **Not implemented:** current `bash`, `edit`, and `write` tools have no allow/ask/deny gate. |
+| Attention | Ready/working/error/needs-input are distinct. | **Partial:** working and error exist; no durable needs-input queue or background execution. |
+| Handoffs/background | Delegation has ownership and history. | **Deferred:** no subagents, groups, handoffs, schedules, or work after app close. |
+| Browser/connectors | External capability has a credential and sandbox boundary. | **Deferred:** no browser/computer use, MCP, or connectors. |
 
-The desktop composer accepts up to six attachments at a time; xAI documents common inputs including images, audio/video, PDFs, Office files, structured data, source code, HTML/email files, and notebooks. Files, links, images, and tool results appear as cards that can be previewed and revised in the same conversation ([Files and results](https://docs.x.ai/grok-bot/files-and-results)).
+## Current architecture baseline
 
-For consequential work, xAI recommends separating facts found in source systems, assumptions/inferences, actions already completed, actions awaiting approval, and unresolved questions. It also recommends specifying the expected artifact and acceptance criteria ([Files and results](https://docs.x.ai/grok-bot/files-and-results)).
+- [`electron/main.mjs`](../electron/main.mjs) owns model discovery, provider authentication, credential storage, agents, workspaces, skills, Pi sessions, tool events, and persistence.
+- Pi is created with `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`.
+- Extensions, implicit context files, prompt templates, and Pi runtime themes are disabled.
+- [`electron/preload.cjs`](../electron/preload.cjs) exposes the narrow `window.piBot` IPC API; the renderer has no direct Node access.
+- [`src/App.tsx`](../src/App.tsx) provides the agent rail, collapsible session sidebar, chat, activity, composer, settings, provider setup, and provider prompt cancellation.
+- [`src/styles.css`](../src/styles.css) provides light/dark themes and semantic design tokens documented in [design-system.md](design-system.md).
+- Agent/session data remains local under Electron user data. There is no cloud account or sync layer.
 
-### Skills and routines
+See [mvp-spec.md](mvp-spec.md) for the shipped contract and [next-stage-spec.md](next-stage-spec.md) for planned safety work.
 
-A **skill** is reusable instructions for how to perform a task. A **routine** tells one Bot when to run that workflow, on a schedule or (where supported) after an event. xAI's sequence is: perform a one-time task, make it reliable, save the method as a skill, then automate it. Skills capture inputs, steps, validation, output, and safety boundaries ([Skills and routines](https://docs.x.ai/grok-bot/skills-routines-and-automations)).
+## Recommendations
 
-Routines can run while a laptop is closed. The docs require testing with safe inputs and warn that a test run can perform real work, navigate sites, change files, or call connected tools ([Skills and routines](https://docs.x.ai/grok-bot/skills-routines-and-automations)).
+### P0 — permission before more capability
 
-### Approval and safety model
+1. Add explicit allow/ask/deny policy for each tool and relevant resource scope.
+2. Show shell command, target, and expected effect before approval.
+3. Keep approved, denied, cancelled, succeeded, and failed actions in the same activity trail.
+4. Decide whether host execution remains acceptable or a sandbox is required.
 
-Grok Bot expects explicit boundaries around sending, publishing, purchases, deletion/overwrite, permission changes, production changes, and legal acceptance. An approval controls a proposed action; it does not reverse work already completed. The conversation shows the proposed operation and inputs, with Allow once/Deny controls; “Require Approval” wins over “Always Allow” when both match ([Approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy)).
+OpenCode, Codex, Claude Code, Zed, Cline, and Kilo are more relevant permission references than copying Grok's cloud VM model; see [agent-harness-catalog.md](agent-harness-catalog.md).
 
-Passwords, passkeys, two-factor codes, CAPTCHAs, payment confirmations, and similar sensitive steps are handed to the user through computer takeover rather than ordinary chat. xAI also recommends narrow least-privilege rules and says model-based Auto Review complements, rather than replaces, explicit boundaries ([Use the computer and apps](https://docs.x.ai/grok-bot/computer-and-apps), [Approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy)).
+### P1 — clearer attention and evidence
 
-### Attention, notifications, and recovery
+- Add real Ready, Working, Error, and Needs input semantics without implying background execution.
+- Add retry/reconnect actions only for recoverable runtime failures.
+- Keep visible evidence grounded in actual commands, output, paths, or source links.
+- Add artifact metadata only when the runtime provides the underlying artifact.
 
-The Bot list distinguishes “Needs attention” (question, approval, or handoff), unread activity, and working/typing status. Per-Bot notifications can alert when a Bot finishes or needs input; errors appear above the composer and can include a request ID for support ([Settings and notifications](https://docs.x.ai/grok-bot/settings-and-notifications)).
+### Deferred
 
-The troubleshooting guidance favors the least destructive recovery first: inspect the current status, look for a question/approval/login/CAPTCHA, redirect or stop, and only then restart or recover the computer. Durable files and logins are distinguished from recent unsynced work that can be lost by a reset ([Troubleshooting](https://docs.x.ai/grok-bot/troubleshooting)).
+- Attachments, URL/web search, connectors, MCP, browser/computer use.
+- Subagents, groups, mentions, handoffs, parallel or background agents.
+- Skills management, routines, event triggers, and notifications while closed.
+- Cloud session/memory sync, accounts, billing, and collaboration.
 
-## Adjacent first-party surfaces (verified, not Grok Bot)
-
-These products are useful interaction references but should not be conflated with Grok Bot:
-
-- **Grok Chat** combines chat, live web/𝕏 search, reasoning, voice, file/PDF analysis, memory, canvas, and shareable conversations. It advertises follow-up questions and citations from live sources ([Grok product page](https://x.ai/grok), [Welcome to Grok](https://docs.x.ai/grok/overview)).
-- **Grok Build** is xAI's coding agent/CLI. Its documented plan mode blocks edits until approval and then shows a clean diff; it also advertises parallel subagents, skills, hooks, MCP, memory, code search, tests, and sandboxed execution ([Introducing Grok Build](https://x.ai/news/grok-build-cli), [Grok Build](https://x.ai/cli)). These are coding-agent patterns, not evidence that Pi Bot should gain writes or orchestration.
-- **Grok on X** can decide whether to search public X posts and the live web in response to text or voice input; X's help page also documents training/personalization controls and warns users not to share sensitive information ([About Grok on X](https://help.x.com/en/using-x/about-grok)). This is relevant to provenance/privacy language, not to Pi Bot's local workspace tool contract.
-
-## Feature and interaction map
-
-| Surface | Grok Bot behavior (verified) | UX pattern inferred | Pi Bot application |
-| --- | --- | --- | --- |
-| Agent roster | Sidebar lists durable Bots; users can create, edit, pin, hide, and search them ([Create and manage Bots](https://docs.x.ai/grok-bot/bots), [Message and collaborate](https://docs.x.ai/grok-bot/chat-and-collaboration)). | The roster is a work queue, not only navigation. | **Now:** keep Planner/Researcher/Coder as the fixed roster, but make role, scope, and capability visible. **Later:** profile editing only if custom agents become an explicit product decision. |
-| Attention state | Needs attention, unread, working/typing, and notification controls are distinct ([Settings and notifications](https://docs.x.ai/grok-bot/settings-and-notifications)). | Users can scan what needs a decision without opening every thread. | **P0 recommendation:** add a small, explicit distinction between Ready, Working, Error, and Needs input; do not imply cloud/background work. |
-| Composer | Attachments, links/images, `/` skills, `@` mentions, replies, reactions, and in-progress messages are supported ([Message and collaborate](https://docs.x.ai/grok-bot/chat-and-collaboration), [Files and results](https://docs.x.ai/grok-bot/files-and-results)). | Input affordances expose the next useful action. | **Now:** retain the simple text composer and Stop action. **Later:** add attachments only with a local data/size/permission design; do not add `/` or `@` as decorative controls. |
-| Transcript | Normal messages sit beside tool activity, computer use, files, questions, and approvals ([Message and collaborate](https://docs.x.ai/grok-bot/chat-and-collaboration)). | A work log makes agent behavior inspectable. | **Already aligned:** `TimelineItem` and `PiEvent` expose assistant deltas, tool start/update/end, statuses, and errors ([types.ts](../src/types.ts), [main.mjs](../electron/main.mjs)). Improve labels/grouping before adding new tool power. |
-| Role context | Durable Bot descriptions hold standing rules; messages hold one-off instructions ([Create and manage Bots](https://docs.x.ai/grok-bot/bots)). | Separate “how this agent works” from “what I asked this time.” | **Already aligned:** `agentProfiles` hold role descriptions/system prompts ([main.mjs](../electron/main.mjs)). Show the role boundary in Context and keep it distinct from session title. |
-| History and memory | Bots retain role context and summaries; conversations, learned role, files, and handoffs have different scopes ([Grok Bot FAQ](https://docs.x.ai/grok-bot/faq)). | Users need to know what is durable versus thread-local. | **Now:** preserve Pi's per-workspace/per-agent `SessionManager` history. **Later:** document any durable preferences separately instead of silently expanding session memory. |
-| Tool access | Persistent cloud computer, browser, terminal, files, connectors, and MCP are available ([Use the computer and apps](https://docs.x.ai/grok-bot/computer-and-apps)). | Capability should be discoverable and scoped. | **Do not imitate the backend.** Keep `read`, `grep`, `find`, and `ls` visibly read-only ([main.mjs](../electron/main.mjs), [MVP non-goals](mvp-spec.md)). |
-| Results | Cards preview files/links/tool results; output can be revised in place ([Files and results](https://docs.x.ai/grok-bot/files-and-results)). | A result is an inspectable artifact, not a text blob. | **P1 recommendation:** add structured “evidence / inference / unresolved” conventions to assistant output and tool rows without enabling writes. |
-| Handoffs | Groups and asynchronous Bot-to-Bot handoffs are visible in the conversation ([Message and collaborate](https://docs.x.ai/grok-bot/chat-and-collaboration)). | Delegation needs an owner and a visible trail. | **Defer:** automatic orchestration and handoffs are explicit Pi MVP non-goals ([mvp-spec.md](mvp-spec.md)). |
-| Skills/routines | Skills encode a validated method; routines schedule or event-trigger it; test runs can have real side effects ([Skills and routines](https://docs.x.ai/grok-bot/skills-routines-and-automations)). | Automate only after a reviewable one-off process works. | **Defer:** current Pi runtime disables skills/extensions and has no scheduler ([main.mjs](../electron/main.mjs)). If revisited, start with local read-only prompt templates and a visible test run. |
-| Approval | Proposed consequential actions show target/scope/inputs and stop for Allow once/Deny; rules are narrow and least-privilege ([Approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy)). | Make a boundary explicit before adding capability. | **Already aligned:** Pi has no write-capable action to approve. Preserve this simpler invariant; add approvals only when a concrete write tool exists. |
-| Errors/recovery | Errors appear above the composer; recovery starts with inspection, redirect, stop, then restart/recover ([Settings and notifications](https://docs.x.ai/grok-bot/settings-and-notifications), [Troubleshooting](https://docs.x.ai/grok-bot/troubleshooting)). | Recovery is part of the main interaction, not an afterthought. | **P0 recommendation:** retain the readable error line and make each failure state say what can be retried, stopped, or reconnected. |
-| Plan/review | Grok Build blocks edits until a plan is approved and then shows a clean diff ([Introducing Grok Build](https://x.ai/news/grok-build-cli)). | High-impact work benefits from a review gate before execution. | **Already aligned in spirit:** Planner is read-only and Coder cannot claim edits. Do not add edit/diff execution to this MVP. |
-
-## Pi Bot architecture baseline
-
-The current implementation already provides the strongest safe subset of the patterns above:
-
-- The fixed roles and their boundaries live in `agentProfiles`; the enabled tools are exactly `read`, `grep`, `find`, and `ls` ([electron/main.mjs](../electron/main.mjs)).
-- Workspace, selected agent, model/thinking preferences, and agent-to-session mappings are persisted locally in Electron user data; Pi's `SessionManager` supplies history ([electron/main.mjs](../electron/main.mjs)).
-- The main process constructs the Pi session with read-only tools, disables extensions/skills/context files, and keeps the renderer behind a narrow context-isolated bridge ([electron/main.mjs](../electron/main.mjs), [electron/preload.cjs](../electron/preload.cjs)).
-- The renderer already has the key work surfaces: agent sidebar, collapsible history, streaming composer with Stop, event timeline/tool details, context panel, model/thinking controls, and readable error state ([src/App.tsx](../src/App.tsx)).
-- The type layer explicitly models assistant deltas, tool lifecycle, agent status, aborts, errors, and session synchronization ([src/types.ts](../src/types.ts)).
-- The MVP specification explicitly excludes cloud sync, accounts, billing, team collaboration, writes, shell, browser automation, extensions, automatic orchestration, handoffs, and custom agents ([docs/mvp-spec.md](mvp-spec.md)).
-
-## Actionable recommendations
-
-### P0: improve the existing safe surface
-
-1. **Make role scope first-class in copy.** Keep Planner, Researcher, and Coder, but show each role's job and “may read / may not change” boundary wherever the active role is selected. This follows Grok Bot's distinction between durable role description and one-off task instruction ([Create and manage Bots](https://docs.x.ai/grok-bot/bots)).
-2. **Add attention semantics without implying background execution.** Distinguish Ready, Working, Error, and Needs input in the sidebar/header. Pi already has `busy`, `connecting`, and error events; this is a presentation refinement, not a new capability ([src/App.tsx](../src/App.tsx), [src/types.ts](../src/types.ts)).
-3. **Make the read-only work log easier to scan.** Keep tool rows collapsible, but group consecutive reads/searches and label the tool purpose plainly. Grok's documented transcript places tool activity beside messages; Pi should do that while preserving local read-only truth ([Message and collaborate](https://docs.x.ai/grok-bot/chat-and-collaboration)).
-4. **Make recovery actionable.** Every runtime error should say whether the user can retry, stop, change folder, or authenticate Pi. Do not expose generic “something went wrong” when the main process has a specific reason ([Troubleshooting](https://docs.x.ai/grok-bot/troubleshooting)).
-
-### P1: improve reviewability without adding write access
-
-1. **Adopt a response convention:** `Answer`, `Evidence`, `Inference`, and `Open questions` for Researcher; `Plan`, `Assumptions`, and `Risks` for Planner; `Finding`, `Relevant files`, and `Suggested change` for Coder. This is an inference from xAI's recommendation to separate facts, assumptions, actions, approvals, and unresolved questions—not a claim that Pi must copy Grok's output format ([Files and results](https://docs.x.ai/grok-bot/files-and-results)).
-2. **Add lightweight result metadata** to timeline rows (for example, source path and line reference when the model returns one) instead of introducing artifact cards or filesystem writes. The user should be able to audit where a read-only answer came from.
-3. **Make the context panel a capability contract.** Keep workspace, role, model, thinking level, and tools together; add a short “This session cannot write or run commands” statement near the composer as well as in the context panel.
-
-### Defer until a separate product decision
-
-- Attachments, URL fetching, web/𝕏 search, connectors, MCP, browser control, and local command execution.
-- Custom Bot/agent creation, profile editing, groups, `@` mentions, asynchronous handoffs, and parallel agents.
-- Skills, routines, event triggers, notifications while the app is closed, and any cloud session/memory sync.
-- Write tools, plan approval, diffs, or an Allow/Deny policy engine.
-
-Each item changes the threat model or contradicts an explicit Pi MVP non-goal. Grok's own docs treat these as permissioned surfaces with durable state, shared credentials, approvals, and recovery rules—not as simple UI toggles ([MVP non-goals](mvp-spec.md), [Approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy)).
+Each item changes persistence, credentials, cancellation, auditability, or the threat model. It is not a cosmetic UI toggle.
 
 ## Responsible imitation boundaries
 
-### Safe to imitate
+### Safe to reuse
 
-- A named role with a clear job and a visible scope.
-- A sidebar that communicates current status and attention.
-- A composer that makes the next valid action obvious.
-- A transcript that exposes tool activity and failures inline.
-- Review-oriented output that separates evidence from inference.
-- Explicit boundaries, readable errors, and a user-controlled Stop action.
-- Searchable, role-scoped local history.
+- Named agents with clear durable instructions.
+- A roster that communicates identity and current state.
+- A composer that exposes only supported actions.
+- A chronological transcript with inspectable tool activity and failures.
+- Explicit scope, recovery, and approval boundaries.
+- Agent-scoped local history.
 
 ### Do not imply or copy
 
-- Do not claim Pi Bot has a persistent cloud computer, background execution, cross-device sync, connectors, or shared Bot memory; those are Grok Bot capabilities documented by xAI, not Pi capabilities ([Grok Bot overview](https://docs.x.ai/grok-bot/overview), [Grok Bot FAQ](https://docs.x.ai/grok-bot/faq)).
-- Do not turn Pi's read-only tools into writes, shell, browser, or arbitrary extensions merely to match Grok's feature list. The current architecture intentionally removes those powers ([MVP non-goals](mvp-spec.md), [main.mjs](../electron/main.mjs)).
-- Do not use separate local agents as a security boundary if future shared state is introduced; Grok explicitly warns that its Bots share one computer and credentials ([Approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy)).
-- Do not copy xAI/Grok names, logos, avatars, screenshots, or “truth-seeking”/humorous positioning into Pi Bot. The useful object of study here is the interaction contract, not the brand identity.
-- Do not present a model's chain-of-thought as an auditable proof. “Evidence” should mean visible source paths, tool output, or user-provided material; “Inference” should be labeled as such.
+- Do not claim a persistent cloud computer, work while closed, cross-device sync, shared memory, connectors, or handoffs.
+- Do not describe the runtime as read-only; it currently includes shell and file-write tools.
+- Do not claim sandboxing or approval before they exist.
+- Do not treat separate local agents as a security boundary if future shared credentials/state are introduced.
+- Do not copy Grok names, logos, avatars, screenshots, or brand voice.
+- Do not present hidden chain-of-thought as evidence.
 
-## Sources
-
-Primary sources used in this report:
+## Primary sources from the research snapshot
 
 - [Grok Bot overview](https://docs.x.ai/grok-bot/overview)
 - [Grok Bot get started](https://docs.x.ai/grok-bot/get-started)
@@ -170,10 +137,6 @@ Primary sources used in this report:
 - [Approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy)
 - [Troubleshooting](https://docs.x.ai/grok-bot/troubleshooting)
 - [Grok Bot FAQ](https://docs.x.ai/grok-bot/faq)
-- [Welcome to Grok](https://docs.x.ai/grok/overview)
-- [Grok FAQ](https://docs.x.ai/grok/faq)
-- [Grok product page](https://x.ai/grok)
-- [About Grok on X](https://help.x.com/en/using-x/about-grok)
 - [Introducing Grok Build](https://x.ai/news/grok-build-cli)
 - [Grok Build](https://x.ai/cli)
 

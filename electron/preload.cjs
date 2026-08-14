@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("piBot", {
   logoutProvider: (providerId) => ipcRenderer.invoke("pi:logout-provider", providerId),
   importPiAuth: () => ipcRenderer.invoke("pi:import-pi-auth"),
   respondAuth: (promptId, value) => ipcRenderer.invoke("pi:auth-respond", promptId, value),
+  cancelAuth: (promptId) => ipcRenderer.invoke("pi:auth-cancel", promptId),
   onEvent: (listener) => {
     const handler = (_event, payload) => listener(payload);
     ipcRenderer.on("pi:event", handler);

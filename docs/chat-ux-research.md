@@ -1,104 +1,104 @@
-# Chat UX research: percakapan vs activity log
+# Chat UX research: conversation and activity
 
-Tanggal riset: 2026-08-12
+Research date: 2026-08-12  
+Implementation review: 2026-08-14
 
-Laporan ini memakai sumber first-party xAI/Grok saja: dokumentasi Grok Bot, dokumentasi Grok web/app, dan dokumentasi API xAI. Tidak ada sumber sekunder atau perubahan application code. xAI mendokumentasikan affordance dan alur, tetapi tidak mempublikasikan spesifikasi pixel untuk bubble, warna, spacing, atau ukuran composer. Rekomendasi visual di bawah adalah inferensi desain dari perilaku yang didokumentasikan, bukan klaim tentang layout internal Grok.
+This note uses first-party xAI/Grok documentation as the original interaction reference. xAI documents behavior and affordances, not a public pixel specification. Visual recommendations are design inferences; the implementation status below is verified against this repository.
 
-## Keputusan inti
+## Core decision
 
-Pi Bot sebaiknya memiliki dua lapisan yang terlihat berbeda, tetapi tetap berada dalam satu urutan waktu:
+Pi Bot uses two visually distinct layers in one chronological transcript:
 
 ```text
-Percakapan (yang dikatakan manusia/agent)
-  You      ── pertanyaan atau instruksi
-  Planner  ── jawaban yang bisa dibaca dan dirujuk
+Conversation
+  You        question or instruction
+  Agent      readable result
 
-Activity log (yang dilakukan runtime untuk menghasilkan jawaban)
-  Read · src/App.tsx                         running → done
-  Grep · "SessionManager"                    done
-  Error · model tidak tersedia                failed
+Agent activity
+  Ran npm run typecheck                running → success
+  Read src/App.tsx                     success
+  Error provider unavailable          failed
 ```
 
-- **Conversation turn** menjawab “siapa berbicara dengan siapa dan apa hasilnya”. Gunakan label speaker yang konsisten, avatar/warna per role, lebar baca yang nyaman, dan body yang bisa dibaca sebagai Markdown/teks.
-- **Activity item** menjawab “apa yang sedang/sudah dilakukan sistem”. Gunakan baris lebih ringkas, nama tool yang eksplisit, status `running`/`done`/`failed`, timestamp, dan detail yang bisa dibuka-tutup. Activity tidak boleh tampak seperti pesan agent biasa.
-- Pertahankan urutan event asli. Secara konseptual, setiap assistant turn memiliki `turnId`; tool/status rows ditautkan ke turn tersebut walaupun tampil inline di transcript.
-- Streaming memperbarui satu assistant message yang sama. Tool calls adalah event diskret dengan lifecycle start/update/end, bukan token teks yang dicampur ke jawaban.
-- Status/error adalah metadata operasional. Jangan menyamarkan error sebagai jawaban agent; letakkan dekat composer dan tetap pertahankan transcript.
+- Conversation answers who said what.
+- Activity answers what the runtime did.
+- Streaming updates one assistant message in place.
+- Tool calls remain discrete lifecycle events rather than assistant prose.
+- Errors and statuses remain operational metadata and never masquerade as an agent answer.
 
-## Bukti first-party dan implikasi UX
+## First-party evidence and implications
 
-| Area | Perilaku yang didokumentasikan | Implikasi untuk Pi Bot |
+| Area | Documented Grok behavior | Pi Bot implication |
 | --- | --- | --- |
-| Identitas dan turn | Grok Bot adalah teammate bernama dengan job, conversation, dan working context sendiri. Deskripsi Bot menyimpan aturan durable; pesan menyimpan instruksi task-specific ([Create and manage Bots](https://docs.x.ai/grok-bot/bots), [Grok Bot overview](https://docs.x.ai/grok-bot/overview)). | Bedakan `You` dari nama agent aktif. Role/scope harus tetap terlihat di header/context; jangan campur instruksi satu kali dengan identitas agent. |
-| Pesan vs aktivitas | xAI menjelaskan “message it like a teammate”; transcript dapat menampilkan tool activity, computer use, created files, questions, dan approval requests **bersama** pesan normal ([Message and collaborate](https://docs.x.ai/grok-bot/chat-and-collaboration)). | Activity memang inline di transcript, tetapi secara semantik bukan bubble pesan. Tampilkan sebagai row/event yang lebih padat, dapat dicollapse, dan jelas statusnya. |
-| Redirect dan stop | Pesan baru dapat mengarahkan ulang pekerjaan yang sedang berjalan; “Stop now” menghentikan pekerjaan tetapi tidak membatalkan aksi yang sudah selesai ([Message and collaborate](https://docs.x.ai/grok-bot/chat-and-collaboration)). | Composer harus menunjukkan state aktif dan affordance Stop. Bila Pi belum mendukung redirect saat streaming, jangan memberi kesan bahwa draft yang diketik otomatis masuk ke turn aktif. |
-| Thread dan navigasi | Reply dalam thread menjaga transcript utama tetap fokus sambil menyimpan konteks keputusan. Search/command palette dapat menemukan pesan, file, link, atau routine dan melompat ke lokasi yang cocok ([Message and collaborate](https://docs.x.ai/grok-bot/chat-and-collaboration)). | Bedakan **thread/session history** dari activity log. Pi sudah punya session history scoped ke agent; nested thread/search dapat menjadi fase berikutnya, bukan alasan untuk membuat log utama lebih padat. |
-| Composer dan attachment | Composer Grok mendukung attachment control/drag-and-drop, paste image/link, dan sampai enam attachment desktop; upload selesai sebelum respons, dan hasil/file/tool result muncul sebagai cards yang bisa dipreview ([Files and results](https://docs.x.ai/grok-bot/files-and-results)). Consumer FAQ juga mendokumentasikan tombol `+`, multi-file, konfirmasi upload, serta error ukuran/format dan “Tap to retry” ([Grok FAQ – Files & Data](https://docs.x.ai/grok/faq)). | Jangan menambah ikon attachment sebagai hiasan. Jika kelak ditambahkan, perlu preflight, upload/success/error state, batas ukuran, dan representasi attachment yang terpisah dari body pesan. MVP Pi saat ini cukup dengan composer teks + Stop. |
-| Hasil yang dapat diaudit | xAI menyarankan hasil memisahkan facts, assumptions/inferences, actions completed, actions waiting for approval, dan unresolved questions; bukti dapat mencakup source links, screenshots, timestamps/time zones, file names, action log, dan hal yang tidak terverifikasi ([Files and results](https://docs.x.ai/grok-bot/files-and-results)). | Untuk agent Researcher/Planner, label evidence/inference/open questions dapat meningkatkan reviewability. Jangan menyebut chain-of-thought sebagai bukti; gunakan path/tool output/source link yang benar-benar terlihat. |
-| Attention state | Bot list membedakan Needs attention (question/approval/handoff), unread activity, dan working/typing. Membuka conversation menandai activity sebagai read; error muncul di atas composer dan dapat menyertakan request ID ([Settings and notifications](https://docs.x.ai/grok-bot/settings-and-notifications)). | Pi dapat membedakan Ready, Working, Error, dan (jika kelak ada) Needs input. Error perlu dekat composer, retain transcript, dan memberi tindakan yang bisa dilakukan—retry, stop, reconnect, atau change folder. |
-| Recovery/status | Troubleshooting xAI menganjurkan langkah paling tidak destruktif: retry/reopen, restart, recover/update, lalu reset sebagai pilihan terakhir; status sidebar/conversation dan pertanyaan/approval/login harus diperiksa ([Troubleshooting](https://docs.x.ai/grok-bot/troubleshooting)). | Status bukan dekorasi. Tampilkan status runtime yang jujur dan jangan menghapus history ketika generation gagal atau di-abort. |
-| Streaming | xAI API mengirim text delta melalui SSE agar teks tampil real-time ([Streaming](https://docs.x.ai/developers/model-capabilities/text/streaming)). Reasoning dapat dikirim sebagai event terpisah (`response.reasoning_text.delta` / `response.reasoning_summary_text.delta`) ([Reasoning](https://docs.x.ai/developers/model-capabilities/text/reasoning)). | Update satu assistant row secara incremental. Jika suatu hari menampilkan progress reasoning, batasi ke ringkasan/status yang aman dan jelas—bukan hidden chain-of-thought. |
-| Tool lifecycle | Responses API memakai item typed seperti `function_call` dan `function_call_output`, lalu melanjutkan turn dengan output tool ([Function Calling](https://docs.x.ai/developers/tools/function-calling)). | Render tool sebagai event diskret dengan start/update/end dan result/error terpisah dari prose assistant. Ini mendukung log yang bisa dipindai tanpa membuat output tampak seperti percakapan agent. |
-| Citations/provenance | xAI mengembalikan daftar semua URL yang ditemui dan optional inline citations dengan metadata posisi; citation dapat muncul saat streaming ([Citations](https://docs.x.ai/developers/tools/citations)). | Jika Pi memperoleh source path/line dari tool lokal, tampilkan sebagai evidence metadata/chip. Jangan menampilkan URL/citation yang tidak benar-benar diperoleh runtime. |
-| Timestamp dan lifecycle | REST response memiliki `created_at`, optional `completed_at`, typed `output`, dan `error` object ([REST API – Chat](https://docs.x.ai/developers/rest-api-reference/inference/chat?cluster=us-east-1)). WebSocket turns serial, meneruskan state dengan `previous_response_id`, dan mendokumentasikan error reconnect seperti `previous_response_not_found` ([WebSocket Mode](https://docs.x.ai/developers/advanced-api-usage/websocket-mode)). | Simpan timestamp dari event/session source, bukan hanya waktu render. Tampilkan waktu singkat untuk scan dan detail timezone/ID saat dibutuhkan. Jika reconnect ditambahkan nanti, tampilkan state reconnect dan jangan menggandakan turn. |
+| Identity | A Bot is a named teammate with a durable job and conversation context ([Bots](https://docs.x.ai/grok-bot/bots), [overview](https://docs.x.ai/grok-bot/overview)). | Keep `You` and the active agent identity distinct and consistent across rail, header, settings, and transcript. |
+| Messages and tools | Ordinary messages can coexist with tool activity, computer use, files, questions, and approval requests ([chat and collaboration](https://docs.x.ai/grok-bot/chat-and-collaboration)). | Keep activity inline chronologically, but visually separate it from chat messages. |
+| Stop and redirect | Users can redirect or stop work in progress; Stop does not undo completed actions ([chat and collaboration](https://docs.x.ai/grok-bot/chat-and-collaboration)). | Expose Stop honestly. Do not imply that abort rolls back commands or file changes already completed. |
+| Composer | Grok supports attachments and structured file/result states ([files and results](https://docs.x.ai/grok-bot/files-and-results), [FAQ](https://docs.x.ai/grok/faq)). | Do not add decorative attachment controls before upload, error, security, and artifact behavior exist. |
+| Results | Results can distinguish facts, assumptions, completed actions, pending approvals, and unresolved questions ([files and results](https://docs.x.ai/grok-bot/files-and-results)). | Prefer visible tool evidence and explicit uncertainty; never expose hidden chain-of-thought as proof. |
+| Attention | Working, unread, needs-attention, and error states are distinct ([settings and notifications](https://docs.x.ai/grok-bot/settings-and-notifications)). | Status must communicate a real runtime state and must not imply background/cloud execution. |
+| Recovery | Recovery begins with the least destructive action: inspect, retry/reopen, restart, then reset as a last resort ([troubleshooting](https://docs.x.ai/grok-bot/troubleshooting)). | Preserve transcript and session state when a response fails or is aborted. |
+| Streaming | Text arrives as incremental deltas ([streaming](https://docs.x.ai/developers/model-capabilities/text/streaming)). | Append deltas to one agent message instead of creating repeated bubbles. |
+| Tool lifecycle | Tool calls and tool outputs are separate typed items ([function calling](https://docs.x.ai/developers/tools/function-calling)). | Render start/update/end and result/error as inspectable activity state. |
+| Provenance | Citations are tied to URLs actually encountered by the runtime ([citations](https://docs.x.ai/developers/tools/citations)). | Only show paths, commands, output, and URLs that were actually present in runtime events. |
 
-## Pemetaan ke Pi Bot saat ini
+## Implemented in Pi Bot
 
-Pi Bot sudah memiliki fondasi event-driven yang cocok untuk model dua lapisan:
+The current renderer and runtime now implement the main two-layer model:
 
-- [src/types.ts](../src/types.ts#L57-L83) memodelkan `TimelineItem` dengan `kind` `user`/`assistant`/`tool`/`status`, timestamp, body, dan status; `PiEvent` memodelkan assistant delta, tool start/update/end, agent lifecycle, abort, error, dan session sync.
-- [src/App.tsx](../src/App.tsx#L111-L145) merender satu `event-row` per item, timestamp + marker + label/status. Tool sudah memakai `<details>` sehingga detail dapat dicollapse.
-- [src/App.tsx](../src/App.tsx#L621-L645) menambahkan user row dan assistant placeholder, lalu menggabungkan delta ke assistant row yang sama; Stop menggantikan tombol send saat `busy`.
-- [electron/main.mjs](../electron/main.mjs#L249-L319) membangun transcript persisted dari message user/assistant/toolResult, menyalin timestamp message, dan memasangkan tool call dengan result/error.
-- [electron/main.mjs](../electron/main.mjs#L381-L425) meneruskan text delta dan tool lifecycle ke renderer. Ini sudah cocok dengan prinsip “assistant streaming + discrete tool events”.
-- [src/styles.css](../src/styles.css#L70-L78) saat ini memilih gaya work-log: semua item adalah `event-row` dengan garis pemisah, marker, timestamp, dan status chip; composer berada di bawah panel transcript.
-- [docs/mvp-spec.md](mvp-spec.md#L11-L40) menegaskan session history per workspace/agent, tool read-only (`read`, `grep`, `find`, `ls`), Stop saat streaming, dan non-goal attachment/cloud sync/writes/orchestration.
+- [`TimelineItem`](../src/types.ts) distinguishes `user`, `assistant`, `tool`, and `status`; `PiEvent` models assistant deltas, tool start/update/end, agent lifecycle, abort, error, authentication, and session sync.
+- [`ChatMessage`](../src/App.tsx) keeps user turns on the right and agent turns on the left.
+- Agent messages and the working state reuse the same `AgentAvatar` identity as the agent rail.
+- Consecutive tool/status events are grouped under **Agent activity** without reordering the transcript.
+- A collapsed command activity begins with `Ran` and includes the executed command.
+- Expanding command activity shows `Shell`, the full `$ command`, output, and Running/Success/Failed outcome.
+- The conversation follows new output only while the reader remains near the bottom; a **Latest** action appears when the reader falls behind.
+- Stop replaces Send while a response is active.
+- The compact composer grows vertically for multiline input up to its maximum height.
+- The shared typography system keeps body and control text at the same base size; see [design-system.md](design-system.md).
+- [`electron/main.mjs`](../electron/main.mjs) reconstructs persisted user, assistant, and tool events from Pi `SessionManager` data and relays live lifecycle events.
 
-### Perbedaan penting dari pola yang diinginkan
+## Known gaps
 
-1. **Semua item memakai bentuk row yang sama.** Warna marker dan label membedakan kind, tetapi user/assistant belum terasa sebagai conversation bubbles/turns sementara tool terasa sebagai activity log.
-2. **Tool live memakai `time()` renderer.** Persisted rows memakai timestamp dari Pi message, sedangkan `tool-start` memakai waktu lokal saat relay diterima. Ini dapat membuat sumber timestamp live dan persisted tidak konsisten.
-3. **Belum ada auto-follow/scroll policy.** `.event-rows` memang scrollable, tetapi belum ada aturan “follow jika dekat bottom, pause jika user membaca history, tampilkan new activity saat tertinggal”.
-4. **Error berada di atas transcript.** [src/App.tsx](../src/App.tsx#L695-L706) menaruh `error-line` setelah header dan sebelum rows; xAI mendokumentasikan error di atas composer. Posisi sekarang masih terlihat, tetapi tindakan pemulihan perlu lebih dekat ke composer.
-5. **Speaker label persisted belum satu sumber.** Render assistant memakai `assistantLabel` aktif, sedangkan row baru/persisted menyimpan label `Pi Bot` di beberapa tempat. Secara UX, nama agent aktif harus konsisten di semua state tanpa mengubah identitas session secara diam-diam.
+1. Activity is grouped by consecutive presentation order, not an explicit persisted `turnId`.
+2. Live tool timestamps are renderer receipt times, while reopened transcript timestamps come from persisted Pi messages.
+3. The error banner is visible below the chat header, but it does not yet offer failure-specific retry/reconnect actions near the composer.
+4. Tool execution is visible, but write/shell actions do not yet stop for an allow/ask/deny decision.
+5. There are no attachment, approval-card, handoff, or background-task states.
+6. Screen-reader behavior for rapid streaming and tool partial updates still needs dedicated manual QA.
 
-## Rekomendasi implementasi bertahap
+## Next recommendations
 
-### P0 — aman untuk MVP read-only
+### P0 — safety and recovery
 
-1. **Pisahkan visual conversation dan activity.** Pertahankan urutan yang sama, tetapi gunakan bubble/card ringan untuk `user` dan `assistant`; gunakan row compact/monospace dan disclosure untuk `tool`/`status`. Jangan menghapus activity dari transcript—hanya ubah hierarchy visual.
-2. **Buat speaker identity eksplisit.** Render `You` dan nama agent aktif sebagai label/avatar yang selalu sama; gunakan `Tool · read`/`Tool · grep` untuk activity, bukan nama agent.
-3. **Kelompokkan per turn.** Satu user message + assistant streaming + tool activity yang terkait harus dapat dipahami sebagai satu unit. Jika data model belum punya `turnId`, mulai dari grouping presentasional berdasarkan urutan event dan assistant placeholder; jangan membuat urutan baru.
-4. **Pertahankan streaming in-place.** Assistant placeholder tetap berada di posisi awal turn; delta hanya memperbarui body/status row tersebut. Tool start/update/end tidak boleh membuat assistant message baru setiap delta.
-5. **Definisikan scroll behavior.** Auto-follow hanya ketika user berada dekat bottom. Jika user scroll ke atas, jangan memaksa lompat; tampilkan indikator “new activity” dan tombol kembali ke latest. Ini adalah rekomendasi UX (xAI tidak mendokumentasikan algoritma scroll pixel-level).
-6. **Jadikan error actionable.** Pertahankan transcript dan tampilkan error dekat composer dengan kategori jelas: `Retry`, `Stop`, `Change folder`, atau `Reconnect Pi` bila tindakan tersebut tersedia. Sertakan request/session ID hanya bila runtime memilikinya.
-7. **Selaraskan timestamp.** Gunakan source timestamp untuk persisted events; untuk live events, simpan timestamp ketika event diterima dengan penanda timezone yang konsisten. Tampilkan waktu singkat untuk scan dan detail lengkap pada disclosure/tooltip.
-8. **Dekatkan boundary read-only ke composer.** Context panel sudah menyatakan read-only; tambahkan copy singkat dekat input agar user tidak menganggap tool row dapat menulis atau menjalankan command.
+- Add an explicit permission/approval event type before `bash`, `edit`, or `write` executes.
+- Show target, command, and expected effect in the approval surface.
+- Keep denied/cancelled actions in activity history with a readable state.
+- Add recovery actions only when a real retry, reconnect, authenticate, or workspace-change path exists.
 
-### P1 — reviewability tanpa menambah capability
+### P1 — auditability
 
-- Tambahkan activity summary seperti “Inspected 3 files · 2 searches · 1 result” yang dapat dibuka untuk detail; jangan menampilkan setiap partial output sebagai prose chat.
-- Tampilkan path/line reference atau evidence metadata ketika benar-benar dikembalikan oleh tool. Bedakan `Evidence`, `Inference`, dan `Open questions` sebagai heading output, bukan sebagai klaim bahwa reasoning internal dapat diaudit.
-- Batasi `aria-live` agar delta assistant diumumkan dengan wajar; tool partial updates sebaiknya tidak membanjiri screen reader. Ini perlu QA aksesibilitas saat implementasi.
-- Tambahkan search/thread hanya jika ada kebutuhan nyata. Session history sidebar saat ini sudah menjadi surface sekunder yang terpisah dari transcript ([docs/mvp-spec.md](mvp-spec.md#L34-L40)).
+- Persist a turn identifier if reliable grouping across restart becomes necessary.
+- Normalize timestamp provenance and expose detailed timestamp/timezone only on demand.
+- Add path/line or artifact metadata only when the underlying tool event supplies it.
+- Consider output conventions such as Evidence, Inference, and Open questions without claiming access to hidden reasoning.
 
-### Defer — memerlukan keputusan produk/keamanan terpisah
+### Deferred
 
-Attachments, URL/web search, connectors, browser/terminal, replies/reactions, `@` mentions, groups/handoffs, background notifications, cloud sync, write tools, approval cards, dan custom agent roster. Semua mengubah capability/threat model; tidak layak ditambahkan hanya untuk meniru affordance Grok ([MVP non-goals](mvp-spec.md#L25-L30), [Approvals, security, and privacy](https://docs.x.ai/grok-bot/approvals-security-and-privacy)).
+Attachments, URL fetching, connectors, MCP, browser/computer use, nested threads, mentions, groups, handoffs, background notifications, cloud sync, and scheduled routines require separate product and security decisions.
 
-## Checklist QA untuk perubahan UX berikutnya
+## QA checklist
 
-- User dan agent terlihat sebagai **pesan**; tool/status/error terlihat sebagai **activity** tanpa kehilangan urutan.
-- Saat streaming, tepat satu assistant row berubah; tool rows tetap diskret dan memiliki status start/update/end.
-- Nama agent aktif konsisten pada header, sidebar, current turn, dan reopened session.
-- Timestamp live dan reopened session tidak berubah format/timezone secara mengejutkan.
-- Scroll panjang tetap mengikuti generation hanya ketika user berada di bawah; manual reading tidak dirampas.
-- Stop mengakhiri generation tanpa composer macet; abort/error tidak menghapus user prompt atau history.
-- Error memiliki copy yang dapat ditindaklanjuti; transcript tetap tersedia untuk diagnosis.
-- Tool detail dapat dicollapse dan tidak mengambil ruang sebesar jawaban utama.
-- Attachment/approval/handoff tidak muncul sebagai affordance palsu selama belum didukung capability Pi.
+- User and agent are visually recognizable as messages; tool/status/error remain activity.
+- Exactly one assistant message changes during streaming.
+- Agent avatar initials and color match across rail, settings, message, and working state.
+- Commands remain visible when collapsed and full output remains available when expanded.
+- Scroll follows only when the reader is near the bottom.
+- Stop clears the busy state without deleting the prompt or transcript.
+- Short composer input remains compact and long input grows downward.
+- Activity and composer remain readable in light/dark themes and at the minimum supported window.
+- No attachment, approval, or background capability appears as a false affordance.
 
-## Sumber resmi
+## Official sources
 
 - [Grok Bot overview](https://docs.x.ai/grok-bot/overview)
 - [Create and manage Bots](https://docs.x.ai/grok-bot/bots)
@@ -106,12 +106,8 @@ Attachments, URL/web search, connectors, browser/terminal, replies/reactions, `@
 - [Files and results](https://docs.x.ai/grok-bot/files-and-results)
 - [Settings and notifications](https://docs.x.ai/grok-bot/settings-and-notifications)
 - [Troubleshooting](https://docs.x.ai/grok-bot/troubleshooting)
-- [Grok FAQ – Files & Data](https://docs.x.ai/grok/faq)
-- [Grok product page](https://x.ai/grok)
+- [Grok FAQ](https://docs.x.ai/grok/faq)
 - [xAI Streaming](https://docs.x.ai/developers/model-capabilities/text/streaming)
-- [xAI Reasoning](https://docs.x.ai/developers/model-capabilities/text/reasoning)
 - [xAI Function Calling](https://docs.x.ai/developers/tools/function-calling)
 - [xAI Citations](https://docs.x.ai/developers/tools/citations)
-- [xAI WebSocket Mode](https://docs.x.ai/developers/advanced-api-usage/websocket-mode)
-- [xAI REST API – Chat](https://docs.x.ai/developers/rest-api-reference/inference/chat?cluster=us-east-1)
 
