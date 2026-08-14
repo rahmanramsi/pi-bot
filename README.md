@@ -54,7 +54,7 @@ npm run build
 npm run dist
 ```
 
-`npm run dist` creates `release/Pi-Bot-0.1.0-arm64.dmg`.
+`npm run dist` creates `dist/Pi Bot-0.1.0-arm64.dmg`.
 
 ## Report a bug
 

@@ -7,6 +7,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": `${import.meta.dirname}/src`,
+      "cytoscape-fcose": `${import.meta.dirname}/node_modules/cytoscape-fcose/cytoscape-fcose.js`,
     },
   },
   clearScreen: false,
