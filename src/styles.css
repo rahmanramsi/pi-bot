@@ -416,7 +416,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .empty-conversation h2 { margin: 0 0 8px; font-size: var(--text-heading); font-weight: 670; letter-spacing: -.025em; }
 .empty-conversation p { margin: 0; color: var(--muted-foreground); font-size: var(--text-body); line-height: var(--leading-body); }
 
-.composer { display: grid !important; grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: minmax(40px, 1fr) auto !important; flex: 0 0 auto; align-items: stretch; gap: 5px; width: 100%; max-width: 900px; min-height: 108px; margin: 0 auto; padding: 10px 10px 9px 13px; border: 1px solid var(--input); border-radius: 16px; background: var(--card); box-shadow: 0 12px 30px rgb(0 0 0 / 20%); transition: border-color 160ms ease, box-shadow 160ms ease; }
+.composer { position: relative; display: grid !important; grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: minmax(40px, 1fr) auto !important; flex: 0 0 auto; align-items: stretch; gap: 5px; width: 100%; max-width: 900px; min-height: 108px; margin: 0 auto; padding: 10px 10px 9px 13px; border: 1px solid var(--input); border-radius: 16px; background: var(--card); box-shadow: 0 12px 30px rgb(0 0 0 / 20%); transition: border-color 160ms ease, box-shadow 160ms ease; }
 .composer:focus-within { border-color: var(--ring); box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 10%, transparent), 0 16px 42px rgb(0 0 0 / 28%); }
 .composer-input { grid-column: 1 !important; grid-row: 1 !important; width: 100%; min-width: 0; height: 40px; min-height: 40px; max-height: 150px; overflow-y: hidden; padding: 2px 7px; resize: none; border: 0; border-radius: 0; color: var(--foreground); background: transparent; box-shadow: none; font-size: var(--text-body); line-height: var(--leading-body); }
 .composer-input::placeholder { color: var(--muted-foreground); }
@@ -425,7 +425,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .composer-toolbar-left, .composer-actions { display: flex; align-items: center; min-width: 0; }
 .composer-toolbar-left { gap: 8px; }
 .composer-actions { justify-content: flex-end; gap: 5px; margin-left: auto; }
-.composer-prefix { display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px; border: 1px solid var(--border); border-radius: 9px; color: var(--muted-foreground); font-size: 20px; font-weight: 300; }
+.composer-prefix { display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 1px solid var(--border); border-radius: 9px; color: var(--muted-foreground); background: transparent; cursor: pointer; font-size: 20px; font-weight: 300; transition: border-color 160ms ease, color 160ms ease, background 160ms ease; }
+.composer-prefix:hover, .composer-prefix.active { border-color: var(--ring); color: var(--foreground); background: var(--muted); }
+.composer-prefix svg { width: 17px; height: 17px; }
 .composer-divider { color: var(--muted-foreground); font-size: var(--text-label); opacity: .72; }
 .composer-context { display: flex; align-items: center; gap: 10px; color: var(--muted-foreground); font-size: var(--text-caption); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .context-meter { width: 74px; height: 4px; overflow: hidden; border-radius: 999px; background: var(--input); }
@@ -436,6 +438,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .composer-model-select:hover, .composer-actions .thinking-select-trigger:hover { background: var(--muted) !important; }
 .composer-model-select [data-slot="select-value"], .composer-actions .thinking-select-trigger [data-slot="select-value"] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-model-select > svg, .composer-actions .thinking-select-trigger > svg { width: 13px; height: 13px; color: var(--muted-foreground); }
+.composer-mention-menu { position: absolute; z-index: 25; right: 10px; bottom: calc(100% + 9px); left: 13px; display: grid; width: min(520px, calc(100% - 23px)); overflow: hidden; border: 1px solid var(--border); border-radius: 13px; background: var(--popover); box-shadow: 0 18px 44px rgb(0 0 0 / 30%); }
+.composer-mention-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 12px 12px 10px; border-bottom: 1px solid var(--border); }
+.composer-mention-heading > div { display: grid; min-width: 0; gap: 3px; }
+.composer-mention-heading strong { color: var(--foreground); font-size: var(--text-label); font-weight: 680; }
+.composer-mention-heading span { overflow: hidden; color: var(--muted-foreground); font-size: var(--text-caption); text-overflow: ellipsis; white-space: nowrap; }
+.composer-mention-heading button { display: grid; place-items: center; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; color: var(--muted-foreground); background: transparent; cursor: pointer; }
+.composer-mention-heading button:hover { color: var(--foreground); background: var(--accent); }
+.composer-mention-heading button svg { width: 14px; height: 14px; }
+.composer-mention-options { max-height: min(300px, 38vh); padding: 5px; overflow-y: auto; overscroll-behavior: contain; }
+.composer-mention-option { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 36px; padding-top: 6px; padding-right: 9px; padding-bottom: 6px; border: 0; border-radius: 8px; color: var(--foreground); background: transparent; cursor: pointer; text-align: left; }
+.composer-mention-option:hover, .composer-mention-option.active { background: var(--accent); }
+.composer-mention-option > svg { flex: 0 0 auto; width: 15px; height: 15px; color: var(--muted-foreground); }
+.composer-mention-name { flex: 0 1 auto; min-width: 0; overflow: hidden; font-size: var(--text-label); font-weight: 640; text-overflow: ellipsis; white-space: nowrap; }
+.composer-mention-path { min-width: 0; overflow: hidden; color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--text-caption); text-overflow: ellipsis; white-space: nowrap; }
+.composer-mention-status { display: flex; align-items: center; gap: 8px; min-height: 78px; padding: 15px; color: var(--muted-foreground); font-size: var(--text-label); }
+.composer-mention-status svg { width: 15px; height: 15px; }
+.composer-mention-error { color: var(--destructive); }
+.composer-mention-hint { padding: 8px 12px 9px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: var(--text-caption); }
 .model-select-content { width: min(360px, calc(100vw - 32px)); min-width: 300px; min-height: min(420px, var(--available-height, 420px)); max-height: min(560px, var(--available-height, 560px)); }
 .model-select-search { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); background: var(--popover); }
 .model-select-search svg { width: 14px; height: 14px; color: var(--muted-foreground); }
@@ -551,6 +571,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (max-width: 900px) {
   body { min-width: 0; min-height: 0; }
+  .composer-mention-menu { top: calc(100% + 9px); bottom: auto; }
   .app-shell.session-sidebar-open, .app-shell.session-sidebar-closed { grid-template-columns: 72px minmax(0, 1fr); }
   .session-sidebar { position: absolute; z-index: 30; top: 0; bottom: 0; left: 72px; width: min(280px, calc(100% - 72px)); box-shadow: 18px 0 38px rgb(0 0 0 / 22%); }
   .chat-pane { padding-right: 14px; padding-left: 14px; }
@@ -582,6 +603,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .activity-group-toggle { overflow: hidden; max-width: 82px; text-overflow: ellipsis; white-space: nowrap; }
   .activity-output-card { margin-left: 24px; }
   .composer { min-height: 104px; padding-right: 7px; padding-left: 9px; }
+  .composer-mention-menu { right: 7px; left: 9px; width: auto; }
   .composer-toolbar { gap: 7px; }
   .composer-toolbar-left { max-width: 68px; gap: 5px; }
   .composer-context > span { display: none; }

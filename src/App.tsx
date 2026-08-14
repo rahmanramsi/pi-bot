@@ -45,6 +45,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { AnimatePresence, motion, motionSprings, motionTransitions, useReducedMotion } from "./lib/motion";
+import { WorkspaceMentionMenu } from "./components/workspace-mention-menu";
+import { findWorkspaceMention, insertWorkspaceMention, matchingWorkspaceFiles, type MentionRange } from "./lib/workspace-mentions";
 import type {
   AgentId,
   AgentProfile,
@@ -262,16 +264,82 @@ function Composer({
   onThinkingChange: (level: ThinkingLevel) => void;
 }) {
   const [message, setMessage] = useState("");
+  const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
+  const [workspaceFilesLoading, setWorkspaceFilesLoading] = useState(false);
+  const [workspaceFilesError, setWorkspaceFilesError] = useState<string>();
+  const [mentionRange, setMentionRange] = useState<MentionRange | null>(null);
+  const [highlightedMentionIndex, setHighlightedMentionIndex] = useState(0);
+  const [pendingCursor, setPendingCursor] = useState<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const contextPercent = config.context.percent === null ? 0 : Math.min(100, Math.max(0, config.context.percent));
   const contextLabel = config.context.percent === null ? "—" : config.context.percent > 0 && config.context.percent < 1 ? "<1%" : `${config.context.percent.toFixed(0)}%`;
   const reasoningLevels = config.availableThinkingLevels.length > 0 ? config.availableThinkingLevels : ["off"] as ThinkingLevel[];
+  const mentionItems = useMemo(() => mentionRange ? matchingWorkspaceFiles(workspaceFiles, mentionRange.query) : [], [mentionRange, workspaceFiles]);
+
+  const loadWorkspaceFiles = useCallback(async () => {
+    if (!config.workspace) {
+      setWorkspaceFiles([]);
+      setWorkspaceFilesError(undefined);
+      return;
+    }
+    setWorkspaceFilesLoading(true);
+    setWorkspaceFilesError(undefined);
+    try {
+      setWorkspaceFiles(await window.piBot.listWorkspaceFiles());
+    } catch (reason) {
+      setWorkspaceFiles([]);
+      setWorkspaceFilesError(reason instanceof Error ? reason.message : readableError(reason));
+    } finally {
+      setWorkspaceFilesLoading(false);
+    }
+  }, [config.workspace]);
+
+  useEffect(() => { void loadWorkspaceFiles(); }, [loadWorkspaceFiles]);
+  useEffect(() => {
+    setHighlightedMentionIndex((current) => Math.min(current, Math.max(mentionItems.length - 1, 0)));
+  }, [mentionItems.length]);
+  useEffect(() => {
+    if (pendingCursor === null) return;
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    input.setSelectionRange(pendingCursor, pendingCursor);
+    setPendingCursor(null);
+  }, [message, pendingCursor]);
+  useEffect(() => {
+    if (disabled) setMentionRange(null);
+  }, [disabled]);
+
+  function openMentionMenu() {
+    const input = inputRef.current;
+    const cursor = input?.selectionStart ?? message.length;
+    setMentionRange(findWorkspaceMention(message, cursor) ?? { start: cursor, end: cursor, query: "" });
+    setHighlightedMentionIndex(0);
+    input?.focus();
+    input?.setSelectionRange(cursor, cursor);
+  }
+
+  function selectMention(file: WorkspaceFile) {
+    if (!mentionRange) return;
+    const next = insertWorkspaceMention(message, mentionRange, file.path);
+    setMessage(next.value);
+    setMentionRange(null);
+    setHighlightedMentionIndex(0);
+    setPendingCursor(next.cursor);
+  }
+
+  function selectHighlightedMention() {
+    const file = mentionItems[highlightedMentionIndex];
+    if (file) selectMention(file);
+  }
 
   function submit(event: { preventDefault: () => void }) {
     event.preventDefault();
     const value = message.trim();
     if (!value || busy || disabled) return;
     setMessage("");
+    setMentionRange(null);
+    setHighlightedMentionIndex(0);
     if (inputRef.current) {
       inputRef.current.style.height = "40px";
       inputRef.current.style.overflowY = "hidden";
@@ -281,30 +349,65 @@ function Composer({
 
   return (
     <form className="composer" onSubmit={submit}>
+      <AnimatePresence initial={false}>
+        {mentionRange && <WorkspaceMentionMenu items={mentionItems} loading={workspaceFilesLoading} error={workspaceFilesError} activeIndex={highlightedMentionIndex} onSelect={selectMention} onRefresh={() => void loadWorkspaceFiles()} />}
+      </AnimatePresence>
       <Textarea
         ref={inputRef}
         className="composer-input"
         aria-label={`Message ${agentName}`}
+        aria-autocomplete="list"
+        aria-controls={mentionRange ? "composer-mention-listbox" : undefined}
+        aria-expanded={mentionRange !== null}
+        aria-activedescendant={mentionRange && mentionItems.length > 0 ? `composer-mention-option-${highlightedMentionIndex}` : undefined}
+        aria-haspopup="listbox"
         value={message}
         onChange={(event) => {
-          setMessage(event.target.value);
+          const nextMessage = event.currentTarget.value;
+          setMessage(nextMessage);
+          const nextRange = findWorkspaceMention(nextMessage, event.currentTarget.selectionStart);
+          setMentionRange(nextRange);
+          if (!nextRange) setHighlightedMentionIndex(0);
           event.currentTarget.style.height = "40px";
           const nextHeight = Math.min(event.currentTarget.scrollHeight, 150);
           event.currentTarget.style.height = `${nextHeight}px`;
           event.currentTarget.style.overflowY = event.currentTarget.scrollHeight > 150 ? "auto" : "hidden";
         }}
         onKeyDown={(event) => {
+          if (mentionRange) {
+            if (event.key === "ArrowDown" && mentionItems.length > 0) {
+              event.preventDefault();
+              setHighlightedMentionIndex((current) => (current + 1) % mentionItems.length);
+              return;
+            }
+            if (event.key === "ArrowUp" && mentionItems.length > 0) {
+              event.preventDefault();
+              setHighlightedMentionIndex((current) => (current - 1 + mentionItems.length) % mentionItems.length);
+              return;
+            }
+            if ((event.key === "Enter" || event.key === "Tab") && mentionItems.length > 0 && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              selectHighlightedMention();
+              return;
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              setMentionRange(null);
+              return;
+            }
+          }
           if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
           event.preventDefault();
           event.currentTarget.form?.requestSubmit();
         }}
+        onBlur={() => setMentionRange(null)}
         placeholder="Ask Pi Bot anything…"
         disabled={disabled}
         rows={1}
       />
       <div className="composer-toolbar">
         <div className="composer-toolbar-left">
-          <span className="composer-prefix" aria-hidden="true">+</span>
+          <button type="button" className={`composer-prefix ${mentionRange ? "active" : ""}`} onMouseDown={(event) => event.preventDefault()} onClick={openMentionMenu} disabled={disabled} aria-label="Mention a file or folder" aria-haspopup="listbox" aria-expanded={mentionRange !== null} title="Mention a file or folder"><Plus aria-hidden="true" /></button>
           <span className="composer-divider" aria-hidden="true">•</span>
           <div className="composer-context" title={`${formatTokenCount(config.context.tokens)} of ${formatTokenCount(config.context.contextWindow)} tokens used`}>
             <span>{contextLabel} context used</span>
