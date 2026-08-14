@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, isValidElement, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -55,6 +55,8 @@ import type {
 type View = "chat" | "settings";
 type SettingsSection = "agents" | "models";
 type Theme = "dark" | "light";
+
+let mermaidDiagramId = 0;
 
 function savedTheme(): Theme {
   return window.localStorage.getItem("pi-bot-theme") === "light" ? "light" : "dark";
@@ -146,7 +148,7 @@ function emptyBootstrap(): PiBootstrap {
     sessions: [],
     sessionsByAgent: {},
     agents: [],
-    setup: { required: true, canImportPiAuth: false, piAuthPath: "", credentialStorage: "protected-app-file", providers: [] },
+    setup: { required: true, canContinue: false, canImportPiAuth: false, piAuthPath: "", credentialStorage: "protected-app-file", providers: [] },
     authenticated: false,
     activeAgentId: null,
   };
@@ -426,6 +428,53 @@ function ActivityGroup({ items }: { items: TimelineItem[] }) {
   );
 }
 
+function MermaidDiagram({ chart }: { chart: string }) {
+  const [svg, setSvg] = useState<string>();
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let cancelled = false;
+    setSvg(undefined);
+    setError(undefined);
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const { default: mermaid } = await import("mermaid");
+          mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "default" });
+          const { svg: renderedSvg } = await mermaid.render(`mermaid-diagram-${mermaidDiagramId++}`, chart);
+          if (!cancelled) setSvg(renderedSvg);
+        } catch (reason) {
+          if (!cancelled) setError(readableError(reason));
+        }
+      })();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [chart]);
+
+  if (error) {
+    return <div className="mermaid-diagram-error"><span>Diagram tidak bisa dirender: {error}</span><pre><code>{chart}</code></pre></div>;
+  }
+
+  if (!svg) return <div className="mermaid-diagram-loading">Merender diagram…</div>;
+
+  return <div className="mermaid-diagram" aria-label="Diagram Mermaid" dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+function MarkdownPre({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
+  const code = Array.isArray(children) ? children[0] : children;
+
+  if (isValidElement<{ className?: string; children?: ReactNode }>(code) && code.props.className?.includes("language-mermaid")) {
+    return <MermaidDiagram chart={String(code.props.children).replace(/\n$/, "")} />;
+  }
+
+  return <pre {...props}>{children}</pre>;
+}
+
 function MarkdownContent({ body }: { body: string }) {
   return (
     <div className="markdown-content">
@@ -433,6 +482,7 @@ function MarkdownContent({ body }: { body: string }) {
         remarkPlugins={[remarkGfm]}
         components={{
           a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+          pre: MarkdownPre,
         }}
       >
         {body}
@@ -776,12 +826,13 @@ function AuthPromptCard({ prompt, notice, onRespond, onCancel }: { prompt: { id:
   return <div className="auth-prompt-card"><span className="eyebrow">Provider sign-in</span><h3>{prompt.prompt.message}</h3>{notice && <p className="auth-notice">{notice}</p>}{prompt.prompt.type === "select" ? <select className="field-select" value={value} onChange={(event) => setValue(event.target.value)}><option value="">Choose an option</option>{prompt.prompt.options?.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select> : <Input autoFocus type={prompt.prompt.type === "secret" ? "password" : "text"} value={value} onChange={(event) => setValue(event.target.value)} placeholder={prompt.prompt.placeholder} /> }<div className="auth-prompt-actions"><Button variant="outline" onClick={onCancel}><X /> Cancel</Button><Button onClick={() => onRespond(value)} disabled={!value.trim()}><Check /> Continue</Button></div></div>;
 }
 
-function SetupPage({ data, busy, error, onImport, onApiKey, onOAuth }: { data: PiBootstrap; busy: boolean; error?: string; onImport: () => void; onApiKey: (providerId: string, apiKey: string) => void; onOAuth: (provider: ProviderInfo) => void }) {
+function SetupPage({ data, busy, error, onContinue, onImport, onApiKey, onOAuth }: { data: PiBootstrap; busy: boolean; error?: string; onContinue: (accepted: boolean) => void; onImport: (accepted: boolean) => void; onApiKey: (providerId: string, apiKey: string, accepted: boolean) => void; onOAuth: (provider: ProviderInfo, accepted: boolean) => void }) {
   const apiProviders = data.setup.providers.filter((provider) => provider.methods.includes("api_key"));
   const [providerId, setProviderId] = useState(apiProviders[0]?.id ?? "");
   const [apiKey, setApiKey] = useState("");
+  const [executionRiskAccepted, setExecutionRiskAccepted] = useState(false);
   const provider = data.setup.providers.find((item) => item.id === providerId);
-  return <main className="setup-page"><div className="setup-card"><div className="setup-mark"><img src="/branding/pi-bot-logo-dark.png" alt="" /></div><span className="eyebrow">First setup</span><h1>Set up Pi Bot</h1><p className="setup-lede">Connect a provider and start chatting with a workspace teammate.</p><ErrorBanner message={error} />{apiProviders.length > 0 ? <div className="setup-auth-form"><label className="form-field"><span>Provider</span><select className="field-select" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{apiProviders.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label className="form-field"><span>API key</span><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste a provider API key" /></label><Button className="setup-primary" onClick={() => onApiKey(providerId, apiKey)} disabled={busy || !apiKey.trim() || !providerId}>{busy ? <LoaderCircle className="spin" /> : <KeyRound />} Connect provider</Button>{provider?.methods.includes("oauth") && <Button variant="outline" onClick={() => onOAuth(provider)} disabled={busy}><ExternalLink /> Sign in with subscription</Button>}</div> : <p className="muted-copy">No direct API-key provider is available. You can import credentials from Pi if they are detected.</p>}{data.setup.canImportPiAuth && <div className="setup-import"><div><strong>Already use Pi?</strong><p>Import all detected Pi credentials once. The original auth stays untouched.</p></div><Button variant="outline" onClick={onImport} disabled={busy}><KeyRound /> Import auth from Pi</Button></div>}<p className="setup-storage"><LockKeyhole /> Credentials are stored in the app’s {data.setup.credentialStorage === "os-keychain" ? "OS keychain" : "protected app file"}.</p></div></main>;
+  return <main className="setup-page"><div className="setup-card"><div className="setup-mark"><img src="/branding/pi-bot-logo-dark.png" alt="" /></div><span className="eyebrow">Public Alpha</span><h1>Set up Pi Bot</h1><p className="setup-lede">Connect a provider and start chatting with a workspace teammate.</p><ErrorBanner message={error} /><label className="setup-risk"><input type="checkbox" checked={executionRiskAccepted} onChange={(event) => setExecutionRiskAccepted(event.target.checked)} /><span><strong>I understand the execution risk</strong><small>Pi Bot can run commands and read, create, edit, or delete files in the selected workspace without asking for approval for each action.</small></span></label>{apiProviders.length > 0 ? <div className="setup-auth-form"><label className="form-field"><span>Provider</span><select className="field-select" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{apiProviders.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label className="form-field"><span>API key</span><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste a provider API key" /></label><Button className="setup-primary" onClick={() => onApiKey(providerId, apiKey, executionRiskAccepted)} disabled={busy || !executionRiskAccepted || !apiKey.trim() || !providerId}>{busy ? <LoaderCircle className="spin" /> : <KeyRound />} Connect provider</Button>{provider?.methods.includes("oauth") && <Button variant="outline" onClick={() => onOAuth(provider, executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><ExternalLink /> Sign in with subscription</Button>}</div> : <p className="muted-copy">No direct API-key provider is available. You can import credentials from Pi if they are detected.</p>}{data.setup.canContinue && <Button className="setup-continue" variant="outline" onClick={() => onContinue(executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><Check /> Continue with connected provider</Button>}{data.setup.canImportPiAuth && <div className="setup-import"><div><strong>Already use Pi?</strong><p>Import all detected Pi credentials once. The original auth stays untouched.</p></div><Button variant="outline" onClick={() => onImport(executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><KeyRound /> Import auth from Pi</Button></div>}<p className="setup-storage"><LockKeyhole /> Credentials are stored in the app’s {data.setup.credentialStorage === "os-keychain" ? "OS keychain" : "protected app file"}.</p></div></main>;
 }
 
 export function App() {
@@ -884,7 +935,7 @@ export function App() {
   }
 
   if (connecting || !data) return <div className="loading-screen"><LoaderCircle className="spin" /><span>Opening Pi Bot…</span></div>;
-  if (data.setup.required) return <><SetupPage data={data} busy={busy} error={error} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onApiKey={(providerId, apiKey) => void authenticate(() => window.piBot.setProviderApiKey(providerId, apiKey))} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} />{authPrompt && <AuthPromptCard prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</>;
+  if (data.setup.required) return <><SetupPage data={data} busy={busy} error={error} onContinue={(accepted) => void authenticate(() => window.piBot.completeSetup(accepted))} onImport={(accepted) => void authenticate(() => window.piBot.importPiAuth(accepted))} onApiKey={(providerId, apiKey, accepted) => void authenticate(() => window.piBot.setProviderApiKey(providerId, apiKey, accepted))} onOAuth={(provider, accepted) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth", accepted))} />{authPrompt && <AuthPromptCard prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</>;
 
   const agent = findAgent(data.agents, data.activeAgentId);
   const activeId = data.activeAgentId;

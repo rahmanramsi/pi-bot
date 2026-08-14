@@ -1,97 +1,69 @@
 # Pi Bot
 
-Pi Bot is a local-first Electron workspace for chatting with configurable AI coding agents powered by `@earendil-works/pi-coding-agent`.
+Pi Bot is a local-first macOS workspace for chatting with configurable AI coding agents powered by `@earendil-works/pi-coding-agent`.
 
-The project is currently a desktop prototype. It keeps the agent runtime, filesystem access, sessions, and credentials in the Electron main process while the React renderer communicates through a narrow IPC bridge.
+## Public Alpha
 
-## Current features
+`v0.1.0` is an unsigned Apple Silicon (`arm64`) Public Alpha. It has no auto-update mechanism and no per-action approval policy. Use it only with a workspace you intentionally selected and can recover.
+
+## Install
+
+1. Download `Pi-Bot-0.1.0-arm64.dmg` and its SHA-256 checksum from the [v0.1.0 release](https://github.com/rahmanramsi/pi-bot/releases/tag/v0.1.0).
+2. Optionally verify the download with `shasum -a 256 Pi-Bot-0.1.0-arm64.dmg`.
+3. Open the DMG and drag Pi Bot to Applications.
+4. Because the app is unsigned, Control-click Pi Bot in Applications, choose **Open**, then confirm **Open** in the macOS prompt.
+5. On first setup, acknowledge the execution warning, connect a supported provider, and choose a workspace.
+
+## What it does
 
 - Create, edit, archive, restore, and delete agent profiles.
-- One app-owned or external workspace per agent.
-- Agent instructions stored in the workspace `AGENTS.md` file.
-- Optional workspace skills loaded from `.agents/skills` after the workspace is trusted.
-- Persistent agent-scoped chat sessions with first-prompt titles.
-- Streaming Markdown responses, Stop, model selection, and reasoning-level selection.
-- Inline activity groups with the executed command, output, and completion state.
-- Provider setup through API keys, supported provider sign-in flows, or a one-time Pi credential import during first setup.
-- Light and dark themes with a shared typography and component-token system.
+- Assign one app-owned or external workspace to each agent.
+- Store agent instructions in the workspace `AGENTS.md` file.
+- Load optional workspace skills from `.agents/skills` after the workspace is trusted.
+- Keep persistent agent-scoped chat sessions with first-prompt titles.
+- Stream Markdown responses, tool activity, model selection, and reasoning-level selection.
+- Connect providers through API keys, supported sign-in flows, or a one-time Pi credential import.
+- Store provider credentials in Electron `safeStorage` when available, otherwise in a permission-restricted app file.
 
-## Requirements
+## Execution warning
 
-- Node.js 22.19 or newer.
-- A provider credential supported by the bundled Pi model runtime, or importable local Pi credentials during first setup.
+Pi Bot gives the agent `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`. The agent can run commands and modify or delete files in the selected workspace without asking for approval for each action. Pi Bot has no sandbox yet.
 
-## Run locally
+The initial setup requires a one-time acknowledgement of this risk. It is a disclosure, not an approval system. Do not use Pi Bot with a workspace whose contents you cannot safely change.
+
+## Privacy
+
+Pi Bot stores its settings, session mappings, app-owned workspaces, and credentials locally in Electron's app-data directory. The app has no built-in telemetry, analytics, crash reporting, or cloud sync.
+
+Prompts, workspace context, and tool results needed by an agent are sent to the model provider you connect. That provider's privacy policy applies to its handling of that data.
+
+## Run from source
+
+Requirements: macOS on Apple Silicon, Node.js 22.19 or newer, and a supported provider credential (or importable local Pi credentials).
 
 ```bash
 npm install
 npm run dev
 ```
 
-`npm run dev` starts Vite at `http://127.0.0.1:5173` and opens the Electron window after the renderer is ready.
-
-Validation commands:
+Validation and release build:
 
 ```bash
 npm run typecheck
 npm run build
+npm run dist
 ```
 
-There is no automated test command yet.
+`npm run dist` creates `release/Pi-Bot-0.1.0-arm64.dmg`.
 
-## Interface
+## Report a bug
 
-The app uses three permanent layers:
+Open an issue at [github.com/rahmanramsi/pi-bot/issues](https://github.com/rahmanramsi/pi-bot/issues). Include your Pi Bot version, macOS version, whether the app is running from the DMG, steps to reproduce, and any non-secret error text.
 
-1. An always-visible agent rail.
-2. A collapsible session sidebar scoped to the active agent.
-3. The chat or App Settings workspace.
+## Development notes
 
-The chat keeps human messages on the right and agent messages on the left. Consecutive tool and status events are grouped as **Agent activity**. Command activity shows the exact command in the collapsed summary and exposes the full command, output, and outcome when expanded.
+There is no automated test suite yet. The release gate is TypeScript validation, a production build, and a manual smoke test from the exact DMG being released: first setup, provider connection, agent creation, workspace selection, one prompt/tool run, and restart/session persistence.
 
-The composer is compact at rest and grows vertically as the message becomes longer, up to its maximum height.
+## License
 
-## Local data
-
-Electron stores application data below its platform-specific `userData` directory:
-
-- `settings.json` — agents, active agent, preferences, and session mappings.
-- `credentials.bin` — provider credentials encrypted with Electron `safeStorage` when available; otherwise stored in a permission-restricted app file.
-- `agents/<agent-id>/` — default app-owned workspaces with `AGENTS.md` and `.agents/skills/`.
-- `sessions/<agent-id>/<workspace-hash>/` — Pi session history for an agent/workspace pair.
-
-Deleting a session is permanent. Deleting an agent removes its sessions; its app-owned workspace is removed only after separate confirmation. External workspace folders are never deleted by agent deletion.
-
-## Security boundary
-
-- `contextIsolation` is enabled and `nodeIntegration` is disabled.
-- The renderer has no direct Node or filesystem access.
-- Pi currently receives `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`.
-- The prototype does **not** yet provide a sandbox or an allow/ask/deny approval policy for those tools.
-- Trusting an external workspace controls loading `.agents/skills`; its `AGENTS.md` is still loaded.
-- Extensions, prompt templates, themes, and implicit context files from the Pi runtime are disabled.
-
-Use a disposable or intentionally selected workspace until the permission layer is implemented.
-
-## Project structure
-
-```text
-electron/main.mjs       Pi runtime, agents, sessions, providers, persistence, IPC
-electron/preload.cjs    narrow renderer bridge
-src/App.tsx             renderer state and application surfaces
-src/styles.css          themes, layout, and design tokens
-src/components/ui/      shared UI primitives
-src/types.ts            renderer and IPC contracts
-public/branding/        application logo assets
-docs/                   product specs and research notes
-```
-
-## Documentation
-
-- [Current prototype specification](docs/mvp-spec.md)
-- [Next-stage specification](docs/next-stage-spec.md)
-- [Design system](docs/design-system.md)
-- [Chat and activity UX research](docs/chat-ux-research.md)
-- [Grok Bot product research](docs/grok-research.md)
-- [Agent harness catalog](docs/agent-harness-catalog.md)
-
+[MIT](LICENSE)

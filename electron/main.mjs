@@ -24,6 +24,7 @@ let window;
 let agentProfiles = {};
 let activeAgentId = defaultAgentId;
 let setupComplete = false;
+let executionRiskAccepted = false;
 let currentSessions = {};
 let sessionRecords = {};
 let preferredThinkingLevel = "medium";
@@ -129,6 +130,7 @@ function loadSettings() {
   agentProfiles = { [defaultAgentId]: defaultAgentProfile() };
   activeAgentId = defaultAgentId;
   setupComplete = false;
+  executionRiskAccepted = false;
   currentSessions = {};
   sessionRecords = {};
   try {
@@ -152,6 +154,7 @@ function loadSettings() {
     if (typeof saved.activeAgentId === "string" && isAgentId(saved.activeAgentId)) activeAgentId = saved.activeAgentId;
     else if (!isAgentId(activeAgentId)) activeAgentId = Object.keys(agentProfiles)[0] ?? null;
     setupComplete = Boolean(saved.setupComplete);
+    executionRiskAccepted = Boolean(saved.executionRiskAccepted);
     if (thinkingLevels.includes(saved.thinkingLevel)) preferredThinkingLevel = saved.thinkingLevel;
     if (saved.currentSessions && typeof saved.currentSessions === "object") currentSessions = saved.currentSessions;
     if (saved.sessionRecords && typeof saved.sessionRecords === "object") sessionRecords = saved.sessionRecords;
@@ -166,6 +169,7 @@ function saveSettings() {
     writeFileSync(settingsFile(), JSON.stringify({
       schemaVersion: settingsVersion,
       setupComplete,
+      executionRiskAccepted,
       activeAgentId,
       thinkingLevel: preferredThinkingLevel,
       currentSessions,
@@ -512,7 +516,8 @@ function importablePiCredentials() {
 
 function setupState() {
   return {
-    required: !setupComplete,
+    required: !setupComplete || !executionRiskAccepted,
+    canContinue: availableModels.length > 0,
     canImportPiAuth: !setupComplete && Object.keys(importablePiCredentials()).length > 0,
     piAuthPath: piAuthFile(),
     credentialStorage: safeStorage.isEncryptionAvailable() ? "os-keychain" : "protected-app-file",
@@ -784,12 +789,20 @@ function createSession(options = {}) {
 }
 
 async function finishSetup() {
+  if (!executionRiskAccepted) throw new Error("Confirm the execution warning before continuing.");
   await refreshRuntime();
   if (availableModels.length === 0) throw new Error("Add a provider credential before continuing.");
   setupComplete = true;
   ensureAllWorkspaces();
   saveSettings();
   return createSession({ agentId: activeAgentId || defaultAgentId });
+}
+
+function acceptExecutionRisk(accepted) {
+  if (executionRiskAccepted) return;
+  if (accepted !== true) throw new Error("Confirm the execution warning before continuing.");
+  executionRiskAccepted = true;
+  saveSettings();
 }
 
 async function respondToAuthPrompt(promptId, value) {
@@ -822,8 +835,7 @@ function authInteraction() {
 
 ipcMain.handle("pi:connect", async () => {
   await refreshRuntime();
-  if (!setupComplete && (availableModels.length === 0 || setupState().canImportPiAuth)) return bootstrap();
-  if (!setupComplete) return finishSetup();
+  if (!setupComplete || !executionRiskAccepted) return bootstrap();
   return createSession({ agentId: activeAgentId });
 });
 
@@ -1040,15 +1052,22 @@ ipcMain.handle("pi:set-thinking-level", async (_event, agentId, level) => {
   return bootstrap();
 });
 
-ipcMain.handle("pi:set-provider-api-key", async (_event, providerId, apiKey) => {
+ipcMain.handle("pi:complete-setup", async (_event, accepted) => {
+  acceptExecutionRisk(accepted);
+  return finishSetup();
+});
+
+ipcMain.handle("pi:set-provider-api-key", async (_event, providerId, apiKey, accepted) => {
   if (typeof providerId !== "string" || typeof apiKey !== "string" || !apiKey.trim()) throw new Error("Enter an API key first.");
+  acceptExecutionRisk(accepted);
   await credentialStore.modify(providerId, async () => ({ type: "api_key", key: apiKey.trim() }));
   await refreshRuntime();
   return finishSetup();
 });
 
-ipcMain.handle("pi:login-provider", async (_event, providerId, type) => {
+ipcMain.handle("pi:login-provider", async (_event, providerId, type, accepted) => {
   if (typeof providerId !== "string" || (type !== "api_key" && type !== "oauth")) throw new Error("Invalid authentication method.");
+  acceptExecutionRisk(accepted);
   await refreshRuntime();
   await modelRuntime.login(providerId, type, authInteraction());
   saveCredentials();
@@ -1063,8 +1082,9 @@ ipcMain.handle("pi:logout-provider", async (_event, providerId) => {
   return bootstrap();
 });
 
-ipcMain.handle("pi:import-pi-auth", async () => {
+ipcMain.handle("pi:import-pi-auth", async (_event, accepted) => {
   if (setupComplete) throw new Error("Pi auth import is only available during first setup.");
+  acceptExecutionRisk(accepted);
   const imported = importablePiCredentials();
   const entries = Object.entries(imported);
   if (entries.length === 0) throw new Error("No Pi auth was found on this computer.");

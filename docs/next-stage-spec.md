@@ -24,7 +24,7 @@ Known gaps:
 - `bash`, `edit`, and `write` are enabled without a sandbox or approval policy.
 - No automated test command or test suite.
 - Credentials fall back to a permission-restricted app file when Electron encryption is unavailable.
-- No packaged release/update workflow.
+- No auto-update workflow.
 
 ## P0 — permission and execution safety
 
@@ -67,7 +67,7 @@ Known gaps:
 - Subagents, handoffs, parallel tasks, background jobs, routines, and schedules.
 - Cloud sync, accounts, billing, or collaboration.
 - Attachments and structured artifact cards.
-- Packaged distribution and auto-update until the interaction/security model is stable.
+- Auto-update until the interaction/security model is stable.
 
 ## Commands
 
@@ -78,6 +78,7 @@ npm install
 npm run dev
 npm run typecheck
 npm run build
+npm run dist
 ```
 
 Planned addition:
@@ -121,5 +122,3 @@ tests/                  planned automated tests; not present yet
 - Which operations may be safely pre-approved, if any?
 - Is host execution acceptable for this product, or is a sandbox required before broader use?
 - Should encrypted credential storage be mandatory instead of allowing the current file fallback?
-- Is macOS packaging needed immediately after the safety/test stage?
-

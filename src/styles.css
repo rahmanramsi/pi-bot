@@ -338,6 +338,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .markdown-content code:not(pre code) { padding: 2px 5px; border: 1px solid var(--border); border-radius: 5px; background: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
 .markdown-content pre { max-width: 100%; margin: 11px 0; overflow: auto; border: 1px solid var(--border); border-radius: 9px; color: var(--foreground); background: var(--shell); }
 .markdown-content pre code { display: block; padding: 12px 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--text-label); line-height: var(--leading-body); white-space: pre; }
+.mermaid-diagram { max-width: 100%; margin: 11px 0; padding: 14px; overflow: auto; border: 1px solid var(--border); border-radius: 9px; background: #fff; }
+.mermaid-diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.mermaid-diagram-loading { margin: 11px 0; color: var(--muted-foreground); font-size: var(--text-label); }
+.mermaid-diagram-error { margin: 11px 0; color: var(--destructive, #b42318); font-size: var(--text-label); }
+.mermaid-diagram-error pre { margin-top: 7px; }
 .markdown-content table { display: block; max-width: 100%; margin: 10px 0; overflow-x: auto; border-collapse: collapse; font-size: var(--text-label); }
 .markdown-content th, .markdown-content td { padding: 6px 9px; border: 1px solid var(--border); text-align: left; white-space: nowrap; }
 .markdown-content th { background: var(--muted); font-weight: 650; }
@@ -486,7 +491,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .setup-mark img { width: 48px; height: 48px; object-fit: contain; }
 .setup-card h1 { margin: 7px 0 8px; font-size: var(--text-display); font-weight: 680; letter-spacing: -.04em; }
 .setup-lede { max-width: 400px; margin: 0; color: var(--muted-foreground); font-size: var(--text-body); line-height: var(--leading-body); }
+.setup-risk { display: flex; gap: 10px; margin-top: 22px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-raised); cursor: pointer; }
+.setup-risk input { flex: 0 0 auto; width: 15px; height: 15px; margin: 2px 0 0; accent-color: var(--foreground); }
+.setup-risk span { display: grid; gap: 4px; }
+.setup-risk strong { font-size: var(--text-body); }
+.setup-risk small { color: var(--muted-foreground); font-size: var(--text-caption); line-height: var(--leading-body); }
 .setup-auth-form { display: grid; gap: 12px; margin-top: 27px; }.setup-primary { width: 100%; }
+.setup-continue { width: 100%; margin-top: 14px; }
 .setup-import { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 20px; padding-top: 19px; border-top: 1px solid var(--border); }
 .setup-import strong { font-size: var(--text-body); }.setup-import p { max-width: 260px; margin: 4px 0 0; color: var(--muted-foreground); font-size: var(--text-caption); line-height: var(--leading-body); }
 .setup-storage { display: flex; align-items: center; gap: 6px; margin: 24px 0 0; color: var(--muted-foreground); font-size: var(--text-caption); }.setup-storage svg { width: 13px; height: 13px; }

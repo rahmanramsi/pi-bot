@@ -1,6 +1,6 @@
-# Pi Bot local agent workspace — current prototype specification
+# Pi Bot local agent workspace — Public Alpha specification
 
-Status: implemented and verified as an Electron prototype.
+Status: implemented as a macOS Apple Silicon Public Alpha.
 
 ## Goal
 
@@ -35,7 +35,7 @@ Select an agent from the permanent rail, open or create an agent-scoped chat, se
 - Cloud sync, Pi Bot accounts, billing, or team collaboration.
 - Browser automation, computer use, connectors, MCP, or arbitrary runtime extensions.
 - Automatic multi-agent orchestration, agent-to-agent handoffs, background jobs, routines, or schedules.
-- Attachments, generated artifact previews, Git workflow automation, or packaged auto-update distribution.
+- Attachments, generated artifact previews, Git workflow automation, or auto-update distribution.
 - A production sandbox or finished permission/approval policy.
 
 ## Product and data decisions
@@ -50,6 +50,7 @@ Select an agent from the permanent rail, open or create an agent-scoped chat, se
 - Deleting an agent removes its sessions. Its app-owned workspace is deleted only after separate confirmation; external folders are never deleted.
 - Provider credentials are global. Agent default-model choices remain agent-specific.
 - The light/dark preference is renderer-local under `pi-bot-theme`.
+- First setup requires a one-time acknowledgement that the agent can run commands and modify files without per-action approval.
 
 ## Interface contract
 
@@ -73,7 +74,7 @@ See [design-system.md](design-system.md) for the complete visual contract.
 - External-workspace trust gates `.agents/skills`, not `AGENTS.md`.
 - Pi extensions, implicit context files, prompt templates, and runtime themes are disabled.
 
-This boundary is suitable for a controlled local prototype, not untrusted autonomous execution.
+This Public Alpha boundary is not suitable for untrusted autonomous execution.
 
 ## Acceptance criteria
 
@@ -95,4 +96,3 @@ This boundary is suitable for a controlled local prototype, not untrusted autono
 - TypeScript validation and Vite production build.
 - Manual Electron QA for first setup, provider cancellation, theme switching, agent lifecycle, workspace trust, session lifecycle, long chats, activity disclosure, composer autosize, Stop, minimum window size, and restart persistence.
 - Automated regression tests are not implemented yet and are part of the next-stage plan.
-

@@ -92,6 +92,7 @@ export type TimelineItem = {
 
 export type PiSetup = {
   required: boolean;
+  canContinue: boolean;
   canImportPiAuth: boolean;
   piAuthPath: string;
   credentialStorage: "os-keychain" | "protected-app-file" | string;
@@ -139,13 +140,14 @@ export type PiBotBridge = {
   getSessions: (agentId?: AgentId | null) => Promise<SessionSummary[]>;
   prompt: (message: string) => Promise<void>;
   abort: () => Promise<void>;
+  completeSetup: (accepted: boolean) => Promise<PiBootstrap>;
   setAgentModel: (agentId: AgentId, key: string) => Promise<PiBootstrap>;
   setSessionModel: (agentId: AgentId, key: string) => Promise<PiBootstrap>;
   setThinkingLevel: (agentId: AgentId, level: ThinkingLevel) => Promise<PiBootstrap>;
-  setProviderApiKey: (providerId: string, apiKey: string) => Promise<PiBootstrap>;
-  loginProvider: (providerId: string, type: ProviderAuthMethod) => Promise<PiBootstrap>;
+  setProviderApiKey: (providerId: string, apiKey: string, accepted?: boolean) => Promise<PiBootstrap>;
+  loginProvider: (providerId: string, type: ProviderAuthMethod, accepted?: boolean) => Promise<PiBootstrap>;
   logoutProvider: (providerId: string) => Promise<PiBootstrap>;
-  importPiAuth: () => Promise<PiBootstrap>;
+  importPiAuth: (accepted?: boolean) => Promise<PiBootstrap>;
   respondAuth: (promptId: string, value: string) => Promise<void>;
   cancelAuth: (promptId: string) => Promise<void>;
   onEvent: (listener: (event: PiEvent) => void) => () => void;

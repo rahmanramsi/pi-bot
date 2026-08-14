@@ -859,7 +859,7 @@ Setiap entri mencatat:
 
 ### Local artifact baseline
 
-- [package.json](../package.json) pins @earendil-works/pi-coding-agent at 0.84.1 and builds a private Electron/Vite app.
+- [package.json](../package.json) pins @earendil-works/pi-coding-agent at 0.84.1 and builds a public-alpha Electron/Vite app.
 - [electron/main.mjs](../electron/main.mjs) owns the runtime, model discovery, provider authentication, agent profiles, workspace selection, SessionManager sessions, skills loading, and session model/thinking controls.
 - The current runtime passes read, bash, edit, write, grep, find, and ls as coding tools.
 - The current app lets agents have isolated app-owned or external workspaces, stores agent instructions in AGENTS.md, and asks before loading external workspace skills.
