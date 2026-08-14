@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -9,8 +9,13 @@ const run = promisify(execFile);
 const { extractFile } = createRequire(import.meta.url)("@electron/asar");
 const testDir = await mkdtemp(path.join(tmpdir(), "pi-bot-smoke-"));
 const resultFile = path.join(testDir, "smoke-test.json");
-const appPath = path.resolve("release/mac-arm64/Pi Bot.app");
-const appAsar = path.join(appPath, "Contents", "Resources", "app.asar");
+const isWindows = process.platform === "win32";
+const appPath = isWindows
+  ? path.resolve("release/win-unpacked/Pi Bot.exe")
+  : path.resolve("release/mac-arm64/Pi Bot.app");
+const appAsar = isWindows
+  ? path.join(path.dirname(appPath), "resources", "app.asar")
+  : path.join(appPath, "Contents", "Resources", "app.asar");
 
 try {
   const packagedMain = extractFile(appAsar, "electron/main.mjs").toString();
@@ -18,7 +23,12 @@ try {
     throw new Error("Packaged app still references Electron Safe Storage.");
   }
   await writeFile(path.join(testDir, ".smoke-test"), "");
-  await run("/usr/bin/open", ["-n", appPath, "--args", `--user-data-dir=${testDir}`]);
+  if (isWindows) {
+    const child = spawn(appPath, [`--user-data-dir=${testDir}`], { detached: true, stdio: "ignore" });
+    child.unref();
+  } else {
+    await run("/usr/bin/open", ["-n", appPath, "--args", `--user-data-dir=${testDir}`]);
+  }
   let result;
   for (let attempt = 0; attempt < 150; attempt += 1) {
     try {

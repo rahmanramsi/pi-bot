@@ -1,18 +1,20 @@
 # Pi Bot
 
-Pi Bot is a local-first macOS workspace for chatting with configurable AI coding agents powered by `@earendil-works/pi-coding-agent`.
+Pi Bot is a local-first desktop workspace for chatting with configurable AI coding agents powered by `@earendil-works/pi-coding-agent`.
 
 ## Public Alpha
 
-`v0.1.4` is an Apple Silicon (`arm64`) Public Alpha with ad-hoc signing. It has no auto-update mechanism and no per-action approval policy. Use it only with a workspace you intentionally selected and can recover.
+`v0.1.5` is a macOS Apple Silicon (`arm64`) and Windows x64 Public Alpha. It has no auto-update mechanism and no per-action approval policy. Use it only with a workspace you intentionally selected and can recover.
 
 ## Install
 
-1. Download `PiBot-0.1.4-arm64.dmg` and its SHA-256 checksum from the [v0.1.4 release](https://github.com/rahmanramsi/pi-bot/releases/tag/v0.1.4).
-2. Optionally verify the download with `shasum -a 256 PiBot-0.1.4-arm64.dmg`.
+1. Download `PiBot-0.1.5-arm64.dmg` and its SHA-256 checksum from the [v0.1.5 release](https://github.com/rahmanramsi/pi-bot/releases/tag/v0.1.5).
+2. Optionally verify the download with `shasum -a 256 PiBot-0.1.5-arm64.dmg`.
 3. Open the DMG and drag Pi Bot to Applications.
 4. If macOS blocks the first launch, open **System Settings → Privacy & Security**, then click **Open Anyway** for Pi Bot.
 5. On first setup, acknowledge the execution warning, connect a supported provider, and choose a workspace.
+
+On Windows, download and run `PiBot-0.1.5-x64-setup.exe` from the same release. The installer is unsigned, so Windows may require you to approve the first launch.
 
 ## What it does
 
@@ -39,7 +41,7 @@ Prompts, workspace context, and tool results needed by an agent are sent to the 
 
 ## Run from source
 
-Requirements: macOS on Apple Silicon, Node.js 22.19 or newer, and a supported provider credential (or importable local Pi credentials).
+Requirements: Node.js 22.19 or newer and a supported provider credential (or importable local Pi credentials). The published Public Alpha currently targets macOS on Apple Silicon. Validate the Windows installer on Windows before publishing it.
 
 ```bash
 npm install
@@ -54,11 +56,23 @@ npm run build
 npm run dist
 ```
 
-`npm run dist` creates `release/PiBot-0.1.4-arm64.dmg`.
+`npm run dist` creates `release/PiBot-0.1.5-arm64.dmg`.
+
+To create a Windows x64 installer:
+
+```bash
+npm install
+npm run dist:win
+npm run smoke:packaged
+```
+
+This creates `release/PiBot-0.1.5-x64-setup.exe`.
+
+Before publishing a Windows build, run `npm run smoke:packaged` from Windows.
 
 ## Report a bug
 
-Open an issue at [github.com/rahmanramsi/pi-bot/issues](https://github.com/rahmanramsi/pi-bot/issues). Include your Pi Bot version, macOS version, whether the app is running from the DMG, steps to reproduce, and any non-secret error text.
+Open an issue at [github.com/rahmanramsi/pi-bot/issues](https://github.com/rahmanramsi/pi-bot/issues). Include your Pi Bot version, operating-system version, whether the app is running from an installer, steps to reproduce, and any non-secret error text.
 
 ## Development notes
 
