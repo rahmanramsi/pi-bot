@@ -9,6 +9,8 @@ const files = {
   main: "src/main.tsx",
   app: "src/App.tsx",
   button: "src/components/ui/button.tsx",
+  dialog: "src/components/ui/dialog.tsx",
+  select: "src/components/ui/select.tsx",
   styles: "src/styles.css",
 };
 
@@ -28,7 +30,12 @@ requireText("main", /<MotionProvider>/, "renderer root must use MotionProvider")
 requireText("app", /AnimatePresence/, "interaction surfaces must use AnimatePresence");
 requireText("app", /layoutId=/, "selection or navigation needs a shared layout indicator");
 requireText("app", /whileTap=/, "actionable interaction surfaces need press feedback");
+requireText("app", /behavior:\s*reducedMotion\s*\?\s*["']auto["']\s*:\s*["']smooth["']/, "interaction-triggered scrolling must honor reduced motion");
 requireText("button", /data-motion=["']button["']/, "shared Button must expose the motion contract");
+requireText("dialog", /from ["']@\/lib\/motion["']/, "shared Dialog must use the motion boundary");
+requireText("dialog", /data-motion=["']dialog-content["']/, "shared Dialog content must expose the motion contract");
+requireText("select", /from ["']@\/lib\/motion["']/, "shared Select must use the motion boundary");
+requireText("select", /data-motion=["']select-content["']/, "shared Select content must expose the motion contract");
 requireText("design", /## 1\. Motion principles/, "root DESIGN.md must define motion principles");
 requireText("design", /## 5\. Accessibility and human factors/, "root DESIGN.md must define accessibility motion rules");
 requireText("design", /prefers-reduced-motion/, "design contract must mention reduced motion");
@@ -46,4 +53,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(JSON.stringify({ status: "GREEN", checks: 11 }, null, 2));
+console.log(JSON.stringify({ status: "GREEN", checks: 16 }, null, 2));

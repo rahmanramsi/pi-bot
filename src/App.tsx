@@ -521,6 +521,7 @@ function AgentWorking({ agent }: { agent?: AgentProfile }) {
 
 function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?: AgentProfile; responding: boolean }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const reducedMotion = useReducedMotion();
   const [following, setFollowing] = useState(true);
   const blocks: Array<{ kind: "message"; item: TimelineItem } | { kind: "activity"; items: TimelineItem[] }> = [];
   for (const item of items) {
@@ -546,7 +547,7 @@ function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?
 
   function jumpToLatest() {
     if (!scrollRef.current) return;
-    scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: reducedMotion ? "auto" : "smooth" });
     setFollowing(true);
   }
 

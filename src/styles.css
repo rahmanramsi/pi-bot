@@ -181,7 +181,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   border-radius: 14px;
   background: transparent;
   cursor: pointer;
-  transition: background-color 140ms ease, transform 140ms ease;
+  transition: background-color 140ms ease;
 }
 .rail-agent-button:hover, .rail-agent-button.selected { background: var(--surface-raised); }
 .rail-active-indicator { position: absolute; inset: 0; border-radius: 14px; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--surface-outline); pointer-events: none; }
@@ -387,7 +387,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .activity-group-toggle { margin-left: auto; color: var(--muted-foreground); font-size: var(--text-caption); }
 .activity-group-chevron { display: grid; flex: 0 0 auto; width: 13px; height: 13px; }
 .activity-group[open] > summary { border-bottom: 1px solid var(--border); }
-.activity-group[open] .activity-group-chevron { transform: rotate(90deg); }
 .activity-list { display: grid; overflow: hidden; background: transparent; }
 .activity-item + .activity-item { border-top: 1px solid var(--border); }
 .activity-item summary { display: grid; grid-template-columns: 18px minmax(0, 1fr) 12px; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; cursor: pointer; list-style: none; }
@@ -402,7 +401,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .activity-glyph { display: grid; place-items: center; width: 18px; height: 18px; color: var(--muted-foreground); }
 .activity-glyph svg { width: 12px; height: 12px; }
 .activity-chevron { display: grid; flex: 0 0 auto; width: 12px; height: 12px; }
-.activity-item[open] .activity-chevron { transform: rotate(90deg); }
 .activity-output-card { margin: 0 12px 12px 40px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--shell); }
 .activity-output-motion { overflow: hidden; }
 .activity-output-heading { padding: 9px 11px 7px; color: var(--muted-foreground); font-size: var(--text-label); }
