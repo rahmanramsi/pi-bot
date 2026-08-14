@@ -76,6 +76,9 @@ if (/@keyframes agent-working-enter/.test(sources.styles)) {
 if (/animate-accordion-(?:down|up)/.test(sources.accordion)) {
   failures.push("activity Accordion panels must not use height reflow animation");
 }
+if (/--accordion-panel-height|h-\(--accordion-panel-height\)|data-(?:starting|ending)-style:h-0/.test(sources.accordion)) {
+  failures.push("activity Accordion panels must not collapse through height styles");
+}
 
 if (failures.length > 0) {
   console.error(JSON.stringify({ status: "RED", failures }, null, 2));
