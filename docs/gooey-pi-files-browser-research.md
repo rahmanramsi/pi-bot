@@ -56,7 +56,7 @@ Ini adalah pola yang paling bernilai dari GooeyPi. `BrowserPanel` menyimpan riwa
 | --- | --- |
 | Full file tree, Git, terminal, worktree | Bahasa dan mental modelnya programmer-first. |
 | Kontrol Browser/computer AI yang lebih luas | Membutuhkan lifecycle tab, batas resource, observability, dan kebijakan aksi yang matang. |
-| Click/type/scroll otomatis oleh AI | Berisiko saat halaman membawa akun, pembayaran, form, atau informasi pribadi. |
+| Scroll, download, membuat tab baru, atau kontrol Browser/computer AI yang tidak dibatasi target visible | Berisiko saat halaman membawa akun, pembayaran, form, atau informasi pribadi. Tool issue #10 hanya mengizinkan click/type/submit pada target visible dan non-password di tab chat aktif. |
 | Mengizinkan AI mengambil alih tab pengguna | Cocok untuk pengguna berpengalaman, tetapi bukan default aman untuk produk umum. |
 
 ## Urutan implementasi yang disarankan
