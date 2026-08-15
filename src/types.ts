@@ -82,12 +82,13 @@ export type PiConfig = {
 
 export type TimelineItem = {
   id: string;
-  kind: "user" | "assistant" | "tool" | "status";
+  kind: "user" | "assistant" | "reasoning" | "tool" | "status";
   label: string;
   body: string;
   input?: string;
   status?: "running" | "done" | "failed";
   timestamp: string;
+  timestampMs?: number;
 };
 
 export type WorkspaceFile = {
@@ -118,6 +119,9 @@ export type PiBootstrap = {
 
 export type PiEvent =
   | { type: "assistant-delta"; delta: string }
+  | { type: "reasoning-start"; id: string }
+  | { type: "reasoning-delta"; id: string; delta: string }
+  | { type: "reasoning-end"; id: string }
   | { type: "tool-start"; id: string; name: string; detail: string }
   | { type: "tool-update"; id: string; detail: string }
   | { type: "tool-end"; id: string; failed: boolean; detail: string }

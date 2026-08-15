@@ -22,9 +22,9 @@ Select an agent from the permanent rail, open or create an agent-scoped chat, se
 - Provider setup through API key, supported sign-in flow, or one-time Pi credential import during first setup.
 - Provider disconnect and cancellable interactive sign-in prompts.
 - Per-agent default model and per-session model selection.
-- Supported reasoning-level selection and context-window usage.
+- Supported reasoning-level selection, model-provided reasoning grouped inside the per-turn working disclosure, and context-window usage.
 - Streaming Markdown responses and Stop.
-- Inline, collapsible Agent activity with the executed command, full command/output, and status.
+- One flat collapsible `Working for …` disclosure per user turn containing reasoning and progress as aligned narrative text plus compact summaries for consecutive tool calls; full command/output remains inspectable.
 - Compact composer that autosizes vertically for longer messages.
 - One collapsible left sidebar containing agent selection and active-agent session history; no permanent right-side Context panel.
 - Light and dark themes using shared design tokens.
@@ -56,7 +56,7 @@ Select an agent from the permanent rail, open or create an agent-scoped chat, se
 
 - Left app sidebar: agent identity, global actions, and collapsible history scoped to the active agent.
 - Main area: either chat or App Settings.
-- Chat: user messages on the right, agent messages on the left, and tool/status events grouped as activity.
+- Chat: user messages on the right; reasoning, progress updates, and tool/status events grouped in one flat `Working for …` disclosure; only the final agent response remains in the main conversation.
 - Agent identity: the same initials and color appear in the rail, settings, messages, and working state.
 - Activity: commands are visible in collapsed rows; expansion reveals Shell, full command, output, and outcome.
 - Composer: compact with short input, vertical autosize for long input, maximum height `150px`.
@@ -81,7 +81,7 @@ This Public Alpha boundary is not suitable for untrusted autonomous execution.
 2. First setup can connect a provider or import available Pi credentials; interactive provider prompts can be cancelled.
 3. Agent create/edit/archive/restore/delete operations survive an app restart.
 4. Agent identity, workspace, model, sessions, transcript, and avatar remain consistent when switching agents.
-5. Sending a prompt creates one user message, streams one agent message, and records discrete tool activity.
+5. Sending a prompt creates one user message, groups the agent process in one activity disclosure, and streams the final agent response separately.
 6. Command activity exposes both the executed command and its output/status.
 7. Stop ends streaming without leaving the composer busy.
 8. The composer stays compact for short text and grows downward for multiline input.

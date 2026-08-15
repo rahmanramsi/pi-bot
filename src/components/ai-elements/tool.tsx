@@ -34,6 +34,7 @@ export const Tool = forwardRef<HTMLDetailsElement, ToolProps>(function Tool({ cl
 export type ToolHeaderProps = Omit<ComponentPropsWithoutRef<"summary">, "title" | "children"> & {
   title?: ReactNode;
   status?: ToolStatus;
+  icon?: ReactNode;
   children?: ReactNode;
 };
 
@@ -43,11 +44,11 @@ function statusIcon(status: ToolStatus) {
   return <Check />;
 }
 
-export function ToolHeader({ className, title, status = "completed", children, ...props }: ToolHeaderProps) {
+export function ToolHeader({ className, title, status = "completed", icon, children, ...props }: ToolHeaderProps) {
   const label = status === "running" ? "Running" : status === "failed" ? "Failed" : "Completed";
   return (
     <summary data-slot="tool-header" className={cn("flex list-none items-center gap-2", className)} {...props}>
-      <Terminal aria-hidden="true" />
+      {icon ?? <Terminal aria-hidden="true" />}
       <span className="tool-header-title">{title ?? children}</span>
       <span className={`tool-status ${status}`} aria-label={label} title={label}>{statusIcon(status)}<span>{label}</span></span>
     </summary>

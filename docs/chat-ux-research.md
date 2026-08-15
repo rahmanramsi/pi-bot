@@ -14,7 +14,7 @@ Conversation
   You        question or instruction
   Agent      readable result
 
-Agent activity
+Working for …
   Ran npm run typecheck                running → success
   Read src/App.tsx                     success
   Error provider unavailable          failed
@@ -48,7 +48,7 @@ The current renderer and runtime now implement the main two-layer model:
 - [`TimelineItem`](../src/types.ts) distinguishes `user`, `assistant`, `tool`, and `status`; `PiEvent` models assistant deltas, tool start/update/end, agent lifecycle, abort, error, authentication, and session sync.
 - [`ChatMessage`](../src/App.tsx) keeps user turns on the right and agent turns on the left.
 - Agent messages and the working state reuse the same `AgentAvatar` identity as the agent rail.
-- Consecutive tool/status events are grouped under **Agent activity** without reordering the transcript.
+- Consecutive tool/status events are grouped into muted icon-and-text summaries under **Working for …** without reordering the transcript; reasoning and progress use the same narrative column instead of nested cards.
 - A collapsed command activity begins with `Ran` and includes the executed command.
 - Expanding command activity shows `Shell`, the full `$ command`, output, and Running/Success/Failed outcome.
 - The conversation follows new output only while the reader remains near the bottom; a **Latest** action appears when the reader falls behind.
@@ -110,4 +110,3 @@ Attachments, URL fetching, connectors, MCP, browser/computer use, nested threads
 - [xAI Streaming](https://docs.x.ai/developers/model-capabilities/text/streaming)
 - [xAI Function Calling](https://docs.x.ai/developers/tools/function-calling)
 - [xAI Citations](https://docs.x.ai/developers/tools/citations)
-

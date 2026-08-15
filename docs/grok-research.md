@@ -56,7 +56,7 @@ Consequential actions can stop for scoped approval. Attention, errors, and recov
 | Agent roster | Durable named teammates with explicit jobs. | **Implemented differently:** create/edit/archive/restore/delete agent profiles; permanent left rail; instructions live in each workspace's `AGENTS.md`. |
 | Agent workspace | Durable context separated from one-off prompts. | **Implemented locally:** one app-owned or external workspace per agent; `.agents/skills` load only after trust. |
 | Composer | Input exposes only valid next actions. | **Implemented:** compact autosizing text composer, model/reasoning controls, Send/Stop; no fake attachment affordance. |
-| Transcript | Messages coexist with inspectable tool activity. | **Implemented:** right/left conversation rails and grouped Agent activity with visible commands, output, and status. |
+| Transcript | Messages coexist with inspectable tool activity. | **Implemented:** right/left conversation rails and one flat `Working for …` disclosure with visible commands, output, and status. |
 | History | Durable conversations have explicit scope. | **Implemented:** Pi `SessionManager` history scoped by agent and workspace. |
 | Provider/model | Agent capability should be discoverable. | **Implemented:** local provider setup, cancellable sign-in prompts, global credentials, agent default model, and session model. |
 | Skills | Reusable methods require visible scope. | **Partially implemented:** trusted workspace skills can load from `.agents/skills`; no skill-management UI, routines, or scheduler. |

@@ -26,6 +26,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
   Plus,
   RotateCcw,
   RefreshCw,
@@ -49,11 +50,13 @@ import { Input } from "@/components/ui/input";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { PromptInput, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from "@/components/ai-elements/prompt-input";
+import { Reasoning, ReasoningContent } from "@/components/ai-elements/reasoning";
 import { Task, TaskContent, TaskTrigger } from "@/components/ai-elements/task";
 import { Terminal } from "@/components/ai-elements/terminal";
 import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput, type ToolStatus } from "@/components/ai-elements/tool";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -146,6 +149,16 @@ function timeNow() {
   return new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 }
 
+function formatWorkingDuration(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 function formatTokenCount(value: number | null) {
   if (value === null) return "—";
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
@@ -168,9 +181,41 @@ function appendAssistantDelta(previous: PiBootstrap | null, delta: string) {
   if (last?.kind === "assistant" && last.status === "running") {
     transcript[transcript.length - 1] = { ...last, body: `${last.body}${delta}`, status: "running" };
   } else {
-    transcript.push({ id: `assistant-${Date.now()}`, kind: "assistant", label: findAgent(previous.agents, previous.activeAgentId)?.name ?? "Assistant", body: delta, status: "running", timestamp: timeNow() });
+    const timestampMs = Date.now();
+    transcript.push({ id: `assistant-${timestampMs}`, kind: "assistant", label: findAgent(previous.agents, previous.activeAgentId)?.name ?? "Assistant", body: delta, status: "running", timestamp: timeNow(), timestampMs });
   }
   return { ...previous, transcript };
+}
+
+export function startReasoning(previous: PiBootstrap | null, id: string) {
+  if (!previous) return previous;
+  const transcript = [...previous.transcript];
+  const index = transcript.findIndex((item) => item.id === id && item.kind === "reasoning");
+  if (index >= 0) {
+    const item = transcript[index];
+    transcript[index] = { ...item, body: item.body ? `${item.body}\n\n` : item.body, status: "running" };
+  } else {
+    transcript.push({ id, kind: "reasoning", label: "Reasoning", body: "", status: "running", timestamp: timeNow(), timestampMs: Date.now() });
+  }
+  return { ...previous, transcript };
+}
+
+export function appendReasoningDelta(previous: PiBootstrap | null, id: string, delta: string) {
+  if (!previous || !delta) return previous;
+  const transcript = [...previous.transcript];
+  const index = transcript.findIndex((item) => item.id === id && item.kind === "reasoning");
+  if (index < 0) return previous;
+  const item = transcript[index];
+  transcript[index] = { ...item, body: `${item.body}${delta}`, status: "running" };
+  return { ...previous, transcript };
+}
+
+export function finishReasoning(previous: PiBootstrap | null, id: string) {
+  if (!previous) return previous;
+  const item = previous.transcript.find((entry) => entry.id === id && entry.kind === "reasoning");
+  if (!item) return previous;
+  if (!item.body.trim()) return { ...previous, transcript: previous.transcript.filter((entry) => entry.id !== id) };
+  return { ...previous, transcript: previous.transcript.map((entry) => entry.id === id ? { ...entry, status: "done" as const } : entry) };
 }
 
 function providerLabel(provider: string) {
@@ -386,61 +431,151 @@ function activityCommand(item: TimelineItem) {
   }
 }
 
-function ActivityItem({ item }: { item: TimelineItem }) {
-  const [open, setOpen] = useState(false);
+function activitySummary(items: TimelineItem[]) {
+  const labels = new Map<string, number>();
+  for (const item of items) {
+    const title = activityTitle(item);
+    labels.set(title, (labels.get(title) ?? 0) + 1);
+  }
+  const forms: Record<string, [string, string]> = {
+    "Ran a command": ["Ran a command", "Ran commands"],
+    "Read a file": ["Read a file", "Read files"],
+    "Edited a file": ["Edited a file", "Edited files"],
+    "Created a file": ["Created a file", "Created files"],
+    "Checked workspace files": ["Checked workspace files", "Checked workspace files"],
+    "Searched the code": ["Searched the code", "Searched the code"],
+    "Checked an external source": ["Checked an external source", "Checked external sources"],
+  };
+  return Array.from(labels, ([title, count], index) => {
+    const label = forms[title]?.[count === 1 ? 0 : 1] ?? title;
+    return index === 0 ? label : `${label[0].toLowerCase()}${label.slice(1)}`;
+  }).join(", ");
+}
+
+function activitySummaryIcon(items: TimelineItem[]) {
+  const titles = items.map(activityTitle);
+  if (titles.some((title) => title.startsWith("Edited") || title.startsWith("Created"))) return <Pencil aria-hidden="true" />;
+  if (titles.some((title) => title.startsWith("Searched") || title.startsWith("Checked an external"))) return <Search aria-hidden="true" />;
+  if (titles.some((title) => title.startsWith("Read") || title.startsWith("Checked workspace"))) return <FileText aria-hidden="true" />;
+  return undefined;
+}
+
+function activityGroupStatus(items: TimelineItem[]): ToolStatus {
+  if (items.some((item) => item.status === "failed")) return "failed";
+  if (items.some((item) => item.status === "running")) return "running";
+  return "completed";
+}
+
+function ActivityDetails({ item, showTitle = false }: { item: TimelineItem; showTitle?: boolean }) {
   const status = timelineToolStatus(item);
-  const title = activityTitle(item);
   const command = activityCommand(item);
   const output = status === "running" && item.body === item.input ? "Running…" : item.body || "No output returned.";
   return (
-    <Tool className={`activity-item ${status}${command ? " shell" : ""}`} open={open} onOpenChange={setOpen} status={status} data-motion="activity-item">
-      <ToolHeader className="activity-item-trigger" title={command ? "Ran command" : title} status={status} />
-      <ToolContent className="activity-output-content">
-        <div className="activity-output-motion">
-          {command ? (
-            <Terminal className="activity-shell" command={command} output={output} status={status} isStreaming={status === "running"} autoScroll={status === "running"} />
-          ) : (
-            <div className="activity-output-card">
-                <div className="activity-output-heading">Details</div>
-                <ToolInput input={item.input} />
-                <ToolOutput output={output} errorText={status === "failed" ? output : undefined} />
-            </div>
-          )}
+    <div className="activity-summary-detail">
+      {showTitle && <div className="activity-summary-detail-title">{activityTitle(item)}</div>}
+      {command ? (
+        <Terminal className="activity-shell" command={command} output={output} status={status} isStreaming={status === "running"} autoScroll={status === "running"} />
+      ) : (
+        <div className="activity-output-card">
+          <div className="activity-output-heading">Details</div>
+          <ToolInput input={item.input} />
+          <ToolOutput output={output} errorText={status === "failed" ? output : undefined} />
         </div>
+      )}
+    </div>
+  );
+}
+
+function ActivityItem({ item }: { item: TimelineItem }) {
+  const [open, setOpen] = useState(false);
+  const status = timelineToolStatus(item);
+  const command = activityCommand(item);
+  return (
+    <Tool className={`activity-item ${status}${command ? " shell" : ""}`} open={open} onOpenChange={setOpen} status={status} data-motion="activity-item">
+      <ToolHeader className="activity-item-trigger" title={activitySummary([item])} status={status} icon={activitySummaryIcon([item])} />
+      <ToolContent className="activity-output-content">
+        <ActivityDetails item={item} />
       </ToolContent>
     </Tool>
   );
 }
 
-function ActivityList({ items }: { items: TimelineItem[] }) {
-  return <div className="activity-list">{items.map((item) => <ActivityItem item={item} key={item.id} />)}</div>;
+function ActivityItemGroup({ items }: { items: TimelineItem[] }) {
+  const [open, setOpen] = useState(false);
+  if (items.length === 1) return <ActivityItem item={items[0]} />;
+  const status = activityGroupStatus(items);
+  return (
+    <Tool className={`activity-item activity-item-group ${status}`} open={open} onOpenChange={setOpen} status={status} data-motion="activity-item-group">
+      <ToolHeader className="activity-item-trigger" title={activitySummary(items)} status={status} icon={activitySummaryIcon(items)} />
+      <ToolContent className="activity-summary-content">
+        {items.map((item) => <ActivityDetails item={item} showTitle key={item.id} />)}
+      </ToolContent>
+    </Tool>
+  );
 }
 
-export function ActivityGroup({ items }: { items: TimelineItem[] }) {
-  const [open, setOpen] = useState(true);
-  const doneCount = items.filter((item) => (item.status ?? "done") === "done").length;
+type ActivityListBlock = { kind: "narrative"; item: TimelineItem } | { kind: "tools"; items: TimelineItem[] };
+
+function groupActivityListItems(items: TimelineItem[]) {
+  const blocks: ActivityListBlock[] = [];
+  for (const item of items) {
+    if (item.kind === "tool" || item.kind === "status") {
+      const last = blocks.at(-1);
+      if (last?.kind === "tools") last.items.push(item);
+      else blocks.push({ kind: "tools", items: [item] });
+    } else {
+      blocks.push({ kind: "narrative", item });
+    }
+  }
+  return blocks;
+}
+
+function ActivityList({ items }: { items: TimelineItem[] }) {
+  const blocks = groupActivityListItems(items);
+  return (
+    <div className="activity-list">
+      {blocks.map((block) => block.kind === "tools"
+        ? <ActivityItemGroup items={block.items} key={`tools-${block.items[0].id}`} />
+        : block.item.kind === "reasoning"
+          ? <ReasoningRow item={block.item} key={block.item.id} />
+          : <div className="activity-progress-message" key={block.item.id}><MarkdownContent body={block.item.body} streaming={block.item.status === "running"} /></div>)}
+    </div>
+  );
+}
+
+export function ActivityGroup({ items, startedAt, endedAt, running = false }: { items: TimelineItem[]; startedAt?: number; endedAt?: number; running?: boolean }) {
   const runningCount = items.filter((item) => item.status === "running").length;
-  const failedCount = items.filter((item) => item.status === "failed").length;
-  const summary = failedCount > 0
-    ? `Attention needed on ${failedCount} of ${items.length} ${items.length === 1 ? "step" : "steps"}`
-    : runningCount > 0
-      ? `${doneCount} of ${items.length} steps completed`
-      : `All ${items.length} ${items.length === 1 ? "step" : "steps"} completed`;
+  const active = running || runningCount > 0;
+  const [open, setOpen] = useState(active);
+  const wasRunning = useRef(active);
+  const fallbackStartedAt = useRef(Date.now());
+  const [clock, setClock] = useState(Date.now());
+  useEffect(() => {
+    if (active) {
+      wasRunning.current = true;
+      setOpen(true);
+    } else if (wasRunning.current) {
+      wasRunning.current = false;
+      setOpen(false);
+    }
+  }, [active]);
+  useEffect(() => {
+    if (!active) return;
+    setClock(Date.now());
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  const start = startedAt ?? items[0]?.timestampMs ?? fallbackStartedAt.current;
+  const finish = active ? clock : endedAt ?? items.at(-1)?.timestampMs ?? clock;
+  const label = `Working for ${formatWorkingDuration(finish - start)}`;
   return (
     <Task className="activity-group" open={open} onOpenChange={setOpen} data-motion="activity-group">
-      <TaskTrigger className="activity-group-trigger" title="Agent activity">
-        <span className="activity-group-glyph" aria-hidden="true"><i /><i /><i /></span>
-        <span className="activity-group-copy">
-          <strong>Agent activity</strong>
-          <span>{summary}</span>
-        </span>
-        <span className="activity-group-toggle">{open ? "Hide details" : "Show details"}</span>
-        <motion.span className="activity-group-chevron" animate={{ rotate: open ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span>
+      <TaskTrigger className="activity-group-trigger" title={label} aria-label={`${label}. ${open ? "Hide" : "Show"} details`}>
+        <strong>{label}</strong>
       </TaskTrigger>
       <TaskContent className="activity-group-content">
-        <div className="activity-list-motion">
-          <ActivityList items={items} />
-        </div>
+        <Separator className="activity-group-divider" />
+        <ActivityList items={items} />
       </TaskContent>
     </Task>
   );
@@ -525,34 +660,44 @@ function ChatMessage({ item, agent }: { item: TimelineItem; agent?: AgentProfile
   );
 }
 
-function AgentWorking({ agent }: { agent?: AgentProfile }) {
-  const name = agent?.name ?? "Assistant";
-  const reducedMotion = useReducedMotion();
+export function ReasoningRow({ item }: { item: TimelineItem }) {
   return (
-    <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={motionTransitions.standard} role="status" aria-label={`${name} is working`} data-motion="agent-working">
-      <Message from="assistant" className="chat-message assistant agent-working">
-        <div className="chat-avatar">{agent ? <AgentAvatar agent={agent} /> : <Avatar className="chat-avatar-inner"><AvatarFallback>AS</AvatarFallback></Avatar>}</div>
-        <MessageContent className="chat-message-main">
-          <div className="chat-message-meta"><strong>{name}</strong><span className="agent-working-label">Working…</span></div>
-          <div className="chat-bubble muted"><div className="agent-working-dots" aria-hidden="true">{[0, 1, 2].map((index) => <motion.span key={index} animate={reducedMotion ? { opacity: 1 } : { opacity: [0.3, 1, 0.3], y: [0, -3, 0] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1, repeat: Infinity, delay: index * 0.12, ease: "easeInOut" }} />)}</div></div>
-        </MessageContent>
-      </Message>
-    </motion.div>
+    <Reasoning className="reasoning-row mb-0" open isStreaming={item.status === "running"}>
+      <ReasoningContent className="activity-narrative-content">{item.body}</ReasoningContent>
+    </Reasoning>
   );
 }
 
-function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?: AgentProfile; responding: boolean }) {
-  const blocks: Array<{ kind: "message"; item: TimelineItem } | { kind: "activity"; items: TimelineItem[] }> = [];
-  for (const item of items) {
-    const activity = item.kind === "tool" || item.kind === "status";
-    const previous = blocks[blocks.length - 1];
-    if (activity && previous?.kind === "activity") previous.items.push(item);
-    else if (activity) blocks.push({ kind: "activity", items: [item] });
-    else blocks.push({ kind: "message", item });
+export type ConversationBlock = { kind: "message"; item: TimelineItem } | { kind: "activity"; items: TimelineItem[] };
+
+export function groupConversationItems(items: TimelineItem[]): ConversationBlock[] {
+  const blocks: ConversationBlock[] = [];
+  let turnItems: TimelineItem[] = [];
+
+  function flushTurn() {
+    if (turnItems.length === 0) return;
+    const response = turnItems.at(-1)?.kind === "assistant" ? turnItems.at(-1) : undefined;
+    const activityItems = response ? turnItems.slice(0, -1) : turnItems;
+    if (activityItems.length > 0) blocks.push({ kind: "activity", items: activityItems });
+    if (response) blocks.push({ kind: "message", item: response });
+    turnItems = [];
   }
-  const latest = items.at(-1);
-  const assistantIsStreaming = latest?.kind === "assistant" && latest.status === "running";
-  const showAgentWorking = responding && !assistantIsStreaming;
+
+  for (const item of items) {
+    if (item.kind === "user") {
+      flushTurn();
+      blocks.push({ kind: "message", item });
+    } else {
+      turnItems.push(item);
+    }
+  }
+  flushTurn();
+  return blocks;
+}
+
+function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?: AgentProfile; responding: boolean }) {
+  const blocks = groupConversationItems(items);
+  const lastActivityIndex = blocks.findLastIndex((block) => block.kind === "activity");
 
   return (
     <div className="conversation-feed">
@@ -562,11 +707,15 @@ function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?
         <Conversation className="conversation-scroll" aria-label="Conversation">
           <ConversationContent className="conversation-blocks">
             <AnimatePresence initial={false}>
-              {blocks.map((block) => {
+              {blocks.map((block, index) => {
                 const messageId = block.kind === "activity" ? `activity-${block.items[0].id}` : block.item.id;
-                return <div className="conversation-item" key={messageId}>{block.kind === "activity" ? <ActivityGroup items={block.items} /> : <ChatMessage item={block.item} agent={agent} />}</div>;
+                if (block.kind === "message") return <div className="conversation-item" key={messageId}><ChatMessage item={block.item} agent={agent} /></div>;
+                const previous = blocks[index - 1];
+                const next = blocks[index + 1];
+                const startedAt = previous?.kind === "message" && previous.item.kind === "user" ? previous.item.timestampMs : block.items[0]?.timestampMs;
+                const endedAt = next?.kind === "message" && next.item.kind === "assistant" ? next.item.timestampMs : undefined;
+                return <div className="conversation-item" key={messageId}><ActivityGroup items={block.items} startedAt={startedAt} endedAt={endedAt} running={responding && index === lastActivityIndex} /></div>;
               })}
-              {showAgentWorking && <div className="conversation-item" key="agent-working"><AgentWorking agent={agent} /></div>}
             </AnimatePresence>
           </ConversationContent>
           <ConversationScrollButton className="jump-latest" size="sm"><ArrowDown /></ConversationScrollButton>
@@ -1235,8 +1384,14 @@ export function App() {
         streamBatcherRef.current?.push(event.delta);
       } else {
         streamBatcherRef.current?.flush();
-        if (event.type === "tool-start") {
-          setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: event.id, kind: "tool", label: `Tool · ${event.name}`, body: event.detail, input: event.detail, status: "running", timestamp: timeNow() }] } : previous);
+        if (event.type === "reasoning-start") {
+          setData((previous) => startReasoning(previous, event.id));
+        } else if (event.type === "reasoning-delta") {
+          setData((previous) => appendReasoningDelta(previous, event.id, event.delta));
+        } else if (event.type === "reasoning-end") {
+          setData((previous) => finishReasoning(previous, event.id));
+        } else if (event.type === "tool-start") {
+          setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: event.id, kind: "tool", label: `Tool · ${event.name}`, body: event.detail, input: event.detail, status: "running", timestamp: timeNow(), timestampMs: Date.now() }] } : previous);
         } else if (event.type === "tool-update") {
           setData((previous) => {
             if (!previous) return previous;
@@ -1286,7 +1441,8 @@ export function App() {
   async function prompt(message: string) {
     setError(undefined);
     setBusy(true);
-    setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: `user-${Date.now()}`, kind: "user", label: "You", body: message, timestamp: timeNow() }] } : previous);
+    const timestampMs = Date.now();
+    setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: `user-${timestampMs}`, kind: "user", label: "You", body: message, timestamp: timeNow(), timestampMs }] } : previous);
     try { await window.piBot.prompt(message); } catch (reason) { setError(readableError(reason)); setBusy(false); }
   }
 
