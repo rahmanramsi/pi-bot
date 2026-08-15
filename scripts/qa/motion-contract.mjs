@@ -46,6 +46,10 @@ requireText("app", /createStreamDeltaBatcher/, "assistant deltas must use the st
 requireText("app", /streaming-caret/, "streaming text must expose its active-generation cue");
 requireText("app", /layout=["']position["']/, "streaming messages must preserve text scale during reflow");
 requireText("messageScroller", /const scrollBehavior = reducedMotion \? ["']auto["'] : ["']smooth["']/, "message scrolling must honor reduced motion");
+checkCount += 1;
+if (/<MessageScrollerItem\b[^>]*\bscrollAnchor\b/.test(sources.app)) {
+  failures.push("conversation items must flow to the bottom instead of being repositioned as scroll anchors");
+}
 requireText("app", /<DropdownMenu>[\s\S]*<DropdownMenuContent/, "workspace tab picker must use the shared DropdownMenu");
 requireText("button", /data-motion=["']button["']/, "shared Button must expose the motion contract");
 requireText("dialog", /from ["']@\/lib\/motion["']/, "shared Dialog must use the motion boundary");

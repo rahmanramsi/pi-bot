@@ -596,9 +596,9 @@ function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?
                 <AnimatePresence initial={false}>
                   {blocks.map((block) => {
                     const messageId = block.kind === "activity" ? `activity-${block.items[0].id}` : block.item.id;
-                    return <MessageScrollerItem key={messageId} messageId={messageId} scrollAnchor>{block.kind === "activity" ? <ActivityGroup items={block.items} /> : <ChatMessage item={block.item} agent={agent} />}</MessageScrollerItem>;
+                    return <MessageScrollerItem key={messageId} messageId={messageId}>{block.kind === "activity" ? <ActivityGroup items={block.items} /> : <ChatMessage item={block.item} agent={agent} />}</MessageScrollerItem>;
                   })}
-                  {showAgentWorking && <MessageScrollerItem messageId="agent-working" scrollAnchor key="agent-working"><AgentWorking agent={agent} /></MessageScrollerItem>}
+                  {showAgentWorking && <MessageScrollerItem messageId="agent-working" key="agent-working"><AgentWorking agent={agent} /></MessageScrollerItem>}
                 </AnimatePresence>
               </MessageScrollerContent>
             </MessageScrollerViewport>
