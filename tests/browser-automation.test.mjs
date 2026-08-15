@@ -31,6 +31,7 @@ class FakeContents extends EventEmitter {
     this.id = id;
     this.executeHandler = executeJavaScript;
     this.executedScripts = [];
+    this.isolatedWorldExecutions = [];
     this.loadedUrls = [];
     this.stopped = false;
     this.destroyed = false;
@@ -39,6 +40,11 @@ class FakeContents extends EventEmitter {
   executeJavaScript(script) {
     this.executedScripts.push(script);
     return this.executeHandler(script);
+  }
+
+  executeJavaScriptInIsolatedWorld(worldId, scripts) {
+    this.isolatedWorldExecutions.push({ worldId, scripts });
+    return this.executeHandler(scripts[0].code);
   }
 
   getType() {
@@ -97,6 +103,11 @@ class DomContents extends FakeContents {
   executeJavaScript(script) {
     this.executedScripts.push(script);
     return Promise.resolve(this.dom.window.eval(script));
+  }
+
+  executeJavaScriptInIsolatedWorld(worldId, scripts) {
+    this.isolatedWorldExecutions.push({ worldId, scripts });
+    return Promise.resolve(this.dom.window.eval(scripts[0].code));
   }
 }
 
@@ -157,7 +168,44 @@ test("routes actions only to the active agent and chat session tab", async () =>
     service.execute({ action: "read", tabId: "browser-a" }, undefined, { agentId: "agent-b", sessionKey: "session-b" }),
     (error) => error instanceof BrowserAutomationError && /not registered/i.test(error.message),
   );
-  assert.equal(contents.executedScripts.length, 1);
+  assert.equal(contents.isolatedWorldExecutions.length, 1);
+});
+
+test("executes page automation in an Electron isolated world", async () => {
+  const scope = { agentId: "agent-a", sessionKey: "session-a" };
+  const service = createBrowserAutomationService();
+  const contents = new FakeContents(45, () => Promise.resolve({ text: "Visible page" }));
+  const partition = browserPartitionForSession(scope.sessionKey);
+  service.attachWebContents(contents, partition);
+  service.activateScope(scope);
+  service.registerTab({ tabId: "browser-a", sessionKey: scope.sessionKey, partition });
+
+  await service.execute({ action: "read", tabId: "browser-a" }, undefined, scope);
+
+  assert.equal(contents.executedScripts.length, 0);
+  assert.equal(contents.isolatedWorldExecutions.length, 1);
+  assert.equal(contents.isolatedWorldExecutions[0].worldId > 0, true);
+  assert.equal(contents.isolatedWorldExecutions[0].scripts[0].worldId, undefined);
+});
+
+test("does not trust a main-world read result that tries to expose cookie data", async () => {
+  const scope = { agentId: "agent-a", sessionKey: "session-a" };
+  const service = createBrowserAutomationService();
+  const contents = new FakeContents(46, () => Promise.resolve({ text: "document.cookie=main-world-secret" }));
+  contents.executeJavaScriptInIsolatedWorld = (_worldId, scripts) => {
+    contents.isolatedWorldExecutions.push({ worldId: _worldId, scripts });
+    return Promise.resolve({ text: "Visible page", url: "https://example.com", elements: [] });
+  };
+  const partition = browserPartitionForSession(scope.sessionKey);
+  service.attachWebContents(contents, partition);
+  service.activateScope(scope);
+  service.registerTab({ tabId: "browser-a", sessionKey: scope.sessionKey, partition });
+
+  const result = await service.execute({ action: "read", tabId: "browser-a" }, undefined, scope);
+
+  assert.equal(result.text, "Visible page");
+  assert.doesNotMatch(JSON.stringify(result), /main-world-secret/);
+  assert.equal(contents.executedScripts.length, 0);
 });
 
 test("routes navigation, click, input, and submit through the visible page", async () => {
@@ -170,12 +218,32 @@ test("routes navigation, click, input, and submit through the visible page", asy
   await service.execute({ action: "submit", tabId: "browser-a", selector: "form#login" }, undefined, scope);
 
   assert.deepEqual(contents.loadedUrls, ["https://example.com/account"]);
-  assert.match(contents.executedScripts[0], /\.click\(\)/);
-  assert.match(contents.executedScripts[1], /input/);
-  assert.match(contents.executedScripts[2], /requestSubmit/);
+  assert.match(contents.isolatedWorldExecutions[0].scripts[0].code, /\.click\(\)/);
+  assert.match(contents.isolatedWorldExecutions[1].scripts[0].code, /input/);
+  assert.match(contents.isolatedWorldExecutions[2].scripts[0].code, /requestSubmit/);
   assert.doesNotMatch(summarizeBrowserToolCall({ action: "type", tabId: "browser-a", selector: "input[name=email]", text: "secret@example.com" }), /secret@example\.com/);
   assert.match(summarizeBrowserToolCall({ action: "type", tabId: "browser-a", selector: "input[name=email]", text: "secret@example.com" }), /input\[name\]/);
   assert.doesNotMatch(summarizeBrowserToolCall({ action: "click", tabId: "browser-a", selector: "input[value='secret']" }), /secret/);
+});
+
+test("returns only a safe URL origin from navigation and page reads", async () => {
+  const scope = { agentId: "agent-a", sessionKey: "session-a" };
+  const service = createBrowserAutomationService();
+  const contents = new DomContents(`<main><button>Visible</button></main>`);
+  contents.dom.reconfigure({ url: "https://example.com/reset/recovery-secret?token=url-secret#fragment" });
+  const partition = browserPartitionForSession(scope.sessionKey);
+  service.attachWebContents(contents, partition);
+  service.activateScope(scope);
+  service.registerTab({ tabId: "browser-a", sessionKey: scope.sessionKey, partition });
+
+  const page = await service.execute({ action: "read", tabId: "browser-a" }, undefined, scope);
+  const navigation = await service.execute({ action: "navigate", tabId: "browser-a", url: "https://example.com/reset/recovery-secret?token=url-secret#fragment" }, undefined, scope);
+  const tool = createBrowserTool(service, scope);
+  const toolResult = await tool.execute("tool-url", { action: "navigate", tabId: "browser-a", url: "https://example.com/reset/recovery-secret?token=url-secret#fragment" });
+
+  assert.equal(page.url, "https://example.com");
+  assert.deepEqual(navigation, { url: "https://example.com" });
+  assert.doesNotMatch(JSON.stringify({ page, navigation, toolResult }), /recovery-secret|url-secret|fragment/);
 });
 
 test("discovers scoped tabs and operates a stable target returned by read", async () => {
@@ -378,7 +446,7 @@ test("queued browser actions reject a target invalidated before guest execution"
   const pending = service.execute({ action: "click", tabId: "browser-a", selector: target }, undefined, scope);
   contents.emit("did-navigate-in-page", {}, "https://example.com/account#changed", true);
   await assert.rejects(pending, (error) => error instanceof BrowserAutomationError && error.code === "stale-target");
-  assert.equal(contents.executedScripts.length, 1);
+  assert.equal(contents.isolatedWorldExecutions.length, 1);
 });
 
 test("a second read replaces the previous page target map", async () => {
@@ -439,6 +507,55 @@ test("rejects an out-of-tree submit control associated with a password form", as
   const page = await service.execute({ action: "read", tabId: "browser-a" }, undefined, scope);
   assert.equal(page.elements.some((element) => element.label === "Sign in"), false);
   await assert.rejects(service.execute({ action: "submit", tabId: "browser-a", selector: "#outside-submit" }, undefined, scope), /Browser submit failed\./i);
+});
+
+test("rejects a password input outside the form when it is associated with that form", async () => {
+  const scope = { agentId: "agent-a", sessionKey: "session-a" };
+  const service = createBrowserAutomationService();
+  const contents = new DomContents(`<form id="login"><button id="submit" type="submit">Sign in</button></form><input id="password" form="login" type="password">`);
+  service.attachWebContents(contents, browserPartitionForSession(scope.sessionKey));
+  service.activateScope(scope);
+  service.registerTab({ tabId: "browser-a", sessionKey: scope.sessionKey, partition: browserPartitionForSession(scope.sessionKey) });
+
+  const page = await service.execute({ action: "read", tabId: "browser-a" }, undefined, scope);
+
+  assert.equal(page.elements.some((element) => element.label === "Sign in"), false);
+  await assert.rejects(service.execute({ action: "submit", tabId: "browser-a", selector: "#submit" }, undefined, scope), /Browser submit failed\./i);
+});
+
+test("rejects controls hidden by document-level opacity", async () => {
+  const scope = { agentId: "agent-a", sessionKey: "session-a" };
+  const service = createBrowserAutomationService();
+  const contents = new DomContents(`<html style="opacity:0"><body><button id="hidden-page">Hidden page</button></body></html>`);
+  service.attachWebContents(contents, browserPartitionForSession(scope.sessionKey));
+  service.activateScope(scope);
+  service.registerTab({ tabId: "browser-a", sessionKey: scope.sessionKey, partition: browserPartitionForSession(scope.sessionKey) });
+
+  const page = await service.execute({ action: "read", tabId: "browser-a" }, undefined, scope);
+
+  assert.equal(page.elements.some((element) => element.label === "Hidden page"), false);
+  await assert.rejects(service.execute({ action: "click", tabId: "browser-a", selector: "#hidden-page" }, undefined, scope), /Browser click failed\./i);
+});
+
+test("does not expose or operate ordinary authentication controls", async () => {
+  const scope = { agentId: "agent-a", sessionKey: "session-a" };
+  const service = createBrowserAutomationService();
+  const contents = new DomContents(`<main><button id="google">Sign in with Google</button><button id="passkey" aria-label="Use a passkey">Continue</button><a id="oauth" href="/oauth/authorize">Authorize with provider</a><input id="email" name="email" autocomplete="username" value="person@example.com"><button id="safe">Save</button></main>`);
+  service.attachWebContents(contents, browserPartitionForSession(scope.sessionKey));
+  service.activateScope(scope);
+  service.registerTab({ tabId: "browser-a", sessionKey: scope.sessionKey, partition: browserPartitionForSession(scope.sessionKey) });
+
+  const page = await service.execute({ action: "read", tabId: "browser-a" }, undefined, scope);
+
+  assert.equal(page.elements.some((element) => element.label === "Sign in with Google"), false);
+  assert.equal(page.elements.some((element) => element.label === "Continue"), false);
+  assert.equal(page.elements.some((element) => element.label === "Authorize with provider"), false);
+  assert.equal(page.elements.some((element) => element.name === "email"), false);
+  assert.equal(page.elements.some((element) => element.label === "Save"), true);
+  await assert.rejects(service.execute({ action: "click", tabId: "browser-a", selector: "#google" }, undefined, scope), /Browser click failed\./i);
+  await assert.rejects(service.execute({ action: "click", tabId: "browser-a", selector: "#passkey" }, undefined, scope), /Browser click failed\./i);
+  await assert.rejects(service.execute({ action: "click", tabId: "browser-a", selector: "#oauth" }, undefined, scope), /Browser click failed\./i);
+  await assert.rejects(service.execute({ action: "type", tabId: "browser-a", selector: "#email", text: "person@example.com" }, undefined, scope), /Browser type failed\./i);
 });
 
 test("rejects an action target covered by an overlay at its center point", async () => {
@@ -544,6 +661,36 @@ test("unregistering a closed or switched tab aborts its pending action", async (
   assert.equal(contents.stopped, true);
 });
 
+test("the browser tool throws stopped and stale actions for Pi to record as errors", async () => {
+  const scope = { agentId: "agent-a", sessionKey: "session-a" };
+  const { service } = setup(scope);
+  const activity = [];
+  const tool = createBrowserTool(service, scope, (event) => activity.push(event));
+  const stopped = new AbortController();
+  stopped.abort();
+
+  await assert.rejects(
+    tool.execute("tool-stopped", { action: "read", tabId: "browser-a" }, stopped.signal),
+    (error) => error instanceof BrowserAutomationError && error.code === "stopped" && !Object.hasOwn(error, "isError"),
+  );
+  assert.equal(activity.at(-1)?.failed, true);
+
+  const contents = new DomContents(`<main><button id="save">Save</button></main>`);
+  const serviceWithDom = createBrowserAutomationService();
+  serviceWithDom.attachWebContents(contents, browserPartitionForSession(scope.sessionKey));
+  serviceWithDom.activateScope(scope);
+  serviceWithDom.registerTab({ tabId: "browser-a", sessionKey: scope.sessionKey, partition: browserPartitionForSession(scope.sessionKey) });
+  const domTool = createBrowserTool(serviceWithDom, scope);
+  const page = await serviceWithDom.execute({ action: "read", tabId: "browser-a" }, undefined, scope);
+  const target = page.elements.find((element) => element.label === "Save").target;
+  contents.emit("did-navigate-in-page", {}, "https://example.com/changed", true);
+
+  await assert.rejects(
+    domTool.execute("tool-stale", { action: "click", tabId: "browser-a", selector: target }),
+    (error) => error instanceof BrowserAutomationError && error.code === "stale-target" && !Object.hasOwn(error, "isError"),
+  );
+});
+
 test("the browser tool is narrow and never includes typed values in activity details", async () => {
   const { service } = setup();
   const activity = [];
@@ -560,7 +707,8 @@ test("the browser tool is narrow and never includes typed values in activity det
   assert.doesNotMatch(result.content[0].text, /do-not-log/);
   assert.doesNotMatch(JSON.stringify(activity), /do-not-log/);
   const navigationActivity = summarizeBrowserToolCall({ action: "navigate", tabId: "browser-a", url: "https://example.com/account?token=url-secret#fragment" });
-  assert.match(navigationActivity, /https:\/\/example\.com\/account/);
+  assert.match(navigationActivity, /https:\/\/example\.com/);
+  assert.doesNotMatch(navigationActivity, /\/account/);
   assert.doesNotMatch(navigationActivity, /url-secret|fragment/);
 });
 
@@ -587,10 +735,10 @@ test("page failures return stable errors without echoing supplied text", async (
   const tool = createBrowserTool(service, { agentId: "agent-a", sessionKey: "session-a" }, (event) => activity.push(event));
   const secret = "page-echoed-secret-123";
   contents.executeHandler = () => Promise.reject(new Error(`The type target is not editable: ${secret}`));
-  const result = await tool.execute("tool-2", { action: "type", tabId: "browser-a", selector: "#button", text: secret }, undefined);
-  assert.equal(result.isError, true);
-  assert.equal(result.details.code, "action-failed");
-  assert.doesNotMatch(result.content[0].text, /page-echoed-secret-123/);
+  await assert.rejects(
+    tool.execute("tool-2", { action: "type", tabId: "browser-a", selector: "#button", text: secret }, undefined),
+    (error) => error instanceof BrowserAutomationError && error.code === "action-failed" && !Object.hasOwn(error, "isError") && !error.message.includes(secret),
+  );
   assert.doesNotMatch(JSON.stringify(activity), /page-echoed-secret-123/);
 });
 
