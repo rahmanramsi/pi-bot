@@ -2,6 +2,7 @@ import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
+import { motion, motionSprings } from "@/lib/motion";
 
 const buttonVariants = cva(
   "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md text-[length:var(--text-control)] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&>svg]:pointer-events-none [&>svg]:size-4 [&>svg]:shrink-0",
@@ -37,9 +38,49 @@ export interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({
+    className,
+    variant,
+    size,
+    asChild = false,
+    disabled,
+    onAnimationStart,
+    onAnimationEnd,
+    onAnimationIteration,
+    onDrag,
+    onDragStart,
+    onDragEnd,
+    ...props
+  }, ref) => {
     const Comp = asChild ? Slot : "button";
-    return <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />;
+    if (asChild) {
+      return (
+        <Comp
+          className={cn(buttonVariants({ variant, size, className }))}
+          ref={ref}
+          {...props}
+          disabled={disabled}
+          onAnimationStart={onAnimationStart}
+          onAnimationEnd={onAnimationEnd}
+          onAnimationIteration={onAnimationIteration}
+          onDrag={onDrag}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+        />
+      );
+    }
+    return (
+      <motion.button
+        className={cn(buttonVariants({ variant, size, className }))}
+        ref={ref}
+        disabled={disabled}
+        whileHover={disabled ? undefined : { y: -1 }}
+        whileTap={disabled ? undefined : { scale: 0.97, y: 0 }}
+        transition={motionSprings.press}
+        data-motion="button"
+        {...props}
+      />
+    );
   },
 );
 Button.displayName = "Button";
