@@ -96,6 +96,20 @@ export type WorkspaceFile = {
   kind: "file" | "folder";
 };
 
+export type WorkspacePanelTab = {
+  id: string;
+  kind: "files" | "browser";
+  url?: string;
+  title?: string;
+};
+
+export type WorkspacePanelPreferences = {
+  tabs: WorkspacePanelTab[];
+  activeTabId: string | null;
+  open: boolean;
+  width: number;
+};
+
 export type PiSetup = {
   required: boolean;
   canContinue: boolean;
@@ -160,6 +174,8 @@ export type PiBotBridge = {
   importPiAuth: (accepted?: boolean) => Promise<PiBootstrap>;
   respondAuth: (promptId: string, value: string) => Promise<void>;
   cancelAuth: (promptId: string) => Promise<void>;
+  getWorkspacePreferences: (key: string) => Promise<WorkspacePanelPreferences | null>;
+  saveWorkspacePreferences: (key: string, preferences: WorkspacePanelPreferences) => Promise<WorkspacePanelPreferences>;
   listWorkspaceFiles: () => Promise<WorkspaceFile[]>;
   openWorkspaceFile: (path: string) => Promise<void>;
   revealWorkspaceFile: (path: string) => Promise<void>;

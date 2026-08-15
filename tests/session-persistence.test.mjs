@@ -89,3 +89,56 @@ test("reads only known legacy session paths from pre-v2 settings", () => {
   assert.deepEqual(legacySessionPaths({ agentSessions: { planner: "/pi/current-session.jsonl" } }), ["/pi/current-session.jsonl"]);
   assert.deepEqual(legacySessionPaths({ schemaVersion: 2, sessionRecords: {} }), []);
 });
+
+test("keeps a malformed pending copy for a later migration retry", () => withTempDir((directory) => {
+  const sessionFile = path.join(directory, "sessions", "malformed.jsonl");
+  mkdirSync(path.dirname(sessionFile), { recursive: true });
+  writeFileSync(pendingSessionPath(sessionFile), `{"type":"session","id":"broken"}\nnot-json\n`);
+
+  assert.deepEqual(recoverPendingSessions(path.join(directory, "sessions")), { recovered: 0, discarded: 0 });
+  assert.equal(existsSync(pendingSessionPath(sessionFile)), true);
+  assert.equal(existsSync(sessionFile), false);
+}));
+
+test("does not replace a valid session with a larger different-id pending copy", () => withTempDir((directory) => {
+  const sessionFile = path.join(directory, "sessions", "original.jsonl");
+  const originalEntries = [
+    { type: "session", version: 3, id: "original", timestamp: "2026-08-15T00:00:00.000Z", cwd: directory },
+    { type: "message", id: "original-message", parentId: null, timestamp: "2026-08-15T00:00:01.000Z", message: { role: "user", content: "Original", timestamp: 1786752001000 } },
+  ];
+  const pendingEntries = [
+    { type: "session", version: 3, id: "different", timestamp: "2026-08-15T00:00:00.000Z", cwd: directory },
+    { type: "message", timestamp: "2026-08-15T00:00:01.000Z", message: { role: "user", content: "Different", timestamp: 1786752001000 } },
+    { type: "tool_result", id: "different-tool", parentId: "missing-parent", timestamp: "2026-08-15T00:00:02.000Z" },
+  ];
+  mkdirSync(path.dirname(sessionFile), { recursive: true });
+  writeFileSync(sessionFile, `${originalEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+  writeFileSync(pendingSessionPath(sessionFile), `${pendingEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+
+  const result = recoverPendingSessions(path.join(directory, "sessions"));
+
+  assert.deepEqual(result, { recovered: 0, discarded: 0 });
+  assert.equal(JSON.parse(readFileSync(sessionFile, "utf8").split("\n")[0]).id, "original");
+  assert.equal(existsSync(pendingSessionPath(sessionFile)), true);
+}));
+
+test("keeps the original when a same-session pending continuation has an orphan parent", () => withTempDir((directory) => {
+  const sessionFile = path.join(directory, "sessions", "orphan-continuation.jsonl");
+  const originalEntries = [
+    { type: "session", version: 3, id: "same-session", timestamp: "2026-08-15T00:00:00.000Z", cwd: directory },
+    { type: "message", id: "original-message", parentId: null, timestamp: "2026-08-15T00:00:01.000Z", message: { role: "user", content: "Original", timestamp: 1786752001000 } },
+  ];
+  const pendingEntries = [
+    ...originalEntries,
+    { type: "message", id: "orphan-message", parentId: "missing-parent", timestamp: "2026-08-15T00:00:02.000Z", message: { role: "assistant", content: "Corrupt", timestamp: 1786752002000 } },
+  ];
+  mkdirSync(path.dirname(sessionFile), { recursive: true });
+  writeFileSync(sessionFile, `${originalEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+  writeFileSync(pendingSessionPath(sessionFile), `${pendingEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+
+  const result = recoverPendingSessions(path.join(directory, "sessions"));
+
+  assert.deepEqual(result, { recovered: 0, discarded: 0 });
+  assert.deepEqual(readFileSync(sessionFile, "utf8").trim().split("\n").map(JSON.parse), originalEntries);
+  assert.equal(existsSync(pendingSessionPath(sessionFile)), true);
+}));
