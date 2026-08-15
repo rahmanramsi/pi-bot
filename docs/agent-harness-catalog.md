@@ -866,7 +866,7 @@ Setiap entri mencatat:
 - [electron/preload.cjs](../electron/preload.cjs) exposes a narrow IPC bridge; the BrowserWindow uses contextIsolation true and nodeIntegration false.
 - The current renderer has agent selection, sessions/history, model selection, thinking level, streaming events, tool events, stop, provider authentication, and settings surfaces.
 - [docs/mvp-spec.md](mvp-spec.md) now describes the shipped prototype boundary, while [docs/next-stage-spec.md](next-stage-spec.md) separates planned permission/testing work from implemented behavior.
-- [docs/design-system.md](design-system.md) documents the permanent agent rail, collapsible session sidebar, conversation/activity hierarchy, compact autosizing composer, themes, and semantic type scale implemented by the renderer.
+- [docs/design-system.md](design-system.md) documents the combined collapsible agent/session sidebar, conversation/activity hierarchy, compact autosizing composer, themes, and semantic type scale implemented by the renderer.
 
 ### Recommended fit lenses
 

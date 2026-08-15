@@ -26,7 +26,7 @@ Select an agent from the permanent rail, open or create an agent-scoped chat, se
 - Streaming Markdown responses and Stop.
 - Inline, collapsible Agent activity with the executed command, full command/output, and status.
 - Compact composer that autosizes vertically for longer messages.
-- Always-visible agent rail and collapsible session sidebar; no permanent right-side Context panel.
+- One collapsible left sidebar containing agent selection and active-agent session history; no permanent right-side Context panel.
 - Light and dark themes using shared design tokens.
 - Visible loading, setup, unauthenticated, working, empty, error, and disabled states.
 
@@ -46,7 +46,7 @@ Select an agent from the permanent rail, open or create an agent-scoped chat, se
 - The app persists agent profiles and current-session mappings in Electron user data.
 - App-owned workspaces are created below Electron user data with empty `AGENTS.md` and `.agents/skills/` paths.
 - Switching an agent to an external workspace starts a new session and asks whether workspace skills may load.
-- Archiving hides an agent from the rail. Restoring makes it selectable again.
+- Archiving hides an agent from the combined sidebar. Restoring makes it selectable again.
 - Deleting an agent removes its sessions. Its app-owned workspace is deleted only after separate confirmation; external folders are never deleted.
 - Provider credentials are global. Agent default-model choices remain agent-specific.
 - The light/dark preference is renderer-local under `pi-bot-theme`.
@@ -54,8 +54,7 @@ Select an agent from the permanent rail, open or create an agent-scoped chat, se
 
 ## Interface contract
 
-- Left rail: permanent agent identity and global actions.
-- Session sidebar: collapsible history scoped to the active agent.
+- Left app sidebar: agent identity, global actions, and collapsible history scoped to the active agent.
 - Main area: either chat or App Settings.
 - Chat: user messages on the right, agent messages on the left, and tool/status events grouped as activity.
 - Agent identity: the same initials and color appear in the rail, settings, messages, and working state.
@@ -86,7 +85,7 @@ This Public Alpha boundary is not suitable for untrusted autonomous execution.
 6. Command activity exposes both the executed command and its output/status.
 7. Stop ends streaming without leaving the composer busy.
 8. The composer stays compact for short text and grows downward for multiline input.
-9. The agent rail remains visible; only the session sidebar collapses.
+9. The combined left sidebar collapses and reopens from the control beside the native window controls.
 10. Light mode uses a white chat canvas and both themes remain readable.
 11. Closing and reopening the app restores the active agent and available session history.
 12. Destructive session/agent operations require confirmation and external workspaces are preserved.

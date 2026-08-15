@@ -9,7 +9,7 @@ The design system keeps agent navigation, sessions, chat, activity, settings, se
 Source of truth:
 
 - [`src/styles.css`](../src/styles.css) for color, typography, spacing, surfaces, layout, and state styling.
-- [`src/components/ui/`](../src/components/ui) for Button, Input, Textarea, Select, Badge, Dialog, and Tooltip primitives.
+- [`src/components/ui/`](../src/components/ui) for the shadcn primitives: Button, Input, Textarea, Select, Badge, Dialog, Sidebar, Message/Bubble, MessageScroller, Tabs, DropdownMenu, Empty, Progress, Alert, Avatar, and Tooltip.
 
 ## Visual hierarchy
 
@@ -40,17 +40,18 @@ Body text and controls deliberately share the same base size. A button differs t
 
 ## Layout contract
 
-- Agent rail: always visible at `72px`; it is not collapsible.
-- Session sidebar: `280px` normally and `252px` on narrower supported windows; it may be collapsed.
+- Combined left app sidebar: `352px` normally and `324px` on narrower supported windows; it contains a `72px` agent rail and a `280px` session panel (`252px` at the narrower width).
+- App sidebar: collapsible as one surface. Inside that surface, the agent list stays in the left column and the active agent's sessions stay in the right column. The Pi Bot logo sits at the top of the agent rail; create-agent, contextual theme, and settings actions are stacked vertically at the bottom in that order. The sidebar show/hide control sits beside the native window controls in the titlebar area.
+- Section topbars: the agent rail, session panel, main chat/settings surface, and optional workspace panel share a `46px` topbar. These bars reserve stable space for present and future controls; content titles and context stay below them.
 - Main workspace: fills the remaining width and shows either chat or App Settings.
 - No permanent right-side Context panel.
 - Minimum supported window: `1000 × 700`.
 
-The active agent avatar must use the same initials and deterministic color in the rail, settings, chat messages, and working state.
+The active agent avatar must use the same initials and deterministic color in the combined sidebar, settings, chat messages, and working state.
 
 ## Themes and surfaces
 
-Dark and light themes use the same semantic color roles: background, foreground, card, muted, accent, destructive, border, input, ring, shell, rail, sidebar, and raised surface.
+Dark and light themes use the same semantic color roles: background, foreground, card, muted, accent, destructive, border, input, ring, shell, sidebar, and raised surface.
 
 Theme rules:
 
@@ -67,6 +68,7 @@ The selected theme is stored in local storage under `pi-bot-theme`.
 ### Buttons and form controls
 
 - Use shared primitives from `src/components/ui` instead of styling a new button/input locally.
+- Keep product-specific CSS for layout and visual identity; use the shadcn primitive for interaction, focus, keyboard, and overlay behavior.
 - Default body and control text are both 14px.
 - Primary actions use the primary surface; secondary actions use outline or ghost; permanent deletion uses destructive.
 - Disabled, hover, pressed, and focus-visible states must remain distinguishable.
@@ -74,8 +76,9 @@ The selected theme is stored in local storage under `pi-bot-theme`.
 ### Conversation
 
 - User messages are right-aligned and agent messages are left-aligned.
-- Agent responses use the same avatar identity as the active agent rail item.
+- Agent responses use the same avatar identity as the active agent item in the combined sidebar.
 - Markdown keeps a comfortable line height and a constrained reading width.
+- `Message` and `Bubble` own message alignment/content structure; `MessageScroller` owns follow-latest behavior and the jump-to-latest control.
 - Streaming updates one assistant message instead of creating one row per delta.
 
 ### Agent activity
@@ -100,7 +103,7 @@ The selected theme is stored in local storage under `pi-bot-theme`.
 - Interactive elements expose accessible names.
 - Keyboard focus uses a visible outline.
 - Reduced-motion preferences disable nonessential working-state animation.
-- Disclosure rows use native `details`/`summary` behavior where appropriate.
+- Disclosure rows use the shared Accordion, DropdownMenu, and Dialog primitives for keyboard and focus behavior.
 
 ## Review checklist
 
@@ -112,4 +115,3 @@ The selected theme is stored in local storage under `pi-bot-theme`.
 - Does the composer remain compact with short text and grow with long text?
 - Do light and dark modes preserve hierarchy and contrast?
 - Can the UI be understood at the minimum supported window size?
-

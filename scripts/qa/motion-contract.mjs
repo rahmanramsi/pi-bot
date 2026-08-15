@@ -12,6 +12,7 @@ const files = {
   accordion: "src/components/ui/accordion.tsx",
   button: "src/components/ui/button.tsx",
   dialog: "src/components/ui/dialog.tsx",
+  messageScroller: "src/components/ui/message-scroller.tsx",
   select: "src/components/ui/select.tsx",
   styles: "src/styles.css",
 };
@@ -44,8 +45,8 @@ requireText("app", /whileTap=/, "actionable interaction surfaces need press feed
 requireText("app", /createStreamDeltaBatcher/, "assistant deltas must use the stream batcher");
 requireText("app", /streaming-caret/, "streaming text must expose its active-generation cue");
 requireText("app", /layout=["']position["']/, "streaming messages must preserve text scale during reflow");
-requireText("app", /behavior:\s*reducedMotion\s*\?\s*["']auto["']\s*:\s*["']smooth["']/, "interaction-triggered scrolling must honor reduced motion");
-requireText("app", /event\.key !== ["']Escape["'][\s\S]*setPickerOpen\(false\)/, "workspace tab picker must close with Escape");
+requireText("messageScroller", /const scrollBehavior = reducedMotion \? ["']auto["'] : ["']smooth["']/, "message scrolling must honor reduced motion");
+requireText("app", /<DropdownMenu>[\s\S]*<DropdownMenuContent/, "workspace tab picker must use the shared DropdownMenu");
 requireText("button", /data-motion=["']button["']/, "shared Button must expose the motion contract");
 requireText("dialog", /from ["']@\/lib\/motion["']/, "shared Dialog must use the motion boundary");
 requireText("dialog", /data-motion=["']dialog-content["']/, "shared Dialog content must expose the motion contract");

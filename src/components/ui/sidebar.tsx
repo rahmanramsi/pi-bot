@@ -3,7 +3,7 @@ import { Slot } from "@radix-ui/react-slot";
 import { PanelLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type SidebarContextValue = {
   open: boolean;
@@ -40,16 +40,18 @@ const SidebarProvider = React.forwardRef<HTMLDivElement, SidebarProviderProps>(
     const Comp = asChild ? Slot : "div";
 
     return (
-      <SidebarContext.Provider value={{ open, setOpen, state, toggleSidebar: () => setOpen(!open) }}>
-        <Comp
-          ref={ref}
-          data-slot="sidebar-provider"
-          data-sidebar-state={state}
-          className={cn("group/sidebar-wrapper", className)}
-          style={style}
-          {...props}
-        />
-      </SidebarContext.Provider>
+      <TooltipProvider>
+        <SidebarContext.Provider value={{ open, setOpen, state, toggleSidebar: () => setOpen(!open) }}>
+          <Comp
+            ref={ref}
+            data-slot="sidebar-provider"
+            data-sidebar-state={state}
+            className={cn("group/sidebar-wrapper", className)}
+            style={style}
+            {...props}
+          />
+        </SidebarContext.Provider>
+      </TooltipProvider>
     );
   },
 );
@@ -146,7 +148,7 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"section">) 
   return <section data-slot="sidebar-inset" className={cn("sidebar-inset", className)} {...props} />;
 }
 
-function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
+function SidebarTrigger({ className, onClick, children, ...props }: React.ComponentProps<typeof Button>) {
   const { toggleSidebar } = useSidebar();
   return (
     <Button
@@ -161,7 +163,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       }}
       {...props}
     >
-      <PanelLeft />
+      {children ?? <PanelLeft />}
       <span className="sr-only">Toggle agent sidebar</span>
     </Button>
   );

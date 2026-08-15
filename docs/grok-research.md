@@ -71,7 +71,7 @@ Consequential actions can stop for scoped approval. Attention, errors, and recov
 - Pi is created with `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`.
 - Extensions, implicit context files, prompt templates, and Pi runtime themes are disabled.
 - [`electron/preload.cjs`](../electron/preload.cjs) exposes the narrow `window.piBot` IPC API; the renderer has no direct Node access.
-- [`src/App.tsx`](../src/App.tsx) provides the agent rail, collapsible session sidebar, chat, activity, composer, settings, provider setup, and provider prompt cancellation.
+- [`src/App.tsx`](../src/App.tsx) provides the combined collapsible agent/session sidebar, chat, activity, composer, settings, provider setup, and provider prompt cancellation.
 - [`src/styles.css`](../src/styles.css) provides light/dark themes and semantic design tokens documented in [design-system.md](design-system.md).
 - Agent/session data remains local under Electron user data. There is no cloud account or sync layer.
 
@@ -139,4 +139,3 @@ Each item changes persistence, credentials, cancellation, auditability, or the t
 - [Grok Bot FAQ](https://docs.x.ai/grok-bot/faq)
 - [Introducing Grok Build](https://x.ai/news/grok-build-cli)
 - [Grok Build](https://x.ai/cli)
-

@@ -24,6 +24,7 @@ import {
   MoreHorizontal,
   Moon,
   PanelLeftClose,
+  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Plus,
@@ -40,10 +41,21 @@ import {
   X,
 } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { Message, MessageAvatar, MessageContent, MessageFooter, MessageHeader } from "@/components/ui/message";
+import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from "@/components/ui/message-scroller";
+import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sidebar, SidebarContent, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AnimatePresence, motion, motionSprings, motionTimings, motionTransitions, useReducedMotion } from "./lib/motion";
 import { createStreamDeltaBatcher, type StreamDeltaBatcher } from "./lib/streaming";
@@ -322,7 +334,7 @@ function Composer({
           <span className="composer-divider" aria-hidden="true">•</span>
           <div className="composer-context" title={`${formatTokenCount(config.context.tokens)} of ${formatTokenCount(config.context.contextWindow)} tokens used`}>
             <span>{contextLabel} context used</span>
-            <div className="context-meter" role="progressbar" aria-label="Context usage" aria-valuemin={0} aria-valuemax={100} aria-valuenow={contextPercent}><span style={{ width: `${contextPercent}%` }} /></div>
+            <Progress className="context-meter" value={contextPercent} aria-label="Context usage" />
           </div>
         </div>
         <div className="composer-actions">
@@ -515,17 +527,25 @@ function ChatMessage({ item, agent }: { item: TimelineItem; agent?: AgentProfile
   const streaming = !isUser && item.status === "running";
   const reducedMotion = useReducedMotion();
   return (
-    <motion.article className={`chat-message ${isUser ? "user" : "assistant"}`} layout="position" initial={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
-      {isUser ? <div className="chat-avatar" aria-hidden="true">YO</div> : agent ? <AgentAvatar agent={agent} className="chat-avatar" /> : <div className="chat-avatar" aria-hidden="true">AS</div>}
-      <div className="chat-message-main">
-        <div className="chat-message-meta">
-          <strong>{isUser ? "You" : agent?.name ?? "Assistant"}</strong>
-          <time>{item.timestamp}</time>
-          {item.status === "failed" && <Badge variant="destructive">Failed</Badge>}
-        </div>
-        <div className="chat-bubble"><div className="chat-body"><MarkdownContent body={item.body || "Thinking…"} streaming={streaming} /></div></div>
-      </div>
-    </motion.article>
+    <motion.div layout="position" initial={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
+      <Message align={isUser ? "end" : "start"} className={`chat-message ${isUser ? "user" : "assistant"}`}>
+        <MessageAvatar className="chat-avatar">
+          {isUser ? <Avatar className="chat-avatar-inner"><AvatarFallback>YO</AvatarFallback></Avatar> : agent ? <AgentAvatar agent={agent} /> : <Avatar className="chat-avatar-inner"><AvatarFallback>AS</AvatarFallback></Avatar>}
+        </MessageAvatar>
+        <MessageContent className="chat-message-main">
+          <MessageHeader className="chat-message-meta">
+            <strong>{isUser ? "You" : agent?.name ?? "Assistant"}</strong>
+            {item.status === "failed" && <Badge variant="destructive">Failed</Badge>}
+          </MessageHeader>
+          <Bubble variant={isUser ? "muted" : "ghost"} align={isUser ? "end" : "start"} className="chat-bubble">
+            <BubbleContent className={`chat-body ${isUser ? "user" : "assistant"}`}>
+              <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} />
+            </BubbleContent>
+          </Bubble>
+          <MessageFooter className="chat-message-footer"><time>{item.timestamp}</time></MessageFooter>
+        </MessageContent>
+      </Message>
+    </motion.div>
   );
 }
 
@@ -533,20 +553,19 @@ function AgentWorking({ agent }: { agent?: AgentProfile }) {
   const name = agent?.name ?? "Assistant";
   const reducedMotion = useReducedMotion();
   return (
-    <motion.article className="chat-message assistant agent-working" layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={motionTransitions.standard} role="status" aria-label={`${name} is working`} data-motion="agent-working">
-      {agent ? <AgentAvatar agent={agent} className="chat-avatar" /> : <div className="chat-avatar" aria-hidden="true">AS</div>}
-      <div className="chat-message-main">
-        <div className="chat-message-meta"><strong>{name}</strong><span className="agent-working-label">Working…</span></div>
-        <div className="chat-bubble"><div className="agent-working-dots" aria-hidden="true">{[0, 1, 2].map((index) => <motion.span key={index} animate={reducedMotion ? { opacity: 1 } : { opacity: [0.3, 1, 0.3], y: [0, -3, 0] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1, repeat: Infinity, delay: index * 0.12, ease: "easeInOut" }} />)}</div></div>
-      </div>
-    </motion.article>
+    <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={motionTransitions.standard} role="status" aria-label={`${name} is working`} data-motion="agent-working">
+      <Message className="chat-message assistant agent-working">
+        <MessageAvatar className="chat-avatar">{agent ? <AgentAvatar agent={agent} /> : <Avatar className="chat-avatar-inner"><AvatarFallback>AS</AvatarFallback></Avatar>}</MessageAvatar>
+        <MessageContent className="chat-message-main">
+          <MessageHeader className="chat-message-meta"><strong>{name}</strong><span className="agent-working-label">Working…</span></MessageHeader>
+          <Bubble variant="muted" className="chat-bubble"><BubbleContent className="agent-working-dots" aria-hidden="true">{[0, 1, 2].map((index) => <motion.span key={index} animate={reducedMotion ? { opacity: 1 } : { opacity: [0.3, 1, 0.3], y: [0, -3, 0] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1, repeat: Infinity, delay: index * 0.12, ease: "easeInOut" }} />)}</BubbleContent></Bubble>
+        </MessageContent>
+      </Message>
+    </motion.div>
   );
 }
 
 function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?: AgentProfile; responding: boolean }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const reducedMotion = useReducedMotion();
-  const [following, setFollowing] = useState(true);
   const blocks: Array<{ kind: "message"; item: TimelineItem } | { kind: "activity"; items: TimelineItem[] }> = [];
   for (const item of items) {
     const activity = item.kind === "tool" || item.kind === "status";
@@ -559,52 +578,43 @@ function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?
   const assistantIsStreaming = latest?.kind === "assistant" && latest.status === "running";
   const showAgentWorking = responding && !assistantIsStreaming;
 
-  useEffect(() => {
-    if (following && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [items.length, items.at(-1)?.body, following, showAgentWorking]);
-
-  function handleScroll() {
-    const element = scrollRef.current;
-    if (!element) return;
-    setFollowing(element.scrollHeight - element.scrollTop - element.clientHeight < 80);
-  }
-
-  function jumpToLatest() {
-    if (!scrollRef.current) return;
-    scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: reducedMotion ? "auto" : "smooth" });
-    setFollowing(true);
-  }
-
   return (
     <div className="conversation-feed">
       {items.length === 0 ? (
-        <div className="empty-conversation">
-          <div className="empty-orbit"><Bot /></div>
-          <h2>Start a conversation with {agent?.name ?? "Assistant"}</h2>
-          <p>Ask a question or describe what you want to work on.</p>
-        </div>
+        <Empty className="empty-conversation">
+          <EmptyHeader>
+            <EmptyMedia variant="icon" className="empty-orbit"><Bot /></EmptyMedia>
+            <EmptyTitle>Start a conversation with {agent?.name ?? "Assistant"}</EmptyTitle>
+            <EmptyDescription>Ask a question or describe what you want to work on.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : (
-        <div className="conversation-scroll" ref={scrollRef} onScroll={handleScroll} role="log" aria-label="Conversation">
-          <div className="conversation-blocks">
-            <AnimatePresence initial={false}>
-              {blocks.map((block) => block.kind === "activity"
-                ? <ActivityGroup items={block.items} key={`activity-${block.items[0].id}`} />
-                : <ChatMessage item={block.item} agent={agent} key={block.item.id} />)}
-              {showAgentWorking && <AgentWorking agent={agent} key="agent-working" />}
-            </AnimatePresence>
-          </div>
-        </div>
+        <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+          <MessageScroller className="conversation-scroll">
+            <MessageScrollerViewport aria-label="Conversation">
+              <MessageScrollerContent className="conversation-blocks">
+                <AnimatePresence initial={false}>
+                  {blocks.map((block) => {
+                    const messageId = block.kind === "activity" ? `activity-${block.items[0].id}` : block.item.id;
+                    return <MessageScrollerItem key={messageId} messageId={messageId} scrollAnchor>{block.kind === "activity" ? <ActivityGroup items={block.items} /> : <ChatMessage item={block.item} agent={agent} />}</MessageScrollerItem>;
+                  })}
+                  {showAgentWorking && <MessageScrollerItem messageId="agent-working" scrollAnchor key="agent-working"><AgentWorking agent={agent} /></MessageScrollerItem>}
+                </AnimatePresence>
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton className="jump-latest" direction="end" variant="outline" size="sm"><ArrowDown /></MessageScrollerButton>
+          </MessageScroller>
+        </MessageScrollerProvider>
       )}
-      {!following && items.length > 0 && <Button className="jump-latest" variant="outline" size="sm" onClick={jumpToLatest}><ArrowDown /> Latest</Button>}
     </div>
   );
 }
 
 function AgentAvatar({ agent, active = false, className = "" }: { agent: AgentProfile; active?: boolean; className?: string }) {
-  return <span className={`agent-avatar ${active ? "active" : ""} ${className}`} style={{ backgroundColor: agentColor(agent.id) }} aria-hidden="true">{agent.initials}</span>;
+  return <Avatar className={`agent-avatar ${active ? "active" : ""} ${className}`} aria-hidden="true"><AvatarFallback className="agent-avatar-fallback" style={{ backgroundColor: agentColor(agent.id) }}>{agent.initials}</AvatarFallback></Avatar>;
 }
 
-function AgentRail({
+function AgentSidebarSection({
   data,
   theme,
   onSelect,
@@ -621,21 +631,29 @@ function AgentRail({
 }) {
   const agents = data.agents.filter((agent) => !agent.archived);
   return (
-    <motion.aside className="agent-rail" layout data-motion="agent-rail">
-      <div className="rail-brand" title="Pi Bot"><img src={theme === "dark" ? "./branding/pi-bot-logo-dark.png" : "./branding/pi-bot-logo.png"} alt="" /></div>
-      <div className="rail-agents" aria-label="Agents">
-        {agents.map((agent) => (
-          <motion.button className={`rail-agent-button ${agent.id === data.activeAgentId ? "selected" : ""}`} type="button" onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} key={agent.id} whileHover={{ y: -1 }} whileTap={{ scale: 0.96 }} transition={motionSprings.press} data-motion="agent-select">
-            {agent.id === data.activeAgentId && <motion.span className="rail-active-indicator" layoutId="rail-active-indicator" transition={motionSprings.layout} aria-hidden="true" />}
-            <AgentAvatar agent={agent} active={agent.id === data.activeAgentId} />
-          </motion.button>
-        ))}
+    <section className="agent-sidebar-section">
+      <div className="agent-rail-brand" title="Pi Bot">
+        <img src={theme === "dark" ? "./branding/pi-bot-logo-dark.png" : "./branding/pi-bot-logo.png"} alt="Pi Bot" />
       </div>
-      <div className="rail-spacer" />
-      <motion.button className="rail-action create" type="button" onClick={onCreateAgent} title="Create agent" aria-label="Create agent" whileHover={{ y: -1 }} whileTap={{ scale: 0.96 }} transition={motionSprings.press} data-motion="rail-action"><Plus /></motion.button>
-      <motion.button className="rail-action" type="button" onClick={onToggleTheme} title={theme === "dark" ? "Use light mode" : "Use dark mode"} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"} whileHover={{ y: -1 }} whileTap={{ scale: 0.96 }} transition={motionSprings.press} data-motion="rail-action"><AnimatePresence initial={false} mode="wait"><motion.span key={theme} initial={{ opacity: 0, rotate: -20, scale: 0.8 }} animate={{ opacity: 1, rotate: 0, scale: 1 }} exit={{ opacity: 0, rotate: 20, scale: 0.8 }} transition={motionTransitions.micro}>{theme === "dark" ? <Sun /> : <Moon />}</motion.span></AnimatePresence></motion.button>
-      <motion.button className="rail-action" type="button" onClick={onSettings} title="App settings" aria-label="App settings" whileHover={{ y: -1 }} whileTap={{ scale: 0.96 }} transition={motionSprings.press} data-motion="rail-action"><Settings2 /></motion.button>
-    </motion.aside>
+      <SidebarGroup className="agent-sidebar-group">
+        <SidebarMenu className="agent-list" aria-label="Agents">
+          {agents.map((agent) => (
+            <SidebarMenuItem key={agent.id}>
+              <SidebarMenuButton className={`agent-list-item ${agent.id === data.activeAgentId ? "selected" : ""}`} isActive={agent.id === data.activeAgentId} onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} tooltip={agent.name} data-motion="agent-select">
+                <AgentAvatar agent={agent} active={agent.id === data.activeAgentId} />
+                <span><strong>{agent.name}</strong><small>{agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+          {agents.length === 0 && <li className="muted-copy">No agents yet.</li>}
+        </SidebarMenu>
+      </SidebarGroup>
+      <div className="agent-rail-actions">
+        <Button className="agent-create-button" variant="outline" size="icon" onClick={onCreateAgent} title="Create agent" aria-label="Create agent"><Plus data-icon="inline-start" /></Button>
+        <Button className="agent-theme-button" variant="ghost" size="icon-sm" onClick={onToggleTheme} title={theme === "dark" ? "Use light mode" : "Use dark mode"} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>{theme === "dark" ? <Sun data-icon="inline-start" /> : <Moon data-icon="inline-start" />}</Button>
+        <Button className="agent-settings-button" variant="ghost" size="icon-sm" onClick={onSettings} title="App settings" aria-label="App settings"><Settings2 data-icon="inline-start" /></Button>
+      </div>
+    </section>
   );
 }
 
@@ -645,15 +663,17 @@ type SessionSidebarProps = {
   onNewChat: () => void;
   onOpenSession: (session: SessionSummary) => void;
   onDeleteSession: (session: SessionSummary) => void;
-  onCollapse: () => void;
 };
 
 function SessionMenu({ chat, busy, onDeleteSession }: { chat: SessionSummary; busy: boolean; onDeleteSession: (session: SessionSummary) => void }) {
-  const [open, setOpen] = useState(false);
-  return <details className="session-menu" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary aria-label={`Actions for ${chat.name}`}><MoreHorizontal /></summary>
-    <AnimatePresence initial={false}>{open && <motion.div initial={{ opacity: 0, y: -4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }} transition={motionTransitions.micro}><motion.button type="button" onClick={() => onDeleteSession(chat)} disabled={busy} whileTap={{ scale: 0.98 }} transition={motionSprings.press} data-motion="session-delete"><Trash2 /> Delete session</motion.button></motion.div>}</AnimatePresence>
-  </details>;
+  return <DropdownMenu>
+    <DropdownMenuTrigger className="session-menu" render={<Button variant="ghost" size="icon-sm" aria-label={`Actions for ${chat.name}`} />}><MoreHorizontal /></DropdownMenuTrigger>
+    <DropdownMenuContent align="end" className="session-menu-content">
+      <DropdownMenuGroup>
+        <DropdownMenuItem variant="destructive" disabled={busy} onClick={() => onDeleteSession(chat)} data-motion="session-delete"><Trash2 /> Delete session</DropdownMenuItem>
+      </DropdownMenuGroup>
+    </DropdownMenuContent>
+  </DropdownMenu>;
 }
 
 const SessionSidebar = forwardRef<HTMLElement, SessionSidebarProps>(function SessionSidebar({
@@ -662,22 +682,19 @@ const SessionSidebar = forwardRef<HTMLElement, SessionSidebarProps>(function Ses
   onNewChat,
   onOpenSession,
   onDeleteSession,
-  onCollapse,
 }, ref) {
   const agent = findAgent(data.agents, data.activeAgentId);
   const sessions = agent ? data.sessionsByAgent[agent.id] ?? [] : [];
   const groups = groupSessions(sessions);
   return (
-    <motion.aside ref={ref} className="session-sidebar" initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} transition={motionTransitions.standard} layout data-motion="session-sidebar">
+    <section ref={ref} className="session-sidebar" data-motion="session-sidebar">
       <header className="session-sidebar-header">
         <div>
-          <span className="eyebrow">Agent</span>
+          <span className="eyebrow">Sessions</span>
           <strong>{agent?.name ?? "No active agent"}</strong>
         </div>
-        <motion.button type="button" onClick={onCollapse} aria-label="Hide sessions" title="Hide sessions" whileHover={{ y: -1 }} whileTap={{ scale: 0.94 }} transition={motionSprings.press} data-motion="sidebar-toggle"><PanelLeftClose /></motion.button>
       </header>
       <Button className="new-chat-button" onClick={onNewChat} disabled={!data.activeAgentId}><MessageSquarePlus /> New session <Plus /></Button>
-      {agent && <p className="session-scope">History is scoped to this agent and workspace.</p>}
       <div className="session-groups">
         {groups.map(([label, items]) => (
           <section className="session-group" key={label}>
@@ -694,14 +711,52 @@ const SessionSidebar = forwardRef<HTMLElement, SessionSidebarProps>(function Ses
           </section>
         ))}
       </div>
-      {agent && sessions.length === 0 && <div className="session-empty"><MessagesSquare /><strong>No sessions yet</strong><p>Start a session with {agent.name}.</p></div>}
-      {!agent && <div className="session-empty"><Bot /><strong>No active agents</strong><p>Create an agent from the rail to begin.</p></div>}
-    </motion.aside>
+      {agent && sessions.length === 0 && <Empty className="session-empty"><EmptyMedia variant="icon"><MessagesSquare /></EmptyMedia><EmptyTitle>No sessions yet</EmptyTitle><EmptyDescription>Start a session with {agent.name}.</EmptyDescription></Empty>}
+      {!agent && <Empty className="session-empty"><EmptyMedia variant="icon"><Bot /></EmptyMedia><EmptyTitle>No active agents</EmptyTitle><EmptyDescription>Create an agent from the Agents section to begin.</EmptyDescription></Empty>}
+    </section>
   );
 });
 
+function AppSidebar({
+  data,
+  theme,
+  busy,
+  onSelectAgent,
+  onCreateAgent,
+  onToggleTheme,
+  onSettings,
+  onNewChat,
+  onOpenSession,
+  onDeleteSession,
+}: {
+  data: PiBootstrap;
+  theme: Theme;
+  busy: boolean;
+  onSelectAgent: (agentId: AgentId) => void;
+  onCreateAgent: () => void;
+  onToggleTheme: () => void;
+  onSettings: () => void;
+  onNewChat: () => void;
+  onOpenSession: (session: SessionSummary) => void;
+  onDeleteSession: (session: SessionSummary) => void;
+}) {
+  return (
+    <Sidebar className="app-sidebar" collapsible="offcanvas" data-motion="app-sidebar">
+      <SidebarHeader className="combined-sidebar-topbar section-topbar" aria-label="Sidebar toolbar">
+        <SidebarTrigger className="sidebar-window-toggle" title="Hide sidebar" aria-label="Hide sidebar" data-motion="sidebar-toggle"><PanelLeftClose data-icon="inline-start" /></SidebarTrigger>
+      </SidebarHeader>
+      <SidebarContent className="app-sidebar-main">
+        <div className="app-sidebar-columns">
+          <AgentSidebarSection data={data} theme={theme} onSelect={onSelectAgent} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} />
+          <SessionSidebar data={data} busy={busy} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} />
+        </div>
+      </SidebarContent>
+    </Sidebar>
+  );
+}
+
 function ErrorBanner({ message }: { message?: string }) {
-  return <AnimatePresence initial={false}>{message && <motion.div className="error-line" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard} role="alert" data-motion="error-banner"><CircleAlert /><div><strong>Couldn’t complete that</strong><span>{message}</span></div></motion.div>}</AnimatePresence>;
+  return <AnimatePresence initial={false}>{message && <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="error-banner"><Alert className="error-line" variant="destructive"><CircleAlert /><div><AlertTitle>Couldn’t complete that</AlertTitle><AlertDescription>{message}</AlertDescription></div></Alert></motion.div>}</AnimatePresence>;
 }
 
 function normalizeBrowserUrl(value: string) {
@@ -802,7 +857,7 @@ function FilesSidebar({ workspace }: { workspace: string }) {
     return <motion.div key={item.path} layout data-motion="file-tree-item"><motion.button type="button" className="file-tree-row" style={{ "--tree-indent": `${depth * 16}px` } as CSSProperties} onClick={() => selectFile(item)} title={item.path} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="file-tree-row">{isFolder ? <motion.span className="file-tree-arrow" animate={{ rotate: isOpen ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span> : <span className="file-tree-spacer" />}{isFolder ? <Folder /> : <FileText />}<span>{item.name}</span></motion.button><AnimatePresence initial={false}>{isFolder && isOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.standard} layout>{renderTree(item.children, depth + 1)}</motion.div>}</AnimatePresence></motion.div>;
   });
 
-  return <div className="workspace-files"><AnimatePresence initial={false}>{error && <motion.div className="workspace-panel-error" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={motionTransitions.standard}><CircleAlert /><span>{error}</span></motion.div>}</AnimatePresence><div className="files-filter"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter files…" aria-label="Filter files" /><Button variant="ghost" size="icon-sm" onClick={() => void loadFiles()} disabled={loading} aria-label="Refresh files"><RefreshCw className={loading ? "spin" : ""} /></Button></div>{!loading && !error && files.length === 0 ? <motion.div className="workspace-empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><Files /><strong>No files yet</strong><p>Files created by your assistant will appear here.</p></motion.div> : <div className="files-tree-list">{renderTree(roots)}</div>}</div>;
+  return <div className="workspace-files"><AnimatePresence initial={false}>{error && <motion.div className="workspace-panel-error" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={motionTransitions.standard}><CircleAlert /><span>{error}</span></motion.div>}</AnimatePresence><div className="files-filter"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter files…" aria-label="Filter files" /><Button variant="ghost" size="icon-sm" onClick={() => void loadFiles()} disabled={loading} aria-label="Refresh files"><RefreshCw className={loading ? "spin" : ""} /></Button></div>{!loading && !error && files.length === 0 ? <Empty className="workspace-empty"><EmptyMedia variant="icon"><Files /></EmptyMedia><EmptyTitle>No files yet</EmptyTitle><EmptyDescription>Files created by your assistant will appear here.</EmptyDescription></Empty> : <div className="files-tree-list">{renderTree(roots)}</div>}</div>;
 }
 
 function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; partition: string; onChange: (next: Pick<WorkspaceTab, "url" | "title">) => void }) {
@@ -901,9 +956,9 @@ function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; partiti
   </div>;
 }
 
-type RightWorkspacePanelProps = { data: PiBootstrap; open: boolean; storageKey: string };
+type RightWorkspacePanelProps = { data: PiBootstrap; open: boolean; storageKey: string; onClose: () => void };
 
-const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(function RightWorkspacePanel({ data, open, storageKey }, ref) {
+const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(function RightWorkspacePanel({ data, open, storageKey, onClose }, ref) {
   const [tabs, setTabs] = useState<WorkspaceTab[]>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(`${storageKey}:tabs`) || "[]");
@@ -912,46 +967,13 @@ const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(fu
     return [{ id: "files-default", kind: "files" }];
   });
   const [activeTabId, setActiveTabId] = useState<string | null>(() => localStorage.getItem(`${storageKey}:active-tab`) || "files-default");
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerMenuLeft, setPickerMenuLeft] = useState(8);
-  const tabsRef = useRef<HTMLElement>(null);
-  const tabListRef = useRef<HTMLDivElement>(null);
-  const pickerRef = useRef<HTMLDivElement>(null);
   useEffect(() => { localStorage.setItem(`${storageKey}:tabs`, JSON.stringify(tabs)); }, [storageKey, tabs]);
   useEffect(() => { if (activeTabId) localStorage.setItem(`${storageKey}:active-tab`, activeTabId); else localStorage.removeItem(`${storageKey}:active-tab`); }, [activeTabId, storageKey]);
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const updatePickerMenuPosition = () => {
-      const tabsElement = tabsRef.current;
-      const pickerElement = pickerRef.current;
-      if (!tabsElement || !pickerElement) return;
-      setPickerMenuLeft(pickerElement.getBoundingClientRect().left - tabsElement.getBoundingClientRect().left);
-    };
-    updatePickerMenuPosition();
-    const tabList = tabListRef.current;
-    tabList?.addEventListener("scroll", updatePickerMenuPosition);
-    window.addEventListener("resize", updatePickerMenuPosition);
-    return () => {
-      tabList?.removeEventListener("scroll", updatePickerMenuPosition);
-      window.removeEventListener("resize", updatePickerMenuPosition);
-    };
-  }, [pickerOpen, tabs]);
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      setPickerOpen(false);
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [pickerOpen]);
   const browserPartition = browserPartitionForSession(storageKey);
   const addTab = (kind: WorkspaceTabKind) => {
     const id = `${kind}-${Date.now()}`;
     setTabs((current) => [...current, { id, kind, ...(kind === "browser" ? { url: defaultBrowserUrl } : {}) }]);
     setActiveTabId(id);
-    setPickerOpen(false);
   };
   const closeTab = (id: string) => {
     const next = tabs.filter((tab) => tab.id !== id);
@@ -961,25 +983,45 @@ const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(fu
   const updateBrowserTab = (id: string, next: Pick<WorkspaceTab, "url" | "title">) => setTabs((current) => current.map((tab) => tab.id === id ? { ...tab, ...next } : tab));
   return (
     <motion.aside ref={ref} className="right-workspace-panel" aria-label="Workspace panel" initial={{ opacity: 0, x: "8%" }} animate={{ opacity: open ? 1 : 0, x: open ? 0 : "8%" }} exit={{ opacity: 0, x: "8%" }} transition={motionSprings.panel} style={{ pointerEvents: open ? "auto" : "none" }} data-motion="workspace-panel">
-      <nav className="workspace-tabs" ref={tabsRef} aria-label="Workspace tabs">
-        <div className="workspace-tab-list" ref={tabListRef}>
-          {tabs.map((tab) => <div className={`workspace-tab ${activeTabId === tab.id ? "selected" : ""}`} key={tab.id}>
-            <motion.button type="button" className="workspace-tab-main" onClick={() => setActiveTabId(tab.id)} title={tab.kind === "browser" ? browserTabLabel(tab) : "Files"} whileTap={{ scale: 0.98 }} transition={motionSprings.press} data-motion="workspace-tab">{tab.kind === "files" ? "Files" : browserTabLabel(tab)}</motion.button>
-            <motion.button type="button" className="workspace-tab-close" onClick={() => closeTab(tab.id)} aria-label={`Close ${tab.kind} tab`} whileTap={{ scale: 0.9 }} transition={motionSprings.press} data-motion="workspace-tab-close"><X /></motion.button>
-          </div>)}
-          <div className="workspace-tab-picker" ref={pickerRef}><motion.button type="button" className="workspace-tab-add" onClick={() => setPickerOpen((value) => !value)} aria-label="Add workspace tab" aria-haspopup="menu" aria-expanded={pickerOpen} whileTap={{ scale: 0.9 }} transition={motionSprings.press} data-motion="workspace-tab-add"><Plus /></motion.button></div>
-        </div>
-        <AnimatePresence initial={false}>{pickerOpen && <motion.div className="workspace-tab-menu" role="menu" style={{ left: pickerMenuLeft }} initial={{ opacity: 0, y: -4, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4, scale: 0.98 }} transition={motionTransitions.micro}>
-          <motion.button type="button" role="menuitem" onClick={() => addTab("files")} whileTap={{ scale: 0.98 }}><Files />Files</motion.button>
-          <motion.button type="button" role="menuitem" onClick={() => addTab("browser")} whileTap={{ scale: 0.98 }}><Globe2 />Browser</motion.button>
-        </motion.div>}</AnimatePresence>
-      </nav>
-      <section className="workspace-panel-content">{tabs.map((tab) => <div key={tab.id} hidden={tab.id !== activeTabId}>{tab.kind === "files" ? <FilesSidebar workspace={data.config.workspace} /> : <BrowserPanel tab={tab} partition={browserPartition} onChange={(next) => updateBrowserTab(tab.id, next)} />}</div>)}</section>
+      <Tabs value={activeTabId} onValueChange={(value) => setActiveTabId(value === null ? null : String(value))} className="workspace-tabs">
+        <header className="workspace-panel-topbar section-topbar" aria-label="Workspace toolbar">
+          <TabsList className="workspace-tab-list" aria-label="Workspace tabs">
+            {tabs.map((tab) => <div className={`workspace-tab ${activeTabId === tab.id ? "selected" : ""}`} key={tab.id}>
+              <TabsTrigger className="workspace-tab-main" value={tab.id} title={tab.kind === "browser" ? browserTabLabel(tab) : "Files"} data-motion="workspace-tab">{tab.kind === "files" ? "Files" : browserTabLabel(tab)}</TabsTrigger>
+              <Button variant="ghost" size="icon-sm" className="workspace-tab-close" onClick={() => closeTab(tab.id)} aria-label={`Close ${tab.kind} tab`} data-motion="workspace-tab-close"><X /></Button>
+            </div>)}
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" className="workspace-tab-add" aria-label="Add workspace tab" />}><Plus /></DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="workspace-tab-menu">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onClick={() => addTab("files")}><Files /> Files</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => addTab("browser")}><Globe2 /> Browser</DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </TabsList>
+          <Button className="workspace-panel-close" variant="ghost" size="icon-sm" onClick={onClose} title="Hide workspace" aria-label="Hide workspace"><PanelRightClose /></Button>
+        </header>
+        <section className="workspace-panel-content">{tabs.map((tab) => <TabsContent key={tab.id} value={tab.id} keepMounted>{tab.kind === "files" ? <FilesSidebar workspace={data.config.workspace} /> : <BrowserPanel tab={tab} partition={browserPartition} onChange={(next) => updateBrowserTab(tab.id, next)} />}</TabsContent>)}</section>
+      </Tabs>
     </motion.aside>
   );
 });
 
-function ChatWorkspace({ data, busy, error, sessionSidebarOpen, onOpenSessionSidebar, onPrompt, onAbort, onModelChange, onThinkingChange }: ComponentPropsWithoutRef<typeof ChatView>) {
+type ChatViewProps = {
+  data: PiBootstrap;
+  busy: boolean;
+  sidebarOpen: boolean;
+  error?: string;
+  onPrompt: (message: string) => void;
+  onAbort: () => void;
+  onModelChange: (key: string) => void;
+  onThinkingChange: (level: ThinkingLevel) => void;
+  workspaceOpen?: boolean;
+  onShowWorkspace?: () => void;
+};
+
+function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onModelChange, onThinkingChange }: Omit<ChatViewProps, "workspaceOpen" | "onShowWorkspace">) {
   const storageKey = `pi-bot.workspace-panel:${workspacePanelSessionKey(data)}`;
   const [panelOpen, setPanelOpen] = useState(() => localStorage.getItem(`${storageKey}:open`) !== "false");
   const [panelWidth, setPanelWidth] = useState(() => Math.min(520, Math.max(280, Number(localStorage.getItem(`${storageKey}:width`)) || 340)));
@@ -1000,46 +1042,40 @@ function ChatWorkspace({ data, busy, error, sessionSidebarOpen, onOpenSessionSid
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", end);
   };
-  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${panelOpen ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${panelWidth}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} error={error} sessionSidebarOpen={sessionSidebarOpen} onOpenSessionSidebar={onOpenSessionSidebar} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />{panelOpen && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<Button className="workspace-panel-toggle" variant="ghost" size="icon-sm" onClick={() => setPanelOpen((value) => !value)} title={panelOpen ? "Hide workspace" : "Show workspace"} aria-label={panelOpen ? "Hide workspace" : "Show workspace"}>{panelOpen ? <PanelRightClose /> : <PanelRightOpen />}</Button><AnimatePresence initial={false} mode="popLayout">{panelOpen && <RightWorkspacePanel key="workspace-panel" data={data} open={panelOpen} storageKey={storageKey} />}</AnimatePresence></motion.section>;
+  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${panelOpen ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${panelWidth}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} workspaceOpen={panelOpen} onShowWorkspace={() => setPanelOpen(true)} />{panelOpen && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<AnimatePresence initial={false} mode="popLayout">{panelOpen && <RightWorkspacePanel key="workspace-panel" data={data} open={panelOpen} storageKey={storageKey} onClose={() => setPanelOpen(false)} />}</AnimatePresence></motion.section>;
 }
 
 function ChatView({
   data,
   busy,
+  sidebarOpen,
   error,
-  sessionSidebarOpen,
-  onOpenSessionSidebar,
   onPrompt,
   onAbort,
   onModelChange,
   onThinkingChange,
-}: {
-  data: PiBootstrap;
-  busy: boolean;
-  error?: string;
-  sessionSidebarOpen: boolean;
-  onOpenSessionSidebar: () => void;
-  onPrompt: (message: string) => void;
-  onAbort: () => void;
-  onModelChange: (key: string) => void;
-  onThinkingChange: (level: ThinkingLevel) => void;
-}) {
+  workspaceOpen = true,
+  onShowWorkspace,
+}: ChatViewProps) {
   const agent = findAgent(data.agents, data.activeAgentId);
   const blocked = !agent || !data.config.modelAvailable;
   const responding = busy || data.config.streaming;
   const reducedMotion = useReducedMotion();
   return (
     <motion.main className="chat-pane" layout="position" data-motion="chat-view">
+      <header className="section-topbar chat-section-topbar" aria-label="Conversation toolbar">
+        {!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle" title="Show sidebar" aria-label="Show sidebar" data-motion="sidebar-toggle"><PanelLeftOpen data-icon="inline-start" /></SidebarTrigger>}
+        <AnimatePresence initial={false}>{responding && <motion.span className="responding-indicator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.micro}><motion.i animate={reducedMotion ? { opacity: 1 } : { opacity: [0.35, 1, 0.35] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1.2, repeat: Infinity, ease: "easeInOut" }} /> Responding</motion.span>}</AnimatePresence>
+        {!workspaceOpen && onShowWorkspace && <Button className="workspace-panel-show" variant="ghost" size="icon-sm" onClick={onShowWorkspace} title="Show workspace" aria-label="Show workspace"><PanelRightOpen /></Button>}
+      </header>
       <header className="chat-header">
         <div className="chat-header-leading">
-          {!sessionSidebarOpen && <div className="header-launchers"><motion.button type="button" onClick={onOpenSessionSidebar} title="Show sessions" aria-label="Show sessions" whileHover={{ y: -1 }} whileTap={{ scale: 0.94 }} transition={motionSprings.press} data-motion="sidebar-toggle"><MessagesSquare /></motion.button></div>}
           <div><h1>{data.config.session?.name ?? "New session"}</h1><span>{agent?.name ?? "No active agent"} · {compactWorkspace(data.config.workspace)}</span></div>
         </div>
-        <AnimatePresence initial={false}>{responding && <motion.span className="responding-indicator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.micro}><motion.i animate={reducedMotion ? { opacity: 1 } : { opacity: [0.35, 1, 0.35] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1.2, repeat: Infinity, ease: "easeInOut" }} /> Responding</motion.span>}</AnimatePresence>
       </header>
       <ErrorBanner message={error} />
-      {!data.authenticated && <div className="notice-line"><KeyRound /><span>Add a provider credential in App Settings to start chatting.</span></div>}
-      {data.authenticated && blocked && agent && <div className="notice-line"><CircleAlert /><span>This agent’s model is unavailable. Choose another model in App Settings.</span></div>}
+      {!data.authenticated && <Alert className="notice-line"><KeyRound /><AlertDescription>Add a provider credential in App Settings to start chatting.</AlertDescription></Alert>}
+      {data.authenticated && blocked && agent && <Alert className="notice-line"><CircleAlert /><AlertDescription>This agent’s model is unavailable. Choose another model in App Settings.</AlertDescription></Alert>}
       <EventRows items={data.transcript} agent={agent} responding={responding} />
       <Composer busy={responding} disabled={blocked || responding} agentName={agent?.name ?? "Assistant"} config={data.config} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
     </motion.main>
@@ -1084,7 +1120,7 @@ function AgentEditor({
     return <section className="settings-detail"><div className="detail-heading"><div><span className="eyebrow">New agent</span><h2>Create an agent</h2><p>Give this teammate a name. Its workspace starts isolated and empty.</p></div></div><div className="settings-form"><label className="form-field"><span>Name</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Release helper" /></label><label className="form-field compact-field"><span>Initials <em>optional</em></span><Input maxLength={4} value={initials} onChange={(event) => setInitials(event.target.value.toUpperCase())} placeholder="Auto" /></label><div className="settings-actions"><Button onClick={() => onCreate(name, initials)} disabled={busy || !name.trim()}><Plus /> Create agent</Button></div></div></section>;
   }
 
-  if (!agent) return <section className="settings-detail empty-settings"><Bot /><h2>No active agents</h2><p>Create an agent to begin.</p></section>;
+  if (!agent) return <Empty className="settings-detail empty-settings"><EmptyMedia variant="icon"><Bot /></EmptyMedia><EmptyTitle>No active agents</EmptyTitle><EmptyDescription>Create an agent to begin.</EmptyDescription></Empty>;
   return (
     <section className="settings-detail">
       <div className="detail-heading"><div className="detail-agent-title"><AgentAvatar agent={{ ...agent, initials: initials || agent.initials }} /><div><span className="eyebrow">Agent settings</span><h2>{agent.name}</h2><p>Identity, instructions, workspace, and default model for new chats.</p></div></div></div>
@@ -1114,6 +1150,7 @@ function ModelsSettings({ data, busy, onApiKey, onOAuth, onLogout, onImport }: {
 function SettingsPage({
   data,
   busy,
+  sidebarOpen,
   createNewAgent,
   onBack,
   onUpdate,
@@ -1130,6 +1167,7 @@ function SettingsPage({
 }: {
   data: PiBootstrap;
   busy: boolean;
+  sidebarOpen: boolean;
   createNewAgent: boolean;
   onBack: () => void;
   onUpdate: (profile: AgentProfile) => void;
@@ -1152,6 +1190,9 @@ function SettingsPage({
   const selected = selectedId === "new" ? undefined : data.agents.find((agent) => agent.id === selectedId);
   return (
     <motion.main className="settings-page" layout data-motion="settings-page">
+      <header className="section-topbar settings-section-topbar" aria-label="Settings toolbar">
+        {!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle" title="Show sidebar" aria-label="Show sidebar" data-motion="sidebar-toggle"><PanelLeftOpen data-icon="inline-start" /></SidebarTrigger>}
+      </header>
       <header className="settings-header"><Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to chat"><ArrowLeft /></Button><div><span className="eyebrow">Pi Bot</span><h1>App Settings</h1></div></header>
       <div className="settings-layout">
         <nav className="settings-nav">
@@ -1177,14 +1218,18 @@ function SettingsPage({
 
 function AuthPromptCard({ prompt, notice, onRespond, onCancel }: { prompt: { id: string; prompt: AuthPrompt }; notice?: string; onRespond: (value: string) => void; onCancel: () => void }) {
   const [value, setValue] = useState("");
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCancel();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onCancel]);
-  return <motion.div className="auth-prompt-card" initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.98 }} transition={motionTransitions.standard} role="dialog" aria-modal="true" data-motion="auth-prompt"><span className="eyebrow">Provider sign-in</span><h3>{prompt.prompt.message}</h3>{notice && <p className="auth-notice">{notice}</p>}{prompt.prompt.type === "select" ? <select className="field-select" value={value} onChange={(event) => setValue(event.target.value)}><option value="">Choose an option</option>{prompt.prompt.options?.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select> : <Input autoFocus type={prompt.prompt.type === "secret" ? "password" : "text"} value={value} onChange={(event) => setValue(event.target.value)} placeholder={prompt.prompt.placeholder} /> }<div className="auth-prompt-actions"><Button variant="outline" onClick={onCancel}><X /> Cancel</Button><Button onClick={() => onRespond(value)} disabled={!value.trim()}><Check /> Continue</Button></div></motion.div>;
+  useEffect(() => setValue(""), [prompt.id]);
+  return <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
+    <DialogContent className="auth-prompt-card" showCloseButton={false} data-motion="auth-prompt">
+      <DialogHeader>
+        <span className="eyebrow">Provider sign-in</span>
+        <DialogTitle>{prompt.prompt.message}</DialogTitle>
+        <DialogDescription className={notice ? "auth-notice" : "sr-only"}>{notice || "Complete the provider authentication prompt."}</DialogDescription>
+      </DialogHeader>
+      {prompt.prompt.type === "select" ? <select className="field-select" value={value} onChange={(event) => setValue(event.target.value)}><option value="">Choose an option</option>{prompt.prompt.options?.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select> : <Input autoFocus type={prompt.prompt.type === "secret" ? "password" : "text"} value={value} onChange={(event) => setValue(event.target.value)} placeholder={prompt.prompt.placeholder} />}
+      <DialogFooter className="auth-prompt-actions"><Button variant="outline" onClick={onCancel}><X /> Cancel</Button><Button onClick={() => onRespond(value)} disabled={!value.trim()}><Check /> Continue</Button></DialogFooter>
+    </DialogContent>
+  </Dialog>;
 }
 
 function SetupPage({ data, busy, error, onContinue, onImport, onApiKey, onOAuth }: { data: PiBootstrap; busy: boolean; error?: string; onContinue: (accepted: boolean) => void; onImport: (accepted: boolean) => void; onApiKey: (providerId: string, apiKey: string, accepted: boolean) => void; onOAuth: (provider: ProviderInfo, accepted: boolean) => void }) {
@@ -1203,7 +1248,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [view, setView] = useState<View>("chat");
-  const [sessionSidebarOpen, setSessionSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [createNewAgent, setCreateNewAgent] = useState(false);
   const [authPrompt, setAuthPrompt] = useState<{ id: string; prompt: AuthPrompt }>();
   const [authNotice, setAuthNotice] = useState<string>();
@@ -1321,12 +1366,13 @@ export function App() {
     updateWith(() => window.piBot.deleteAgent(profile.id, deletesWorkspace));
   }
 
-  return <div className={`app-shell ${sessionSidebarOpen ? "session-sidebar-open" : "session-sidebar-closed"}`} data-motion="app-shell">
-    <AgentRail data={data} theme={theme} onSelect={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onCreateAgent={() => { setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={() => setTheme((current) => current === "dark" ? "light" : "dark")} onSettings={() => { setError(undefined); setCreateNewAgent(false); setView("settings"); }} />
-    <AnimatePresence initial={false} mode="popLayout">{sessionSidebarOpen && <SessionSidebar key="session-sidebar" data={data} busy={busy} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId))} onDeleteSession={deleteSession} onCollapse={() => setSessionSidebarOpen(false)} />}</AnimatePresence>
-    <AnimatePresence initial={false} mode="wait">
-      {view === "chat" ? <motion.div className="app-view" key={`chat-${workspacePanelSessionKey(data)}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} error={error} sessionSidebarOpen={sessionSidebarOpen} onOpenSessionSidebar={() => setSessionSidebarOpen(true)} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} /></motion.div>}
-    </AnimatePresence>
-    <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
-  </div>;
+      return <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen} className="app-sidebar-provider">
+        <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
+          <AppSidebar data={data} theme={theme} busy={busy} onSelectAgent={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onCreateAgent={() => { setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={() => setTheme((current) => current === "dark" ? "light" : "dark")} onSettings={() => { setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId))} onDeleteSession={deleteSession} />
+          <AnimatePresence initial={false} mode="wait">
+            {view === "chat" ? <motion.div className="app-view" key={`chat-${workspacePanelSessionKey(data)}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} /></motion.div>}
+      </AnimatePresence>
+      <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
+    </div>
+  </SidebarProvider>;
 }
