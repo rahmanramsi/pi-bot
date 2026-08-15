@@ -16,7 +16,7 @@ Already implemented:
 - App-owned and external workspaces with skill trust.
 - Provider authentication and model selection.
 - Agent-scoped persistent sessions and streaming tool events.
-- Session-scoped Browser tabs with a narrow visible-page tool (`tabs`, `read`, `navigate`, `click`, `type`, `submit`) and redacted activity/errors.
+- Session-scoped Browser tabs, each with its own persistent profile and manual sign-in state, with a narrow visible-page tool (`tabs`, `read`, `navigate`, `click`, `type`, `submit`) and redacted activity/errors.
 - Conversation/activity separation, visible commands, Stop, autosizing composer, themes, settings, and design tokens.
 - Narrow context-isolated Electron bridge.
 
@@ -37,7 +37,7 @@ Known gaps:
 
 ## P0 — automated contracts
 
-- Add the smallest suitable test runner and an `npm test` script.
+- Maintain the Node built-in test suite run by `npm test`, extending it when new persistence, Browser, or IPC contracts are added.
 - Test agent normalization and persistence, including empty instructions.
 - Test agent/workspace/session isolation and first-prompt title derivation.
 - Test archive, restore, delete, and external-workspace preservation.
@@ -100,7 +100,7 @@ tests/                  Node test suite, including Browser automation contracts
 ## Boundaries
 
 - **Always:** validate IPC input, keep secrets out of the repository and renderer, show real tool activity, and run typecheck/build.
-- **Browser IPC:** main owns guests observed through `did-attach-webview`; before mounting a webview, preload asks main for the opaque persistent partition derived from `browserPartitionForTab(sessionKey, tabId)`. Registration accepts only tab/session values and binds the already-attached guest whose actual partition matches that per-tab partition; no page-visible token or renderer `webContents` ID is accepted.
+- **Browser IPC:** main owns guests observed through `did-attach-webview`; before mounting a webview, preload asks main for the opaque persistent partition derived from `browserPartitionForTab(sessionKey, tabId)`. Registration accepts only tab/session values and binds the already-attached guest whose actual partition matches that per-tab partition; no page-visible token or renderer `webContents` ID is accepted. Manual sign-in state stays within that Browser tab.
 - **Ask first:** new runtime dependencies, tool-policy changes, settings-schema changes, credential-storage changes, or packaged releases.
 - **Never:** claim sandboxing or approvals exist before they are implemented; expose Node APIs to the renderer; delete an external workspace; hide a command that was actually executed.
 

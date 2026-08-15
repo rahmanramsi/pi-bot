@@ -1414,7 +1414,7 @@ function createWindow() {
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
     contents.on("will-navigate", (event, url) => { if (!isAllowedBrowserUrl(url)) event.preventDefault(); });
     contents.on("will-redirect", (event, url) => { if (!isAllowedBrowserUrl(url)) event.preventDefault(); });
-    contents.on("will-frame-navigate", (event, url) => { if (!isAllowedBrowserUrl(url)) event.preventDefault(); });
+    contents.on("will-frame-navigate", (details) => { if (!isAllowedBrowserUrl(details.url)) details.preventDefault(); });
   });
   window.webContents.once("destroyed", () => {
     issuedBrowserPartitions.clear();

@@ -11,13 +11,13 @@ Pengguna dapat:
 - menelusuri, memfilter, dan membuka file yang aman di workspace aktif;
 - membuka URL HTTP(S) di browser terisolasi, bernavigasi, dan membukanya di browser default.
 
-Browser tetap terlihat dan dapat dikendalikan pengguna. Agent pada chat aktif mendapat tool sempit: `tabs` menemukan tab pada session chat, `read` mengembalikan konten terlihat serta target stabil, lalu `navigate`, `click`, `type`, dan `submit` menjalankan navigasi atau kontrol normal yang masih terlihat dan enabled. Agent tidak mendapat cookie, local storage, password, credential API, download, popup, atau akses ke tab pada chat lain. Files v1 adalah tampilan file workspace yang sudah ada; upload bahan ke model ditunda sampai kontrak model/context ditetapkan.
+Browser tetap terlihat dan dapat dikendalikan pengguna. Setiap tab Browser memiliki profile persisten yang terisolasi; login/manual sign-in berlaku untuk tab itu saja dan tidak dibagikan ke tab atau chat lain. Agent pada chat aktif mendapat tool sempit: `tabs` menemukan tab pada session chat, `read` mengembalikan konten terlihat serta target stabil, lalu `navigate`, `click`, `type`, dan `submit` menjalankan navigasi atau kontrol normal yang masih terlihat dan enabled. Agent tidak mendapat cookie, local storage, password, credential API, download, popup, atau akses ke tab pada chat lain. Files v1 adalah tampilan file workspace yang sudah ada; upload bahan ke model ditunda sampai kontrak model/context ditetapkan.
 
 ## Tech stack
 
 - Electron 43, Node.js ESM main process
 - React 19, TypeScript, Vite 8, Tailwind/shadcn primitives
-- Tidak ada dependency baru
+- `typebox` sebagai direct runtime dependency untuk schema Browser tool
 
 ## Commands
 
@@ -57,7 +57,7 @@ function isInsideWorkspace(workspace: string, target: string) {
 
 ## Testing strategy
 
-The repository uses Node's built-in test runner through `npm test`; Browser action and JSDOM tests live in `tests/browser-automation.test.mjs`.
+The repository uses Node's built-in test runner through `npm test`; the current suite covers persistence, Browser action/JSDOM, and renderer-contract tests. Browser action and JSDOM tests live in `tests/browser-automation.test.mjs`.
 
 Validation is:
 
@@ -76,7 +76,7 @@ Validation is:
 1. Chat has a titleless, resizable right sidebar with tabs that users can add as **Files** or **Browser**.
 2. The panel resizes by drag and remembers its visibility, tab, and width locally per session; it becomes an overlay at narrow widths.
 3. Files menawarkan tree yang dapat difilter serta hanya membuka path di workspace agent terpilih.
-4. Browser uses an isolated persistent partition, no Node/preload/permissions/popups, and accepts only credential-free HTTP(S) URLs.
+4. Each Browser tab uses its own isolated persistent partition, no Node/preload/permissions/popups, and accepts only credential-free HTTP(S) URLs.
 5. The active chat agent can call `tabs`, then use `read` targets for visible controls across multiple Browser tabs; hidden and disabled controls fail with stable redacted errors.
 6. Switching from Browser to another tab does not destroy or reload the browser guest, and an active operation is visible in both its panel and tab strip.
 7. Typecheck, build, packaged smoke, and `git diff --check` pass.

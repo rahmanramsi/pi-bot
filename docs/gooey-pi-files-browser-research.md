@@ -8,7 +8,7 @@ Status: rekomendasi desain untuk Pi Bot; belum diimplementasikan.
 
 GooeyPi menunjukkan dua pemisahan yang tepat untuk dipinjam:
 
-1. **Browser pengguna tidak sama dengan browser yang dikendalikan AI.** Pengguna dapat menjelajah dan memberi anotasi; kontrol AI adalah capability terpisah, dibatasi per sesi, dan dapat dimatikan.
+1. **Browser pengguna tidak sama dengan kontrol Browser AI yang lebih luas.** Pengguna dapat menjelajah dan memberi anotasi; kontrol AI yang lebih luas adalah capability terpisah, dibatasi per sesi, dan dapat dimatikan. Pi Bot saat ini hanya menyediakan tool visible-page yang sempit.
 2. **Keamanan file/browser berada di proses utama Electron.** Renderer hanya menampilkan UI. Semua path, URL, download, dan tindakan desktop divalidasi lagi sebelum dijalankan.
 
 Namun GooeyPi adalah workspace untuk coding agent. Pi Bot untuk pengguna umum tidak perlu meniru panel file tree, Git status, terminal, worktree, atau multi-tab agent control pada tahap awal.
@@ -55,7 +55,7 @@ Ini adalah pola yang paling bernilai dari GooeyPi. `BrowserPanel` menyimpan riwa
 | GooeyPi | Alasan ditunda di Pi Bot |
 | --- | --- |
 | Full file tree, Git, terminal, worktree | Bahasa dan mental modelnya programmer-first. |
-| Browser tab yang dikendalikan AI | Membutuhkan lifecycle tab, batas resource, observability, dan kebijakan aksi yang matang. |
+| Kontrol Browser/computer AI yang lebih luas | Membutuhkan lifecycle tab, batas resource, observability, dan kebijakan aksi yang matang. |
 | Click/type/scroll otomatis oleh AI | Berisiko saat halaman membawa akun, pembayaran, form, atau informasi pribadi. |
 | Mengizinkan AI mengambil alih tab pengguna | Cocok untuk pengguna berpengalaman, tetapi bukan default aman untuk produk umum. |
 
@@ -71,17 +71,17 @@ Ini adalah pola yang paling bernilai dari GooeyPi. `BrowserPanel` menyimpan riwa
 
 Hasil fase ini: pengguna umum dapat membawa bahan, melihat hasil, dan memberi arahan visual tanpa mengetahui path atau menjelaskan ulang lokasinya.
 
-### Fase 2 — Browser yang dibantu AI, dengan persetujuan
+### Fase 2 — Kontrol Browser AI yang lebih luas, dengan persetujuan
 
-Untuk perluasan di luar tool sempit yang sudah shipped, tambahkan capability **Bantu di browser** yang selalu off secara default. Saat aktif, AI hanya boleh membaca halaman/tab yang sedang pengguna pilih. Aksi yang mengubah keadaan—klik, mengetik, mengunduh, login, submit, atau membuka tab baru—harus dipisahkan sebagai proposal yang jelas untuk disetujui pengguna. Tool Pi Bot saat ini tidak menyentuh password-bearing forms, downloads, popup, credentials, atau arbitrary guest attachment.
+Untuk perluasan di luar tool visible-page yang sempit dan sudah shipped, tambahkan capability **Bantu di browser** yang selalu off secara default. Saat aktif, AI hanya boleh membaca halaman/tab yang sedang pengguna pilih. Aksi yang mengubah keadaan—klik, mengetik, mengunduh, login, submit, atau membuka tab baru—harus dipisahkan sebagai proposal yang jelas untuk disetujui pengguna. Kontrol Browser/computer AI yang lebih luas tetap future/deferred; tool Pi Bot saat ini tidak menyentuh password-bearing forms, downloads, popup, credentials, atau arbitrary guest attachment.
 
-GooeyPi mengimplementasikan versi yang jauh lebih kuat: tab terikat sesi, maksimum 6 tab per sesi dan 24 total, service browser berada di main process, dan tab Preview milik pengguna tidak bisa ditutup agent. Struktur ini layak dijadikan referensi bila Pi Bot benar-benar sampai ke tahap kontrol AI. Lihat [AgentBrowserService](https://github.com/am-will/gooey-pi/blob/54eae316611246578837fad29695cab6287daba5/electron/main/browser/agent-service.ts).
+GooeyPi mengimplementasikan versi yang jauh lebih kuat: tab terikat sesi, maksimum 6 tab per sesi dan 24 total, service browser berada di main process, dan tab Preview milik pengguna tidak bisa ditutup agent. Struktur ini layak dijadikan referensi bila Pi Bot benar-benar sampai ke tahap kontrol Browser AI yang lebih luas. Lihat [AgentBrowserService](https://github.com/am-will/gooey-pi/blob/54eae316611246578837fad29695cab6287daba5/electron/main/browser/agent-service.ts).
 
 ## Batas keamanan minimum Browser
 
 Ambil guardrail GooeyPi ini sejak Browser v1, bukan setelahnya:
 
-- Browser menggunakan storage partition sendiri, terpisah dari renderer utama.
+- Setiap Browser tab menggunakan storage partition persisten sendiri, terpisah dari renderer utama, tab lain, dan chat lain; manual sign-in berlaku untuk tab itu saja.
 - Guest webview tidak memiliki Node, preload, izin browser, popup, atau nested webview.
 - Terima hanya `http:` dan `https:` tanpa username/password di URL; blokir redirect dan frame navigation yang melanggar aturan sama.
 - Semua action desktop dan file-path diverifikasi di main process; renderer tidak boleh memiliki akses Node langsung.
@@ -92,6 +92,6 @@ GooeyPi menerapkan hardening ini dalam [webview gate](https://github.com/am-will
 
 ## Dampak ke Pi Bot saat ini
 
-Pi Bot sudah punya Electron main process, preload bridge yang sempit, `contextIsolation: true`, dan `nodeIntegration: false`. Browser issue #10 mengikat guest dari `did-attach-webview` di main process, memberi renderer hanya nilai tab/session opaque, dan memeriksa partition sesi sebelum action. Tidak perlu menambah SDK provider atau memberi renderer kemampuan Node.
+Pi Bot sudah punya Electron main process, preload bridge yang sempit, `contextIsolation: true`, dan `nodeIntegration: false`. Browser issue #10 mengikat guest dari `did-attach-webview` di main process, memberi renderer hanya nilai tab/session opaque, dan memeriksa partition per-tab sebelum action. Tidak perlu menambah SDK provider atau memberi renderer kemampuan Node.
 
-Browser AI dan File input ke model adalah pekerjaan terpisah: keduanya memerlukan kontrak penyimpanan, izin, ukuran file yang didukung, dan cara memberi konteks ke Pi runtime sebelum UI dijanjikan ke pengguna.
+Kontrol Browser AI yang lebih luas dan File input ke model adalah pekerjaan terpisah/future: keduanya memerlukan kontrak penyimpanan, izin, ukuran file yang didukung, dan cara memberi konteks ke Pi runtime sebelum UI dijanjikan ke pengguna.

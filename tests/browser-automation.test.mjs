@@ -74,16 +74,24 @@ class DomContents extends FakeContents {
         const style = this.getAttribute("style") || "";
         const hidden = this.hasAttribute("hidden") || /display\s*:\s*none/i.test(style) || /visibility\s*:\s*hidden/i.test(style);
         const offscreen = /(?:left|top)\s*:\s*-\d+/i.test(style);
+        const elements = [...this.ownerDocument.querySelectorAll("*")];
+        const index = Math.max(0, elements.indexOf(this));
+        const left = 10 + index % 6 * 140;
+        const top = 10 + Math.floor(index / 6) * 40;
         return {
           width: hidden ? 0 : 120,
           height: hidden ? 0 : 24,
-          top: hidden || offscreen ? -100 : 10,
-          left: hidden || offscreen ? -100 : 10,
-          right: hidden || offscreen ? -1 : 130,
-          bottom: hidden || offscreen ? -1 : 34,
+          top: hidden || offscreen ? -100 : top,
+          left: hidden || offscreen ? -100 : left,
+          right: hidden || offscreen ? -1 : left + 120,
+          bottom: hidden || offscreen ? -1 : top + 24,
         };
       },
     });
+    this.dom.window.document.elementFromPoint = (x, y) => [...this.dom.window.document.querySelectorAll("*")].reverse().find((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    }) || null;
   }
 
   executeJavaScript(script) {
@@ -358,6 +366,21 @@ test("manual guest navigation invalidates read handles before a later action", a
   await assert.rejects(service.execute({ action: "click", tabId: "browser-a", selector: target }, undefined, scope), /target|Browser click failed\./i);
 });
 
+test("queued browser actions reject a target invalidated before guest execution", async () => {
+  const scope = { agentId: "agent-a", sessionKey: "session-a" };
+  const service = createBrowserAutomationService();
+  const contents = new DomContents(`<main><button id="save">Save</button></main>`);
+  service.attachWebContents(contents, browserPartitionForSession(scope.sessionKey));
+  service.activateScope(scope);
+  service.registerTab({ tabId: "browser-a", sessionKey: scope.sessionKey, partition: browserPartitionForSession(scope.sessionKey) });
+  const page = await service.execute({ action: "read", tabId: "browser-a" }, undefined, scope);
+  const target = page.elements.find((element) => element.label === "Save").target;
+  const pending = service.execute({ action: "click", tabId: "browser-a", selector: target }, undefined, scope);
+  contents.emit("did-navigate-in-page", {}, "https://example.com/account#changed", true);
+  await assert.rejects(pending, (error) => error instanceof BrowserAutomationError && error.code === "stale-target");
+  assert.equal(contents.executedScripts.length, 1);
+});
+
 test("a second read replaces the previous page target map", async () => {
   const scope = { agentId: "agent-a", sessionKey: "session-a" };
   const service = createBrowserAutomationService();
@@ -403,6 +426,37 @@ test("never exposes password controls or lets Browser operate password-bearing f
   await assert.rejects(service.execute({ action: "type", tabId: "browser-a", selector: "#password", text: "secret" }, undefined, scope), /Browser type failed\./i);
   await assert.rejects(service.execute({ action: "click", tabId: "browser-a", selector: "#submit" }, undefined, scope), /Browser click failed\./i);
   await assert.rejects(service.execute({ action: "submit", tabId: "browser-a", selector: "#login" }, undefined, scope), /Browser submit failed\./i);
+});
+
+test("rejects an out-of-tree submit control associated with a password form", async () => {
+  const scope = { agentId: "agent-a", sessionKey: "session-a" };
+  const service = createBrowserAutomationService();
+  const contents = new DomContents(`<form id="login"><input name="password" type="password"></form><button id="outside-submit" type="submit" form="login">Sign in</button>`);
+  service.attachWebContents(contents, browserPartitionForSession(scope.sessionKey));
+  service.activateScope(scope);
+  service.registerTab({ tabId: "browser-a", sessionKey: scope.sessionKey, partition: browserPartitionForSession(scope.sessionKey) });
+
+  const page = await service.execute({ action: "read", tabId: "browser-a" }, undefined, scope);
+  assert.equal(page.elements.some((element) => element.label === "Sign in"), false);
+  await assert.rejects(service.execute({ action: "submit", tabId: "browser-a", selector: "#outside-submit" }, undefined, scope), /Browser submit failed\./i);
+});
+
+test("rejects an action target covered by an overlay at its center point", async () => {
+  const scope = { agentId: "agent-a", sessionKey: "session-a" };
+  const service = createBrowserAutomationService();
+  const contents = new DomContents(`<main><button id="save">Save</button><div id="overlay">Overlay</div></main>`);
+  let clicks = 0;
+  contents.dom.window.document.querySelector("#save").addEventListener("click", () => { clicks += 1; });
+  service.attachWebContents(contents, browserPartitionForSession(scope.sessionKey));
+  service.activateScope(scope);
+  service.registerTab({ tabId: "browser-a", sessionKey: scope.sessionKey, partition: browserPartitionForSession(scope.sessionKey) });
+  const page = await service.execute({ action: "read", tabId: "browser-a" }, undefined, scope);
+  const target = page.elements.find((element) => element.label === "Save").target;
+  const overlay = contents.dom.window.document.querySelector("#overlay");
+  contents.dom.window.document.elementFromPoint = () => overlay;
+
+  await assert.rejects(service.execute({ action: "click", tabId: "browser-a", selector: target }, undefined, scope), /Browser click failed\./i);
+  assert.equal(clicks, 0);
 });
 
 test("does not register a non-webview guest", () => {
@@ -505,6 +559,9 @@ test("the browser tool is narrow and never includes typed values in activity det
   assert.match(result.content[0].text, /typed/i);
   assert.doesNotMatch(result.content[0].text, /do-not-log/);
   assert.doesNotMatch(JSON.stringify(activity), /do-not-log/);
+  const navigationActivity = summarizeBrowserToolCall({ action: "navigate", tabId: "browser-a", url: "https://example.com/account?token=url-secret#fragment" });
+  assert.match(navigationActivity, /https:\/\/example\.com\/account/);
+  assert.doesNotMatch(navigationActivity, /url-secret|fragment/);
 });
 
 test("per-tab partition identity stays out of page metadata and registration cannot cover load errors", async () => {
@@ -579,10 +636,12 @@ test("redacts Browser type text in the persisted SQLite transcript", async () =>
     const manager = createDatabaseSession({ database, profile, agentId: "assistant" });
     protectBrowserSessionManager(manager);
     const secret = "sqlite-transcript-secret";
-    manager.appendMessage({ role: "assistant", content: [{ type: "toolCall", id: "tool-1", name: "browser", arguments: { action: "type", tabId: "browser-a", selector: "#email", text: secret } }] });
+    manager.appendMessage({ role: "assistant", content: [{ type: "toolCall", id: "tool-1", name: "browser", arguments: { action: "navigate", tabId: "browser-a", url: "https://example.test/account?token=url-secret#fragment", selector: "#secret", text: secret } }] });
     const entries = database.getSessionEntries(manager.getSessionFile());
     assert.equal(entries.at(-1)?.message?.content?.[0]?.arguments?.text, "[redacted]");
-    assert.doesNotMatch(JSON.stringify(entries), /sqlite-transcript-secret/);
+    assert.equal(entries.at(-1)?.message?.content?.[0]?.arguments?.url, "[redacted]");
+    assert.equal(entries.at(-1)?.message?.content?.[0]?.arguments?.selector, "[redacted]");
+    assert.doesNotMatch(JSON.stringify(entries), /sqlite-transcript-secret|url-secret|#secret/);
   } finally {
     database.close();
     await rm(directory, { recursive: true, force: true });
@@ -598,4 +657,10 @@ test("browser guests retain the existing blocked capabilities", async () => {
   assert.match(source, /setPermissionCheckHandler\(\(\) => false\)/);
   assert.match(source, /setPermissionRequestHandler\([^\n]*callback\(false\)/);
   assert.match(source, /event\.preventDefault\(\)/);
+});
+
+test("frame navigation uses Electron 43 details URL while retaining the unsafe URL guard", async () => {
+  const source = await readFile(new URL("../electron/main.mjs", import.meta.url), "utf8");
+  assert.match(source, /on\("will-frame-navigate", \(details\) => \{ if \(!isAllowedBrowserUrl\(details\.url\)\) details\.preventDefault\(\); \}\)/);
+  assert.doesNotMatch(source, /on\("will-frame-navigate", \(event, url\)/);
 });

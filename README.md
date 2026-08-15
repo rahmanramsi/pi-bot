@@ -40,7 +40,7 @@ Pi Bot stores settings, session mappings, agent/workspace-scoped sessions, app-o
 
 Prompts, workspace context, and tool results needed by an agent are sent to the model provider you connect. That provider's privacy policy applies to its handling of that data.
 
-The Browser uses its own local profile per chat session. It blocks downloads, popups, site permissions, and non-HTTP(S) navigation. Agents can read visible page content and use normal controls in tabs owned by the active chat session, but never receive cookies, local storage, passwords, or credential APIs. Manual sign-in remains user-controlled.
+Each Browser tab uses its own persistent local profile within its owning chat session; profiles are not shared between tabs or chats. It blocks downloads, popups, site permissions, and non-HTTP(S) navigation. Agents can read visible page content and use normal controls in tabs owned by the active chat session, but never receive cookies, local storage, passwords, or credential APIs. Manual sign-in remains user-controlled and must be repeated in another tab.
 
 The Browser tool starts with `tabs` to discover the active chat's opaque tab IDs. Use `read` for visible page content and stable control targets, then `navigate`, `click`, `type`, or `submit`; hidden/disabled controls and page failures return stable redacted errors, and typed values never appear in activity summaries.
 
@@ -56,6 +56,7 @@ npm run dev
 Validation and release build:
 
 ```bash
+npm test
 npm run typecheck
 npm run build
 npm run dist
@@ -81,7 +82,7 @@ Open an issue at [github.com/rahmanramsi/pi-bot/issues](https://github.com/rahma
 
 ## Development notes
 
-The release gate runs TypeScript validation, a production build, an asset-path check, and `npm run smoke:packaged`, which opens the packaged app through first setup. A provider connection, agent creation, workspace selection, one prompt/tool run, and restart/session persistence still require a credentialed manual test.
+The release gate runs the Node test suite (`npm test`), TypeScript validation, a production build, an asset-path check, and `npm run smoke:packaged`, which opens the packaged app through first setup. A provider connection, agent creation, workspace selection, one prompt/tool run, and restart/session persistence still require a credentialed manual test.
 
 ## License
 

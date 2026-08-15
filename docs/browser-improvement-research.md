@@ -16,7 +16,7 @@ Browser Pi Bot tetap menjadi browser pribadi yang terlihat pengguna di panel kan
 | Navigasi | Toolbar sudah punya Back, Forward, Reload/Stop, address bar, dan Buka di browser utama. | Tambahkan state halaman yang gagal/diblokir dan alamat yang dipilih pengguna agar browser tidak terasa diam. |
 | Keamanan guest | `will-attach-webview` menghapus preload dan memaksa Node off, sandbox/context isolation/web security on. | Pertahankan sebagai penjaga utama; jangan memindahkan keputusan ini ke renderer. |
 | Popup, permission, unduhan | Seluruhnya ditolak di main process. | Pertahankan penolakan, tetapi jelaskan hasilnya secara singkat kepada pengguna ketika terjadi. |
-| Sesi | Awalnya satu profil persisten untuk seluruh aplikasi. | Karena panel kanan adalah milik session chat, gunakan partition persisten per session agar cookie/login dan state browsing tidak bocor ke percakapan lain. |
+| Profil Browser | Setiap tab Browser memiliki partition persisten collision-resistant yang diterbitkan main process. | Pertahankan satu profile terisolasi untuk setiap Browser tab; cookie/login dan state browsing tidak dibagikan ke tab lain atau chat lain. |
 | Error dan proses crash | UI hanya menunjukkan spinner; kegagalan `loadURL()` diabaikan. | Tambahkan empty/error state dengan Retry dan Buka di browser utama; jangan tampilkan kode Chromium mentah. |
 | Agent boundary | Tool Browser sebelumnya belum tersedia. | Tool hanya menemukan tab pada chat aktif, bekerja melalui visible normal controls, dan memakai IPC sempit tanpa `webContents` ID dari renderer. |
 
@@ -36,11 +36,9 @@ Browser Pi Bot tetap menjadi browser pribadi yang terlihat pengguna di panel kan
 
 1. **Crash/unresponsive state.** Dengarkan guest yang hilang atau tidak responsif; Electron menyediakan `render-process-gone`, `unresponsive`, dan `responsive`. Tawarkan Reload setelah crash, tanpa me-restart aplikasi atau chat pengguna. [Electron: lifecycle events](https://www.electronjs.org/docs/latest/api/web-contents#event-render-process-gone)
 
-2. **Kebijakan profil browser.** `persist:` membuat session bertahan dan dibagikan kepada semua page dengan partition yang sama; tanpa prefiks itu session hanya di memori. Keputusan yang perlu dipilih eksplisit:
-   - **Satu profil Pi Bot:** login tetap ada lintas session chat. Paling sederhana, tetapi tidak sejalan bila pengguna menganggap “per session” mencakup cookie.
-   - **Profil per session chat:** cookie/login terpisah per session dan harus diberi tombol “Hapus data browser session”; lebih privat, tetapi pengguna perlu login ulang.
+2. **Kebijakan profil browser.** `persist:` membuat session bertahan dan membagikan data kepada semua page dengan partition yang sama; tanpa prefiks itu session hanya di memori. Pi Bot tidak memakai satu profile bersama untuk satu chat atau seluruh aplikasi.
 
-   **Keputusan Pi Bot:** gunakan profil persisten per session chat, karena panel kanan memang terikat pada session. Tampilkan salinan UI yang jujur bahwa pengguna mungkin perlu login kembali pada percakapan lain. [Electron: webview partition](https://www.electronjs.org/docs/latest/api/webview-tag#partition) · [Electron: sessions](https://www.electronjs.org/docs/latest/api/session)
+   **Keputusan Pi Bot:** setiap Browser tab mendapat partition persisten collision-resistant miliknya sendiri, yang tetap terikat pada chat session pemilik tab. Cookie, login, dan state browsing tidak dibagikan ke tab lain atau chat lain. Manual sign-in tetap dikendalikan pengguna dan harus diulang pada tab lain. [Electron: webview partition](https://www.electronjs.org/docs/latest/api/webview-tag#partition) · [Electron: sessions](https://www.electronjs.org/docs/latest/api/session)
 
 3. **Pertahankan deny-by-default.** Remote content wajib tetap tanpa Node integration, dengan context isolation, sandbox, dan web security aktif. Setiap session remote harus memiliki permission handler; `will-download` dapat dibatalkan menggunakan `preventDefault()`. Konfigurasi yang sekarang sudah mengikuti ini dan tidak boleh dilonggarkan demi UX. [Electron security checklist](https://www.electronjs.org/docs/latest/tutorial/security) · [Electron: permission request handler](https://www.electronjs.org/docs/latest/api/session#sessetpermissionrequesthandlerhandler) · [Electron: cancel download](https://www.electronjs.org/docs/latest/api/session#event-will-download)
 
