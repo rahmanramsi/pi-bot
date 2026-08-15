@@ -36,7 +36,7 @@ The initial setup requires a one-time acknowledgement of this risk. It is a disc
 
 ## Privacy
 
-Pi Bot stores its settings, session mappings, app-owned workspaces, model-provided reasoning, and credentials locally in Electron's app-data directory. The app has no built-in telemetry, analytics, crash reporting, or cloud sync.
+Pi Bot stores settings, session mappings, agent/workspace-scoped sessions, app-owned workspaces, and model-provided reasoning in `pi-bot.sqlite` under Electron's app-data directory. Provider credentials remain in the separate permission-restricted `credentials.json`; they are not part of the database migration. New installs do not create settings or session JSONL. Existing installs migrate validated legacy files without deleting them automatically. See [storage, migration, and recovery](docs/storage-and-migration.md) for the layout and cleanup procedure. The app has no built-in telemetry, analytics, crash reporting, or cloud sync.
 
 Prompts, workspace context, and tool results needed by an agent are sent to the model provider you connect. That provider's privacy policy applies to its handling of that data.
 

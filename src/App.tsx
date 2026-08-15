@@ -75,21 +75,63 @@ import type {
   ThinkingLevel,
   TimelineItem,
   WorkspaceFile,
+  WorkspacePanelPreferences,
+  WorkspacePanelTab,
 } from "./types";
 
 type View = "chat" | "settings";
 type SettingsSection = "agents" | "models";
 type Theme = "dark" | "light";
-type WorkspaceTabKind = "files" | "browser";
-
-type WorkspaceTab = {
-  id: string;
-  kind: WorkspaceTabKind;
-  url?: string;
-  title?: string;
-};
+type WorkspaceTabKind = WorkspacePanelTab["kind"];
+type WorkspaceTab = WorkspacePanelTab;
 
 const defaultBrowserUrl = "https://www.google.com/";
+
+function defaultWorkspacePanelPreferences(): WorkspacePanelPreferences {
+  return {
+    tabs: [{ id: "files-default", kind: "files" }],
+    activeTabId: "files-default",
+    open: true,
+    width: 340,
+  };
+}
+
+function isWorkspaceTab(value: unknown): value is WorkspaceTab {
+  if (!value || typeof value !== "object" || !("id" in value) || !("kind" in value)) return false;
+  return typeof value.id === "string" && (value.kind === "files" || value.kind === "browser");
+}
+
+function readLegacyWorkspacePanelPreferences(storageKey: string): WorkspacePanelPreferences | null {
+  const rawTabs = localStorage.getItem(`${storageKey}:tabs`);
+  const tabs = rawTabs
+    ? (() => {
+      try {
+        const parsed: unknown = JSON.parse(rawTabs);
+        return Array.isArray(parsed) && parsed.every(isWorkspaceTab) ? parsed : undefined;
+      } catch {
+        return undefined;
+      }
+    })()
+    : undefined;
+  const fallback = defaultWorkspacePanelPreferences();
+  if (!tabs && !localStorage.getItem(`${storageKey}:active-tab`) && !localStorage.getItem(`${storageKey}:open`) && !localStorage.getItem(`${storageKey}:width`)) return null;
+  const safeTabs = tabs && tabs.length > 0 ? tabs : fallback.tabs;
+  const rawActiveTabId = localStorage.getItem(`${storageKey}:active-tab`);
+  const rawWidth = Number(localStorage.getItem(`${storageKey}:width`));
+  return {
+    tabs: safeTabs,
+    activeTabId: rawActiveTabId && safeTabs.some((tab) => tab.id === rawActiveTabId) ? rawActiveTabId : safeTabs[0]?.id ?? null,
+    open: localStorage.getItem(`${storageKey}:open`) !== "false",
+    width: Number.isFinite(rawWidth) ? Math.min(520, Math.max(280, Math.round(rawWidth))) : fallback.width,
+  };
+}
+
+function clearLegacyWorkspacePanelPreferences(storageKey: string) {
+  localStorage.removeItem(`${storageKey}:tabs`);
+  localStorage.removeItem(`${storageKey}:active-tab`);
+  localStorage.removeItem(`${storageKey}:open`);
+  localStorage.removeItem(`${storageKey}:width`);
+}
 
 type FileTreeNode = WorkspaceFile & {
   name: string;
@@ -1071,34 +1113,24 @@ function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; partiti
   </div>;
 }
 
-type RightWorkspacePanelProps = { data: PiBootstrap; open: boolean; storageKey: string; onClose: () => void };
+type RightWorkspacePanelProps = { data: PiBootstrap; open: boolean; storageKey: string; preferences: WorkspacePanelPreferences; onChange: (preferences: WorkspacePanelPreferences) => void; onClose: () => void };
 
-const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(function RightWorkspacePanel({ data, open, storageKey, onClose }, ref) {
-  const [tabs, setTabs] = useState<WorkspaceTab[]>(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(`${storageKey}:tabs`) || "[]");
-      if (Array.isArray(saved) && saved.every((tab) => typeof tab?.id === "string" && (tab.kind === "files" || tab.kind === "browser"))) return saved;
-    } catch { /* A malformed local preference starts fresh. */ }
-    return [{ id: "files-default", kind: "files" }];
-  });
-  const [activeTabId, setActiveTabId] = useState<string | null>(() => localStorage.getItem(`${storageKey}:active-tab`) || "files-default");
-  useEffect(() => { localStorage.setItem(`${storageKey}:tabs`, JSON.stringify(tabs)); }, [storageKey, tabs]);
-  useEffect(() => { if (activeTabId) localStorage.setItem(`${storageKey}:active-tab`, activeTabId); else localStorage.removeItem(`${storageKey}:active-tab`); }, [activeTabId, storageKey]);
+const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(function RightWorkspacePanel({ data, open, storageKey, preferences, onChange, onClose }, ref) {
+  const tabs = preferences.tabs;
+  const activeTabId = preferences.activeTabId;
   const browserPartition = browserPartitionForSession(storageKey);
   const addTab = (kind: WorkspaceTabKind) => {
     const id = `${kind}-${Date.now()}`;
-    setTabs((current) => [...current, { id, kind, ...(kind === "browser" ? { url: defaultBrowserUrl } : {}) }]);
-    setActiveTabId(id);
+    onChange({ ...preferences, tabs: [...tabs, { id, kind, ...(kind === "browser" ? { url: defaultBrowserUrl } : {}) }], activeTabId: id });
   };
   const closeTab = (id: string) => {
     const next = tabs.filter((tab) => tab.id !== id);
-    setTabs(next);
-    if (activeTabId === id) setActiveTabId(next.at(-1)?.id ?? null);
+    onChange({ ...preferences, tabs: next, activeTabId: activeTabId === id ? next.at(-1)?.id ?? null : activeTabId });
   };
-  const updateBrowserTab = (id: string, next: Pick<WorkspaceTab, "url" | "title">) => setTabs((current) => current.map((tab) => tab.id === id ? { ...tab, ...next } : tab));
+  const updateBrowserTab = (id: string, next: Pick<WorkspaceTab, "url" | "title">) => onChange({ ...preferences, tabs: tabs.map((tab) => tab.id === id ? { ...tab, ...next } : tab) });
   return (
     <motion.aside ref={ref} className="right-workspace-panel" aria-label="Workspace panel" initial={{ opacity: 0, x: "8%" }} animate={{ opacity: open ? 1 : 0, x: open ? 0 : "8%" }} exit={{ opacity: 0, x: "8%" }} transition={motionSprings.panel} style={{ pointerEvents: open ? "auto" : "none" }} data-motion="workspace-panel">
-      <Tabs value={activeTabId} onValueChange={(value) => setActiveTabId(value === null ? null : String(value))} className="workspace-tabs">
+      <Tabs value={activeTabId} onValueChange={(value) => onChange({ ...preferences, activeTabId: value === null ? null : String(value) })} className="workspace-tabs">
         <header className="workspace-panel-topbar section-topbar" aria-label="Workspace toolbar">
           <TabsList className="workspace-tab-list" aria-label="Workspace tabs">
             {tabs.map((tab) => <div className={`workspace-tab ${activeTabId === tab.id ? "selected" : ""}`} key={tab.id}>
@@ -1138,16 +1170,43 @@ type ChatViewProps = {
 
 function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onModelChange, onThinkingChange }: Omit<ChatViewProps, "workspaceOpen" | "onShowWorkspace">) {
   const storageKey = `pi-bot.workspace-panel:${workspacePanelSessionKey(data)}`;
-  const [panelOpen, setPanelOpen] = useState(() => localStorage.getItem(`${storageKey}:open`) !== "false");
-  const [panelWidth, setPanelWidth] = useState(() => Math.min(520, Math.max(280, Number(localStorage.getItem(`${storageKey}:width`)) || 340)));
+  const [preferences, setPreferences] = useState<WorkspacePanelPreferences>(defaultWorkspacePanelPreferences);
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
+  const loadedStorageKey = useRef<string | undefined>(undefined);
   const resize = useRef<{ x: number; width: number } | undefined>(undefined);
-  useEffect(() => { localStorage.setItem(`${storageKey}:open`, String(panelOpen)); }, [panelOpen, storageKey]);
-  useEffect(() => { localStorage.setItem(`${storageKey}:width`, String(panelWidth)); }, [panelWidth, storageKey]);
+  useEffect(() => {
+    let cancelled = false;
+    loadedStorageKey.current = undefined;
+    setPreferences(defaultWorkspacePanelPreferences());
+    setPreferencesLoaded(false);
+    const legacy = readLegacyWorkspacePanelPreferences(storageKey);
+    window.piBot.getWorkspacePreferences(storageKey)
+      .then((saved) => {
+        if (saved) return saved;
+        if (!legacy) return defaultWorkspacePanelPreferences();
+        return window.piBot.saveWorkspacePreferences(storageKey, legacy).then(() => {
+          clearLegacyWorkspacePanelPreferences(storageKey);
+          return legacy;
+        });
+      })
+      .catch(() => legacy ?? defaultWorkspacePanelPreferences())
+      .then((next) => {
+        if (cancelled) return;
+        loadedStorageKey.current = storageKey;
+        setPreferences(next);
+        setPreferencesLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, [storageKey]);
+  useEffect(() => {
+    if (!preferencesLoaded || loadedStorageKey.current !== storageKey) return;
+    void window.piBot.saveWorkspacePreferences(storageKey, preferences).catch(() => undefined);
+  }, [preferences, preferencesLoaded, storageKey]);
   const startResize = (event: ReactMouseEvent<HTMLButtonElement>) => {
-    resize.current = { x: event.clientX, width: panelWidth };
+    resize.current = { x: event.clientX, width: preferences.width };
     const move = (next: MouseEvent) => {
       if (!resize.current) return;
-      setPanelWidth(Math.min(520, Math.max(280, resize.current.width + resize.current.x - next.clientX)));
+      setPreferences((current) => ({ ...current, width: Math.min(520, Math.max(280, resize.current ? resize.current.width + resize.current.x - next.clientX : current.width)) }));
     };
     const end = () => {
       resize.current = undefined;
@@ -1157,7 +1216,7 @@ function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onMo
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", end);
   };
-  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${panelOpen ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${panelWidth}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} workspaceOpen={panelOpen} onShowWorkspace={() => setPanelOpen(true)} />{panelOpen && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<AnimatePresence initial={false} mode="popLayout">{panelOpen && <RightWorkspacePanel key="workspace-panel" data={data} open={panelOpen} storageKey={storageKey} onClose={() => setPanelOpen(false)} />}</AnimatePresence></motion.section>;
+  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${preferences.open ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${preferences.width}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} workspaceOpen={preferences.open} onShowWorkspace={() => setPreferences((current) => ({ ...current, open: true }))} />{preferences.open && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<AnimatePresence initial={false} mode="popLayout">{preferences.open && <RightWorkspacePanel key="workspace-panel" data={data} open={preferences.open} storageKey={storageKey} preferences={preferences} onChange={setPreferences} onClose={() => setPreferences((current) => ({ ...current, open: false }))} />}</AnimatePresence></motion.section>;
 }
 
 function ChatView({

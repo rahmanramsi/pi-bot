@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, session as electronSession, shell } from "electron";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -9,16 +9,17 @@ import {
   getAgentDir,
   loadSkillsFromDir,
   ModelRuntime,
-  SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import {
-  copyLegacySessionFiles,
-  legacySessionPaths,
-  recoverPendingSessions,
-  removePendingSession,
-  savePendingSession,
-} from "./session-persistence.mjs";
+  createAppDatabase,
+  DATABASE_FILENAME,
+  migrateLegacyStorage,
+} from "./app-database.mjs";
+import {
+  createDatabaseSession,
+  createDatabaseSessionManager,
+} from "./session-database-adapter.mjs";
 import { reasoningId, thinkingText } from "./reasoning.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -28,7 +29,6 @@ const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max
 const browserPartitionPrefix = "persist:pi-bot-browser-";
 const configuredBrowserPartitions = new Set();
 const maxWorkspaceFiles = 500;
-const settingsVersion = 2;
 const defaultAgentId = "assistant";
 
 let window;
@@ -48,6 +48,7 @@ const sessionRuntimes = new Map();
 let modelRuntime;
 let availableModels = [];
 let storedCredentials = {};
+let appDatabase;
 const pendingAuthPrompts = new Map();
 let smokeTest;
 
@@ -62,7 +63,7 @@ function userDataPath(...parts) {
   return path.join(app.getPath("userData"), ...parts);
 }
 
-function settingsFile() {
+function legacySettingsFile() {
   return userDataPath("settings.json");
 }
 
@@ -76,11 +77,6 @@ function defaultWorkspace(agentId) {
 
 function isolatedRuntimeDir(agentId) {
   return userDataPath("runtime", agentId);
-}
-
-function sessionDirectory(agentId, workspace) {
-  const workspaceKey = createHash("sha256").update(workspace).digest("hex").slice(0, 20);
-  return userDataPath("sessions", agentId, workspaceKey);
 }
 
 function isAgentId(value) {
@@ -221,79 +217,34 @@ function loadSettings() {
   executionRiskAccepted = false;
   currentSessions = {};
   sessionRecords = {};
-  try {
-    const saved = JSON.parse(readFileSync(settingsFile(), "utf8"));
-    if (saved?.schemaVersion !== settingsVersion) {
-      migrateLegacySettings(saved);
-      return;
-    }
-
-    const entries = Array.isArray(saved.agents)
-      ? saved.agents.map((value) => [value?.id, value])
-      : saved.agents && typeof saved.agents === "object"
-        ? Object.entries(saved.agents)
-        : [];
-    const next = {};
-    for (const [rawId, value] of entries) {
-      if (typeof rawId !== "string" || !rawId || !value || typeof value !== "object") continue;
-      next[rawId] = normalizeProfile(rawId, value, rawId === defaultAgentId ? defaultAgentProfile() : {});
-    }
-    if (Object.keys(next).length > 0) agentProfiles = next;
-    if (!agentProfiles[defaultAgentId] && Object.keys(agentProfiles).length === 0) {
-      agentProfiles = { [defaultAgentId]: defaultAgentProfile() };
-    }
-    if (typeof saved.activeAgentId === "string" && isAgentId(saved.activeAgentId)) activeAgentId = saved.activeAgentId;
-    else if (!isAgentId(activeAgentId)) activeAgentId = Object.keys(agentProfiles)[0] ?? null;
-    setupComplete = Boolean(saved.setupComplete);
-    executionRiskAccepted = Boolean(saved.executionRiskAccepted);
-    if (thinkingLevels.includes(saved.thinkingLevel)) preferredThinkingLevel = saved.thinkingLevel;
-    if (saved.currentSessions && typeof saved.currentSessions === "object") currentSessions = saved.currentSessions;
-    if (saved.sessionRecords && typeof saved.sessionRecords === "object") sessionRecords = saved.sessionRecords;
-  } catch {
-    // A missing file, or a pre-v2 file, starts with a clean Assistant profile.
+  const saved = appDatabase.getState();
+  const next = {};
+  for (const value of saved.agents) {
+    if (!value || typeof value.id !== "string" || !value.id) continue;
+    next[value.id] = normalizeProfile(value.id, value, value.id === defaultAgentId ? defaultAgentProfile() : {});
   }
-}
-
-function migrateLegacySettings(saved) {
-  if (!saved || saved.schemaVersion !== undefined || typeof saved.workspace !== "string" || !existsSync(saved.workspace)) return;
-  const profile = normalizeProfile(defaultAgentId, {
-    ...defaultAgentProfile(),
-    workspace: saved.workspace,
-    workspaceKind: "external",
-    defaultModelKey: saved.modelKey,
-    thinkingLevel: saved.thinkingLevel,
-  });
-  const directory = sessionDirectory(defaultAgentId, profile.workspace);
-  const legacyFiles = legacySessionPaths(saved).filter((file) => existsSync(file));
-  const { copied } = copyLegacySessionFiles(legacyFiles, directory);
-  agentProfiles = { [defaultAgentId]: profile };
-  activeAgentId = defaultAgentId;
+  if (Object.keys(next).length > 0) agentProfiles = next;
+  if (typeof saved.activeAgentId === "string" && isAgentId(saved.activeAgentId)) activeAgentId = saved.activeAgentId;
+  else if (!isAgentId(activeAgentId)) activeAgentId = Object.keys(agentProfiles)[0] ?? null;
+  setupComplete = saved.setupComplete;
+  executionRiskAccepted = saved.executionRiskAccepted;
   if (thinkingLevels.includes(saved.thinkingLevel)) preferredThinkingLevel = saved.thinkingLevel;
-  for (const file of copied) sessionRecords[file] = { agentId: defaultAgentId, workspace: profile.workspace };
-  const legacySessions = saved.agentSessions;
-  const legacyCurrent = typeof legacySessions?.[saved.activeAgentId] === "string"
-    ? legacySessions[saved.activeAgentId]
-    : legacySessions?.[saved.workspace]?.[saved.activeAgentId];
-  if (typeof legacyCurrent === "string") {
-    const migratedCurrent = path.join(directory, path.basename(legacyCurrent));
-    if (existsSync(migratedCurrent)) currentSessions[defaultAgentId] = migratedCurrent;
+  currentSessions = saved.currentSessions;
+  for (const info of appDatabase.listSessions()) {
+    sessionRecords[info.path] = { agentId: info.agentId, workspace: info.workspace };
   }
-  saveSettings();
 }
 
 function saveSettings() {
   try {
-    mkdirSync(app.getPath("userData"), { recursive: true });
-    writeFileSync(settingsFile(), JSON.stringify({
-      schemaVersion: settingsVersion,
+    appDatabase.saveState({
       setupComplete,
       executionRiskAccepted,
       activeAgentId,
       thinkingLevel: preferredThinkingLevel,
       currentSessions,
-      sessionRecords,
       agents: Object.values(agentProfiles),
-    }, null, 2));
+    });
   } catch (error) {
     console.warn("Could not save Pi Bot settings:", error);
   }
@@ -497,14 +448,17 @@ function transcriptFromManager(manager, profile = activeProfile()) {
 }
 
 function sessionSummary(info, agentId, workspace) {
+  const entries = appDatabase.getSessionEntries(info.path);
+  const named = [...entries].reverse().find((entry) => entry.type === "session_info" && typeof entry.name === "string" && entry.name.trim());
+  const firstUser = entries.find((entry) => entry.type === "message" && entry.message?.role === "user");
   return {
     path: info.path,
     id: info.id,
     agentId,
     workspace,
-    name: info.name || titleFromPrompt(info.firstMessage || "New conversation"),
-    created: info.created instanceof Date ? info.created.toISOString() : info.created,
-    modified: info.modified instanceof Date ? info.modified.toISOString() : info.modified,
+    name: named?.name || titleFromPrompt(firstUser ? messageText(firstUser.message.content) : "New conversation"),
+    created: info.created,
+    modified: info.modified,
     messageCount: info.messageCount,
   };
 }
@@ -512,11 +466,9 @@ function sessionSummary(info, agentId, workspace) {
 async function listSessions(agentId = activeAgentId) {
   const profile = isAgentId(agentId) ? agentProfiles[agentId] : undefined;
   if (!profile) return [];
-  const dir = sessionDirectory(agentId, profile.workspace);
   try {
-    return (await SessionManager.list(profile.workspace, dir))
+    return appDatabase.listSessions(agentId, profile.workspace)
       .filter((info) => info.messageCount > 0)
-      .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
       .map((info) => {
         sessionRecords[info.path] = { agentId, workspace: profile.workspace };
         return sessionSummary(info, agentId, profile.workspace);
@@ -795,20 +747,8 @@ function relay(runtime, event) {
   if (event.type === "agent_settled") send({ type: "agent-settled" });
 }
 
-function updatePendingSession(runtime, event) {
-  if (event.type !== "message_end") return;
-  const sessionFile = runtime.sessionManager.getSessionFile();
-  if (!sessionFile) return;
-  if (event.message?.role === "user") {
-    queueMicrotask(() => {
-      savePendingSession(sessionFile, [runtime.sessionManager.getHeader(), ...runtime.sessionManager.getEntries()].filter(Boolean));
-    });
-  }
-  if (event.message?.role === "assistant") {
-    queueMicrotask(() => {
-      if (existsSync(sessionFile)) removePendingSession(sessionFile);
-    });
-  }
+function updatePendingSession(_runtime, _event) {
+  // SQLite writes each SessionManager entry synchronously; no JSONL pending copy is needed.
 }
 
 async function refreshRuntime() {
@@ -900,10 +840,9 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
   ensureWorkspace(profile);
   await refreshRuntime();
 
-  const dir = sessionDirectory(agentId, profile.workspace);
-  mkdirSync(dir, { recursive: true });
   const mappedPath = currentSessions[agentId];
-  const mappedPathExists = typeof mappedPath === "string" && existsSync(mappedPath);
+  const mapped = typeof mappedPath === "string" ? appDatabase.getSession(mappedPath) : null;
+  const mappedPathExists = Boolean(mapped && mapped.agent_id === agentId && mapped.workspace === profile.workspace);
   const requestedPath = mode === "open" ? sessionPath : mode === "continue" && mappedPathExists ? mappedPath : undefined;
   const existingRuntime = requestedPath ? sessionRuntimes.get(requestedPath) : undefined;
   if (existingRuntime) {
@@ -912,13 +851,27 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
     saveSettings();
     return bootstrap();
   }
-  const manager = mode === "open"
-    ? SessionManager.open(sessionPath, dir, profile.workspace)
-    : mode === "new"
-      ? SessionManager.create(profile.workspace, dir)
-      : mappedPathExists
-        ? SessionManager.open(mappedPath, dir, profile.workspace)
-        : SessionManager.continueRecent(profile.workspace, dir);
+  let manager;
+  if (requestedPath) {
+    const stored = appDatabase.getSession(requestedPath);
+    if (!stored || stored.agent_id !== agentId || stored.workspace !== profile.workspace) throw new Error("That conversation is not in this workspace.");
+    manager = createDatabaseSessionManager({
+      database: appDatabase,
+      profile,
+      sessionPath: stored.path,
+      entries: appDatabase.getSessionEntries(stored.path),
+    });
+  } else {
+    const recent = mode === "continue" ? appDatabase.listSessions(agentId, profile.workspace)[0] : undefined;
+    manager = recent
+      ? createDatabaseSessionManager({
+        database: appDatabase,
+        profile,
+        sessionPath: recent.path,
+        entries: appDatabase.getSessionEntries(recent.path),
+      })
+      : createDatabaseSession({ database: appDatabase, profile, agentId });
+  }
 
   const sessionFile = manager.getSessionFile();
   if (sessionFile) {
@@ -1088,13 +1041,10 @@ ipcMain.handle("pi:delete-agent", async (_event, agentId, deleteWorkspace = fals
   const profile = agentProfiles[agentId];
   await closeAgentSessions(agentId);
   if (agentId === activeAgentId) clearActiveRuntime();
-  for (const [file, record] of Object.entries(sessionRecords)) {
-    if (record?.agentId !== agentId) continue;
-    try { rmSync(file, { force: true }); } catch { /* The session may already be gone. */ }
-    delete sessionRecords[file];
-  }
+  for (const [file, record] of Object.entries(sessionRecords)) if (record?.agentId === agentId) delete sessionRecords[file];
   delete currentSessions[agentId];
   delete agentProfiles[agentId];
+  appDatabase.deleteAgent(agentId);
   if (deleteWorkspace && profile.workspaceKind === "app" && profile.workspace === defaultWorkspace(agentId)) {
     try { rmSync(profile.workspace, { recursive: true, force: true }); } catch { /* Keep profile deletion successful. */ }
   }
@@ -1159,8 +1109,7 @@ ipcMain.handle("pi:delete-session", async (_event, sessionPath) => {
   const runtime = [...sessionRuntimes.values()].find((entry) => entry.sessionManager.getSessionFile() === sessionPath);
   if (runtime) await disposeRuntime(runtime.key);
   else if (wasCurrent) await closeCurrentSession();
-  try { rmSync(sessionPath, { force: true }); } catch { /* The file may already be gone. */ }
-  removePendingSession(sessionPath);
+  appDatabase.deleteSession(sessionPath);
   delete sessionRecords[sessionPath];
   if (currentSessions[activeAgentId] === sessionPath) delete currentSessions[activeAgentId];
   saveSettings();
@@ -1283,6 +1232,8 @@ ipcMain.handle("pi:import-pi-auth", async (_event, accepted) => {
 
 ipcMain.handle("pi:auth-respond", (_event, promptId, value) => respondToAuthPrompt(promptId, value));
 ipcMain.handle("pi:auth-cancel", (_event, promptId) => cancelAuthPrompt(promptId));
+ipcMain.handle("pi:get-workspace-preferences", (_event, key) => appDatabase.getWorkspacePreferences(key));
+ipcMain.handle("pi:save-workspace-preferences", (_event, key, preferences) => appDatabase.saveWorkspacePreferences(key, preferences));
 ipcMain.handle("pi:list-workspace-files", () => listWorkspaceFiles());
 ipcMain.handle("pi:open-workspace-file", async (_event, relativePath) => {
   const target = resolveWorkspaceFile(relativePath);
@@ -1372,8 +1323,15 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  appDatabase = createAppDatabase(userDataPath(DATABASE_FILENAME));
+  migrateLegacyStorage(appDatabase, {
+    settingsPath: legacySettingsFile(),
+    sessionsRoot: userDataPath("sessions"),
+    defaultAgentId,
+    defaultAgent: defaultAgentProfile(),
+    normalizeAgent: (id, value, fallback) => normalizeProfile(id, value, fallback),
+  });
   loadSettings();
-  recoverPendingSessions(userDataPath("sessions"));
   loadCredentials();
   ensureAllWorkspaces();
   createWindow();
@@ -1396,4 +1354,5 @@ app.on("before-quit", () => {
   }
   sessionRuntimes.clear();
   clearActiveRuntime();
+  appDatabase?.close();
 });

@@ -32,18 +32,26 @@ export function recoverPendingSessions(directory) {
     }
     if (!entry.isFile() || !entry.name.endsWith(".jsonl.pending")) continue;
     const sessionFile = file.slice(0, -".pending".length);
-    const pendingEntries = readSessionEntries(file);
+    const pendingResult = readSessionEntries(file);
+    if (!pendingResult.valid) continue;
+    const pendingEntries = pendingResult.entries;
     if (!isRecoverableSession(pendingEntries)) {
       rmSync(file, { force: true });
       discarded++;
       continue;
     }
-    const sessionEntries = existsSync(sessionFile) ? readSessionEntries(sessionFile) : [];
+    const sessionResult = existsSync(sessionFile) ? readSessionEntries(sessionFile) : { valid: true, entries: [] };
+    if (!sessionResult.valid) continue;
+    const sessionEntries = sessionResult.valid ? sessionResult.entries : [];
+    if (sessionEntries.length > 0 && !sameSessionIdentity(sessionEntries[0], pendingEntries[0])) continue;
     if (sessionEntries.length >= pendingEntries.length) {
-      rmSync(file, { force: true });
-      discarded++;
+      if (entriesPrefix(pendingEntries, sessionEntries)) {
+        rmSync(file, { force: true });
+        discarded++;
+      }
       continue;
     }
+    if (!entriesPrefix(sessionEntries, pendingEntries)) continue;
     renameSync(file, sessionFile);
     recovered++;
   }
@@ -52,14 +60,44 @@ export function recoverPendingSessions(directory) {
 
 function readSessionEntries(file) {
   try {
-    return readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse);
+    const content = readFileSync(file, "utf8").trim();
+    if (!content) return { valid: true, entries: [] };
+    const entries = content.split(/\r?\n/).filter(Boolean).map(JSON.parse);
+    return { valid: validateRecoveryEntries(entries), entries };
   } catch {
-    return [];
+    return { valid: false, entries: [] };
   }
 }
 
 function isRecoverableSession(entries) {
   return entries[0]?.type === "session" && entries.some((entry) => entry?.type === "message" && entry.message?.role === "user");
+}
+
+function validateRecoveryEntries(entries) {
+  const header = entries[0];
+  if (!header || header.type !== "session" || typeof header.id !== "string" || !header.id || typeof header.timestamp !== "string" || typeof header.cwd !== "string") return false;
+  const version = Number(header.version) || 1;
+  const ids = new Set();
+  for (const entry of entries.slice(1)) {
+    if (!entry || typeof entry !== "object" || typeof entry.type !== "string" || typeof entry.timestamp !== "string") return false;
+    if (version <= 1) {
+      if (entry.type === "message" && (!entry.message || typeof entry.message !== "object")) return false;
+      continue;
+    }
+    if (typeof entry.id !== "string" || !entry.id || (entry.parentId !== null && typeof entry.parentId !== "string") || ids.has(entry.id)) return false;
+    if (entry.parentId !== null && !ids.has(entry.parentId)) return false;
+    ids.add(entry.id);
+  }
+  return true;
+}
+
+function entriesPrefix(prefix, full) {
+  return prefix.length <= full.length && prefix.every((entry, index) => JSON.stringify(entry) === JSON.stringify(full[index]));
+}
+
+function sameSessionIdentity(originalHeader, pendingHeader) {
+  return originalHeader?.id === pendingHeader?.id
+    && (!originalHeader?.cwd || !pendingHeader?.cwd || originalHeader.cwd === pendingHeader.cwd);
 }
 
 export function copyLegacySessionFiles(files, directory) {
