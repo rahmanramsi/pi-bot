@@ -1,12 +1,11 @@
-import { createElement, forwardRef, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { createElement, forwardRef, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
   Archive,
   ArrowDown,
   ArrowLeft,
   Bot,
   Check,
+  Copy,
   ChevronRight,
   CircleAlert,
   ChevronLeft,
@@ -36,22 +35,23 @@ import {
   ShieldCheck,
   Square,
   Sun,
-  Terminal,
   Trash2,
   X,
 } from "lucide-react";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
-import { Message, MessageAvatar, MessageContent, MessageFooter, MessageHeader } from "@/components/ui/message";
-import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from "@/components/ui/message-scroller";
+import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
+import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import { PromptInput, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from "@/components/ai-elements/prompt-input";
+import { Task, TaskContent, TaskTrigger } from "@/components/ai-elements/task";
+import { Terminal } from "@/components/ai-elements/terminal";
+import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput, type ToolStatus } from "@/components/ai-elements/tool";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -268,7 +268,7 @@ function ThinkingSelect({
   );
 }
 
-function Composer({
+export function Composer({
   busy,
   disabled,
   agentName,
@@ -306,8 +306,8 @@ function Composer({
   }
 
   return (
-    <form className="composer" onSubmit={submit}>
-      <Textarea
+    <PromptInput className="composer" onSubmit={submit}>
+      <PromptInputTextarea
         ref={inputRef}
         className="composer-input"
         aria-label={`Message ${agentName}`}
@@ -328,26 +328,26 @@ function Composer({
         disabled={disabled}
         rows={1}
       />
-      <div className="composer-toolbar">
-        <div className="composer-toolbar-left">
+      <PromptInputFooter className="composer-toolbar">
+        <PromptInputTools className="composer-toolbar-left">
           <span className="composer-prefix" aria-hidden="true">+</span>
           <span className="composer-divider" aria-hidden="true">•</span>
           <div className="composer-context" title={`${formatTokenCount(config.context.tokens)} of ${formatTokenCount(config.context.contextWindow)} tokens used`}>
             <span>{contextLabel} context used</span>
             <Progress className="context-meter" value={contextPercent} aria-label="Context usage" />
           </div>
-        </div>
-        <div className="composer-actions">
+        </PromptInputTools>
+        <PromptInputTools className="composer-actions">
           <ModelSelect value={config.modelKey} models={config.models} onChange={onModelChange} disabled={busy || config.models.length === 0} className="composer-model-select" />
           <ThinkingSelect value={config.thinkingLevel} levels={reasoningLevels} onChange={onThinkingChange} disabled={busy || !config.modelAvailable} />
           {busy ? (
-            <Button className="stop-button" size="icon" type="button" onClick={onAbort} aria-label="Stop response"><Square /></Button>
+            <PromptInputSubmit className="stop-button" size="icon" status="streaming" onClick={onAbort}><Square /></PromptInputSubmit>
           ) : (
-            <Button className="send-button" size="icon" type="submit" aria-label="Send message" disabled={disabled || !message.trim()}><Send /></Button>
+            <PromptInputSubmit className="send-button" size="icon" status="ready" disabled={disabled || !message.trim()}><Send /></PromptInputSubmit>
           )}
-        </div>
-      </div>
-    </form>
+        </PromptInputTools>
+      </PromptInputFooter>
+    </PromptInput>
   );
 }
 
@@ -355,12 +355,8 @@ function activityLabel(item: TimelineItem) {
   return item.label.replace(/^Tool\s*·\s*/, "");
 }
 
-function activityStatus(item: TimelineItem) {
-  const status = item.status ?? "done";
-  return {
-    status,
-    icon: status === "running" ? <LoaderCircle className="spin" /> : status === "failed" ? <CircleAlert /> : <Check />,
-  };
+export function timelineToolStatus(item: TimelineItem): ToolStatus {
+  return item.status === "running" ? "running" : item.status === "failed" ? "failed" : "completed";
 }
 
 function activityTitle(item: TimelineItem) {
@@ -392,34 +388,27 @@ function activityCommand(item: TimelineItem) {
 
 function ActivityItem({ item }: { item: TimelineItem }) {
   const [open, setOpen] = useState(false);
-  const state = activityStatus(item);
+  const status = timelineToolStatus(item);
   const title = activityTitle(item);
   const command = activityCommand(item);
-  const output = state.status === "running" && item.body === item.input ? "Running…" : item.body || "No output returned.";
-  const outcome = state.status === "running" ? "Running" : state.status === "failed" ? "Failed" : "Success";
+  const output = status === "running" && item.body === item.input ? "Running…" : item.body || "No output returned.";
   return (
-    <Accordion className="activity-item-accordion" value={open ? ["activity"] : []} onValueChange={(next) => setOpen(next.includes("activity"))} data-motion="activity-item">
-      <AccordionItem value="activity" className={`activity-item ${state.status}`}>
-        <AccordionTrigger className="activity-item-trigger">
-        <span className="activity-glyph"><Terminal /></span>
-        <span className="activity-summary-copy">
-          <strong className="activity-summary-closed">{command ? <>Ran <code title={command}>{command}</code></> : title}</strong>
-          <strong className="activity-summary-open">{command ? "Ran command" : title}</strong>
-        </span>
-        <motion.span className="activity-chevron" animate={{ rotate: open ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span>
-        </AccordionTrigger>
-        <AccordionContent className="activity-output-content">
-          <div className="activity-output-motion">
+    <Tool className={`activity-item ${status}${command ? " shell" : ""}`} open={open} onOpenChange={setOpen} status={status} data-motion="activity-item">
+      <ToolHeader className="activity-item-trigger" title={command ? "Ran command" : title} status={status} />
+      <ToolContent className="activity-output-content">
+        <div className="activity-output-motion">
+          {command ? (
+            <Terminal className="activity-shell" command={command} output={output} status={status} isStreaming={status === "running"} autoScroll={status === "running"} />
+          ) : (
             <div className="activity-output-card">
-              <div className="activity-output-heading">{command ? "Shell" : "Details"}</div>
-              {command && <code className="activity-command-full">$ {command}</code>}
-              <pre>{output}</pre>
-              <div className={`activity-outcome ${state.status}`}>{state.icon}<span>{outcome}</span></div>
+                <div className="activity-output-heading">Details</div>
+                <ToolInput input={item.input} />
+                <ToolOutput output={output} errorText={status === "failed" ? output : undefined} />
             </div>
-          </div>
-        </AccordionContent>
-      </AccordionItem>
-    </Accordion>
+          )}
+        </div>
+      </ToolContent>
+    </Tool>
   );
 }
 
@@ -427,7 +416,7 @@ function ActivityList({ items }: { items: TimelineItem[] }) {
   return <div className="activity-list">{items.map((item) => <ActivityItem item={item} key={item.id} />)}</div>;
 }
 
-function ActivityGroup({ items }: { items: TimelineItem[] }) {
+export function ActivityGroup({ items }: { items: TimelineItem[] }) {
   const [open, setOpen] = useState(true);
   const doneCount = items.filter((item) => (item.status ?? "done") === "done").length;
   const runningCount = items.filter((item) => item.status === "running").length;
@@ -438,9 +427,8 @@ function ActivityGroup({ items }: { items: TimelineItem[] }) {
       ? `${doneCount} of ${items.length} steps completed`
       : `All ${items.length} ${items.length === 1 ? "step" : "steps"} completed`;
   return (
-    <Accordion className="activity-group" value={open ? ["activity"] : []} onValueChange={(next) => setOpen(next.includes("activity"))} data-motion="activity-group">
-      <AccordionItem value="activity" className="activity-group-item">
-        <AccordionTrigger className="activity-group-trigger">
+    <Task className="activity-group" open={open} onOpenChange={setOpen} data-motion="activity-group">
+      <TaskTrigger className="activity-group-trigger" title="Agent activity">
         <span className="activity-group-glyph" aria-hidden="true"><i /><i /><i /></span>
         <span className="activity-group-copy">
           <strong>Agent activity</strong>
@@ -448,14 +436,13 @@ function ActivityGroup({ items }: { items: TimelineItem[] }) {
         </span>
         <span className="activity-group-toggle">{open ? "Hide details" : "Show details"}</span>
         <motion.span className="activity-group-chevron" animate={{ rotate: open ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span>
-        </AccordionTrigger>
-        <AccordionContent className="activity-group-content">
-          <div className="activity-list-motion">
-            <ActivityList items={items} />
-          </div>
-        </AccordionContent>
-      </AccordionItem>
-    </Accordion>
+      </TaskTrigger>
+      <TaskContent className="activity-group-content">
+        <div className="activity-list-motion">
+          <ActivityList items={items} />
+        </div>
+      </TaskContent>
+    </Task>
   );
 }
 
@@ -496,28 +483,17 @@ function MermaidDiagram({ chart }: { chart: string }) {
   return <div className="mermaid-diagram" aria-label="Diagram Mermaid" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
-function MarkdownPre({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
-  const code = Array.isArray(children) ? children[0] : children;
-
-  if (isValidElement<{ className?: string; children?: ReactNode }>(code) && code.props.className?.includes("language-mermaid")) {
-    return <MermaidDiagram chart={String(code.props.children).replace(/\n$/, "")} />;
-  }
-
-  return <pre {...props}>{children}</pre>;
-}
-
-export function MarkdownContent({ body, streaming }: { body: string; streaming: boolean }) {
+export function MarkdownContent({ body, streaming, onWorkspaceFile }: { body: string; streaming: boolean; onWorkspaceFile?: (path: string) => void }) {
   return (
     <div className="markdown-content" data-motion={streaming ? "streaming-caret" : undefined}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
-          pre: MarkdownPre,
-        }}
+      <MessageResponse
+        mode={streaming ? "streaming" : "static"}
+        isAnimating={streaming}
+        mermaidRenderer={(chart) => <MermaidDiagram chart={chart} />}
+        onWorkspaceFile={onWorkspaceFile}
       >
         {body}
-      </ReactMarkdown>
+      </MessageResponse>
     </div>
   );
 }
@@ -528,21 +504,21 @@ function ChatMessage({ item, agent }: { item: TimelineItem; agent?: AgentProfile
   const reducedMotion = useReducedMotion();
   return (
     <motion.div layout="position" initial={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
-      <Message align={isUser ? "end" : "start"} className={`chat-message ${isUser ? "user" : "assistant"}`}>
-        <MessageAvatar className="chat-avatar">
+      <Message from={isUser ? "user" : "assistant"} className={`chat-message ${isUser ? "user" : "assistant"}`}>
+        <div className="chat-avatar">
           {isUser ? <Avatar className="chat-avatar-inner"><AvatarFallback>YO</AvatarFallback></Avatar> : agent ? <AgentAvatar agent={agent} /> : <Avatar className="chat-avatar-inner"><AvatarFallback>AS</AvatarFallback></Avatar>}
-        </MessageAvatar>
+        </div>
         <MessageContent className="chat-message-main">
-          <MessageHeader className="chat-message-meta">
+          <div className="chat-message-meta">
             <strong>{isUser ? "You" : agent?.name ?? "Assistant"}</strong>
             {item.status === "failed" && <Badge variant="destructive">Failed</Badge>}
-          </MessageHeader>
-          <Bubble variant={isUser ? "muted" : "ghost"} align={isUser ? "end" : "start"} className="chat-bubble">
-            <BubbleContent className={`chat-body ${isUser ? "user" : "assistant"}`}>
-              <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} />
-            </BubbleContent>
-          </Bubble>
-          <MessageFooter className="chat-message-footer"><time>{item.timestamp}</time></MessageFooter>
+          </div>
+          <div className={`chat-bubble ${isUser ? "muted" : "ghost"}`}>
+            <div className={`chat-body ${isUser ? "user" : "assistant"}`}>
+              <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} onWorkspaceFile={(path) => { void window.piBot.openWorkspaceFile(path); }} />
+            </div>
+          </div>
+          <div className="chat-message-footer"><time>{item.timestamp}</time>{!isUser && item.body && <MessageActions className="message-actions"><MessageAction label="Copy response" tooltip="Copy response" onClick={() => { void navigator.clipboard?.writeText(item.body); }}><Copy /></MessageAction></MessageActions>}</div>
         </MessageContent>
       </Message>
     </motion.div>
@@ -554,11 +530,11 @@ function AgentWorking({ agent }: { agent?: AgentProfile }) {
   const reducedMotion = useReducedMotion();
   return (
     <motion.div layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={motionTransitions.standard} role="status" aria-label={`${name} is working`} data-motion="agent-working">
-      <Message className="chat-message assistant agent-working">
-        <MessageAvatar className="chat-avatar">{agent ? <AgentAvatar agent={agent} /> : <Avatar className="chat-avatar-inner"><AvatarFallback>AS</AvatarFallback></Avatar>}</MessageAvatar>
+      <Message from="assistant" className="chat-message assistant agent-working">
+        <div className="chat-avatar">{agent ? <AgentAvatar agent={agent} /> : <Avatar className="chat-avatar-inner"><AvatarFallback>AS</AvatarFallback></Avatar>}</div>
         <MessageContent className="chat-message-main">
-          <MessageHeader className="chat-message-meta"><strong>{name}</strong><span className="agent-working-label">Working…</span></MessageHeader>
-          <Bubble variant="muted" className="chat-bubble"><BubbleContent className="agent-working-dots" aria-hidden="true">{[0, 1, 2].map((index) => <motion.span key={index} animate={reducedMotion ? { opacity: 1 } : { opacity: [0.3, 1, 0.3], y: [0, -3, 0] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1, repeat: Infinity, delay: index * 0.12, ease: "easeInOut" }} />)}</BubbleContent></Bubble>
+          <div className="chat-message-meta"><strong>{name}</strong><span className="agent-working-label">Working…</span></div>
+          <div className="chat-bubble muted"><div className="agent-working-dots" aria-hidden="true">{[0, 1, 2].map((index) => <motion.span key={index} animate={reducedMotion ? { opacity: 1 } : { opacity: [0.3, 1, 0.3], y: [0, -3, 0] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1, repeat: Infinity, delay: index * 0.12, ease: "easeInOut" }} />)}</div></div>
         </MessageContent>
       </Message>
     </motion.div>
@@ -581,30 +557,20 @@ function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?
   return (
     <div className="conversation-feed">
       {items.length === 0 ? (
-        <Empty className="empty-conversation">
-          <EmptyHeader>
-            <EmptyMedia variant="icon" className="empty-orbit"><Bot /></EmptyMedia>
-            <EmptyTitle>Start a conversation with {agent?.name ?? "Assistant"}</EmptyTitle>
-            <EmptyDescription>Ask a question or describe what you want to work on.</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+        <ConversationEmptyState className="empty-conversation" icon={<Bot className="empty-orbit" />} title={`Start a conversation with ${agent?.name ?? "Assistant"}`} description="Ask a question or describe what you want to work on." />
       ) : (
-        <MessageScrollerProvider autoScroll defaultScrollPosition="end">
-          <MessageScroller className="conversation-scroll">
-            <MessageScrollerViewport aria-label="Conversation">
-              <MessageScrollerContent className="conversation-blocks">
-                <AnimatePresence initial={false}>
-                  {blocks.map((block) => {
-                    const messageId = block.kind === "activity" ? `activity-${block.items[0].id}` : block.item.id;
-                    return <MessageScrollerItem key={messageId} messageId={messageId}>{block.kind === "activity" ? <ActivityGroup items={block.items} /> : <ChatMessage item={block.item} agent={agent} />}</MessageScrollerItem>;
-                  })}
-                  {showAgentWorking && <MessageScrollerItem messageId="agent-working" key="agent-working"><AgentWorking agent={agent} /></MessageScrollerItem>}
-                </AnimatePresence>
-              </MessageScrollerContent>
-            </MessageScrollerViewport>
-            <MessageScrollerButton className="jump-latest" direction="end" variant="outline" size="sm"><ArrowDown /></MessageScrollerButton>
-          </MessageScroller>
-        </MessageScrollerProvider>
+        <Conversation className="conversation-scroll" aria-label="Conversation">
+          <ConversationContent className="conversation-blocks">
+            <AnimatePresence initial={false}>
+              {blocks.map((block) => {
+                const messageId = block.kind === "activity" ? `activity-${block.items[0].id}` : block.item.id;
+                return <div className="conversation-item" key={messageId}>{block.kind === "activity" ? <ActivityGroup items={block.items} /> : <ChatMessage item={block.item} agent={agent} />}</div>;
+              })}
+              {showAgentWorking && <div className="conversation-item" key="agent-working"><AgentWorking agent={agent} /></div>}
+            </AnimatePresence>
+          </ConversationContent>
+          <ConversationScrollButton className="jump-latest" size="sm"><ArrowDown /></ConversationScrollButton>
+        </Conversation>
       )}
     </div>
   );

@@ -9,10 +9,12 @@ const files = {
   streaming: "src/lib/streaming.ts",
   main: "src/main.tsx",
   app: "src/App.tsx",
-  accordion: "src/components/ui/accordion.tsx",
   button: "src/components/ui/button.tsx",
   dialog: "src/components/ui/dialog.tsx",
-  messageScroller: "src/components/ui/message-scroller.tsx",
+  conversation: "src/components/ai-elements/conversation.tsx",
+  aiMessage: "src/components/ai-elements/message.tsx",
+  aiTask: "src/components/ai-elements/task.tsx",
+  aiTool: "src/components/ai-elements/tool.tsx",
   select: "src/components/ui/select.tsx",
   styles: "src/styles.css",
 };
@@ -36,20 +38,20 @@ requireText("motion", /streamBatchMs: 40/, "streaming motion must use the docume
 requireText("design", /--motion-stream-caret.*1100ms/, "streaming caret timing must be documented");
 requireText("main", /<MotionProvider>/, "renderer root must use MotionProvider");
 requireText("app", /AnimatePresence/, "interaction surfaces must use AnimatePresence");
-requireText("app", /function ActivityItem[\s\S]*?<Accordion className=["']activity-item-accordion["']/, "activity items should use the shared Accordion");
-requireText("app", /function ActivityGroup[\s\S]*?<Accordion className=["']activity-group["']/, "activity groups should use the shared Accordion");
+requireText("app", /function ActivityItem[\s\S]*?<Tool className=\{`activity-item/, "activity items should use the AI Elements Tool adapter");
+requireText("app", /function ActivityGroup[\s\S]*?<Task className=["']activity-group["']/, "activity groups should use the AI Elements Task adapter");
 requireText("app", /className=["']activity-list-motion["']/, "activity group details should expose the fade surface");
-requireText("accordion", /AccordionPrimitive\.Panel[\s\S]*?className=["']overflow-hidden text-sm["']/, "activity Accordion panels should not animate layout reflow");
+requireText("aiTask", /CollapsibleContent[\s\S]*data-slot=["']task-content["']/, "Task content should use the shared Collapsible primitive");
 requireText("app", /layoutId=/, "selection or navigation needs a shared layout indicator");
 requireText("app", /whileTap=/, "actionable interaction surfaces need press feedback");
 requireText("app", /createStreamDeltaBatcher/, "assistant deltas must use the stream batcher");
 requireText("app", /streaming-caret/, "streaming text must expose its active-generation cue");
 requireText("app", /layout=["']position["']/, "streaming messages must preserve text scale during reflow");
-requireText("messageScroller", /const scrollBehavior = reducedMotion \? ["']auto["'] : ["']smooth["']/, "message scrolling must honor reduced motion");
-checkCount += 1;
-if (/<MessageScrollerItem\b[^>]*\bscrollAnchor\b/.test(sources.app)) {
-  failures.push("conversation items must flow to the bottom instead of being repositioned as scroll anchors");
-}
+requireText("conversation", /initial=\{reducedMotion \? ["']instant["'] : ["']smooth["']\}/, "conversation scrolling must honor reduced motion");
+requireText("conversation", /useStickToBottomContext/, "conversation must expose follow-latest scroll state");
+requireText("app", /<ConversationScrollButton/, "conversation must expose a jump-to-latest control");
+requireText("aiMessage", /Streamdown/, "MessageResponse must use Streamdown");
+requireText("aiTool", /ToolHeader[\s\S]*ToolContent/, "tool adapter must expose header and content components");
 requireText("app", /<DropdownMenu>[\s\S]*<DropdownMenuContent/, "workspace tab picker must use the shared DropdownMenu");
 requireText("button", /data-motion=["']button["']/, "shared Button must expose the motion contract");
 requireText("dialog", /from ["']@\/lib\/motion["']/, "shared Dialog must use the motion boundary");
@@ -67,9 +69,10 @@ requireText("design", /prefers-reduced-motion/, "design contract must mention re
 requireText("styles", /data-motion=\"streaming-caret\"\]\s*>\s*:last-child::after/, "streaming caret must stay inline with the final markdown block");
 requireText("styles", /prefers-reduced-motion[\s\S]*streaming-caret/, "streaming caret must have a reduced-motion CSS path");
 
-requireText("styles", /@keyframes activity-fade-in/, "activity Accordion details should define an opacity-only fade");
-requireText("styles", /animation: activity-fade-in 220ms ease-out both/, "activity Accordion details should animate opacity without reflow");
-requireText("styles", /activity-fade-in[\s\S]*prefers-reduced-motion/, "activity Accordion fade must have a reduced-motion path");
+requireText("styles", /@keyframes activity-fade-in/, "activity Task details should define an opacity-only fade");
+requireText("styles", /data-slot=["']task-content["'][^}]*animation: activity-fade-in 220ms ease-out both/, "activity Task details should animate opacity without reflow");
+requireText("styles", /data-slot=["']tool["']\]\[open\][^}]*data-slot=["']tool-content["'][^}]*animation: activity-fade-in 220ms ease-out both/, "activity Tool details should fade when opened");
+requireText("styles", /activity-fade-in[\s\S]*prefers-reduced-motion/, "activity Task fade must have a reduced-motion path");
 
 const directLayoutAnimation = /animate=\{[^}]*\b(?:width|height|top|right|bottom|left|margin|padding)\s*:/s;
 if (directLayoutAnimation.test(sources.app) || directLayoutAnimation.test(sources.motion)) {
@@ -78,11 +81,11 @@ if (directLayoutAnimation.test(sources.app) || directLayoutAnimation.test(source
 if (/@keyframes agent-working-enter/.test(sources.styles)) {
   failures.push("Motion-owned agent entry must not retain a duplicate transform keyframe");
 }
-if (/animate-accordion-(?:down|up)/.test(sources.accordion)) {
-  failures.push("activity Accordion panels must not use height reflow animation");
+if (/components\/ui\/accordion/.test(sources.app) || /<Accordion\b/.test(sources.app)) {
+  failures.push("ActivityGroup must not retain the old Accordion implementation");
 }
-if (/--accordion-panel-height|h-\(--accordion-panel-height\)|data-(?:starting|ending)-style:h-0/.test(sources.accordion)) {
-  failures.push("activity Accordion panels must not collapse through height styles");
+if (/slide-(?:in|out)|collapsible-content-height|animate-(?:in|out)/.test(sources.aiTask)) {
+  failures.push("activity Task content must not animate slide or height");
 }
 
 if (failures.length > 0) {
