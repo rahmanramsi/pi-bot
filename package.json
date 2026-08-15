@@ -16,7 +16,7 @@
   "scripts": {
     "dev": "concurrently -k -s first \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "test": "node --test tests/*.test.mjs",
-    "test:motion": "node scripts/qa/motion-contract.mjs && vitest run scripts/qa/dialog-lifecycle.test.tsx scripts/qa/streaming-motion.test.ts scripts/qa/streaming-markdown.test.tsx --environment jsdom",
+    "test:motion": "node scripts/qa/motion-contract.mjs && vitest run scripts/qa/dialog-lifecycle.test.tsx scripts/qa/streaming-motion.test.ts scripts/qa/streaming-markdown.test.tsx scripts/qa/ai-elements-renderer.test.tsx --environment jsdom",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "verify:renderer": "node scripts/check-packaged-renderer.mjs",
@@ -26,8 +26,11 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.1",
-    "@shadcn/react": "^0.3.0",
-    "motion": "^13.1.0"
+    "ansi-to-react": "^6.2.6",
+    "motion": "^13.1.0",
+    "shiki": "^4.4.3",
+    "streamdown": "^2.5.0",
+    "use-stick-to-bottom": "^1.1.6"
   },
   "devDependencies": {
     "@base-ui/react": "^1.7.0",
@@ -52,7 +55,6 @@
     "mermaid": "^11.16.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "shadcn": "^4.17.0",
     "tailwind-merge": "^3.6.0",
