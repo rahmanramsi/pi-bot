@@ -23,7 +23,7 @@ On Windows, download and run `PiBot-0.1.5-x64-setup.exe` from the same release. 
 - Store agent instructions in the workspace `AGENTS.md` file.
 - Load optional workspace skills from `.agents/skills` after the workspace is trusted.
 - Keep persistent agent-scoped chat sessions with first-prompt titles.
-- Stream Markdown responses, tool activity, model selection, and reasoning-level selection.
+- Stream Markdown responses while model reasoning, progress updates, and tool activity stay grouped under one flat `Working for …` disclosure.
 - Use a titleless, resizable right sidebar where users add filterable Files or private user-controlled Browser tabs.
 - Connect providers through API keys, supported sign-in flows, or a one-time Pi credential import.
 - Store provider credentials in a permission-restricted local app file.
@@ -36,7 +36,7 @@ The initial setup requires a one-time acknowledgement of this risk. It is a disc
 
 ## Privacy
 
-Pi Bot stores its settings, session mappings, app-owned workspaces, and credentials locally in Electron's app-data directory. The app has no built-in telemetry, analytics, crash reporting, or cloud sync.
+Pi Bot stores its settings, session mappings, app-owned workspaces, model-provided reasoning, and credentials locally in Electron's app-data directory. The app has no built-in telemetry, analytics, crash reporting, or cloud sync.
 
 Prompts, workspace context, and tool results needed by an agent are sent to the model provider you connect. That provider's privacy policy applies to its handling of that data.
 

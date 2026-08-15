@@ -81,10 +81,12 @@ The selected theme is stored in local storage under `pi-bot-theme`.
 - `Message` and `Bubble` own message alignment/content structure; `MessageScroller` owns follow-latest behavior and the jump-to-latest control.
 - Streaming updates one assistant message instead of creating one row per delta.
 
-### Agent activity
+### Working disclosure
 
-- Tool and status events stay in transcript order but are visually separate from conversation messages.
-- Consecutive events are grouped under **Agent activity**.
+- Reasoning, progress updates, tool calls, and status events stay in transcript order inside one flat **Working for …** disclosure per user turn.
+- Completed activity is collapsed so the final response remains the primary reading surface; running activity opens while work is in progress.
+- Expanded activity is one aligned reading flow: reasoning and progress render as ordinary paragraphs, while consecutive tool calls collapse into muted icon-and-text summaries such as `Ran commands` or `Edited files, ran commands`.
+- A single divider separates the `Working for …` trigger from its contents; individual process items do not add cards or separators.
 - Collapsed command rows begin with `Ran` and show the executed command.
 - Expanded command rows show `Shell`, the full `$ command`, output, and Success/Failed/Running state.
 - Activity details use compact type without becoming smaller than the caption token.

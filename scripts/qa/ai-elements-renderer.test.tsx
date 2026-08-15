@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ActivityGroup, Composer, MarkdownContent, timelineToolStatus } from "@/App";
+import { ActivityGroup, Composer, groupConversationItems, MarkdownContent, timelineToolStatus } from "@/App";
 import { Conversation, ConversationContent } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { Task, TaskContent, TaskTrigger } from "@/components/ai-elements/task";
@@ -75,7 +75,7 @@ describe("AI Elements renderer adapters", () => {
   });
 
   it("uses an accessible, open-by-default Task disclosure", () => {
-    const result = render(<Task><TaskTrigger title="Agent activity" /><TaskContent>Activity details</TaskContent></Task>);
+    const result = render(<Task><TaskTrigger title="Working details" /><TaskContent>Activity details</TaskContent></Task>);
     roots.push(result.root);
     const trigger = result.host.querySelector('[data-slot="task-trigger"]') as HTMLButtonElement;
 
@@ -90,18 +90,78 @@ describe("AI Elements renderer adapters", () => {
     expect(result.host.textContent).not.toContain("Activity details");
   });
 
-  it("summarizes completed, running, and failed activity groups", () => {
-    const completed = render(<ActivityGroup items={[toolItem("done")]} />);
+  it("labels the disclosure with elapsed working time", () => {
+    const startedAt = new Date("2026-08-15T10:00:00.000Z").getTime();
+    const completed = render(<ActivityGroup items={[toolItem("done")]} startedAt={startedAt} endedAt={startedAt + 445_000} />);
     roots.push(completed.root);
-    expect(completed.host.textContent).toContain("All 1 step completed");
+    expect(completed.host.textContent).toContain("Working for 7m 25s");
+    expect(completed.host.textContent).not.toContain("Agent activity");
+    expect(completed.host.textContent).not.toContain("step completed");
+  });
 
-    const running = render(<ActivityGroup items={[toolItem("done"), { ...toolItem("running"), id: "tool-running" }]} />);
-    roots.push(running.root);
-    expect(running.host.textContent).toContain("1 of 2 steps completed");
+  it("opens activity while work is running and collapses it when work completes", () => {
+    const item = toolItem("running");
+    const result = render(<ActivityGroup items={[item]} />);
+    roots.push(result.root);
+    const trigger = result.host.querySelector('[data-slot="task-trigger"]') as HTMLButtonElement;
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
 
-    const failed = render(<ActivityGroup items={[toolItem("done"), { ...toolItem("failed"), id: "tool-failed" }]} />);
-    roots.push(failed.root);
-    expect(failed.host.textContent).toContain("Attention needed on 1 of 2 steps");
+    act(() => result.root.render(<ActivityGroup items={[{ ...item, status: "done" }]} />));
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+    const restored = render(<ActivityGroup items={[toolItem("done")]} />);
+    roots.push(restored.root);
+    expect(restored.host.querySelector('[data-slot="task-trigger"]')?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps all process items in one activity block and only exposes the final response", () => {
+    const items: TimelineItem[] = [
+      { id: "user-1", kind: "user", label: "You", body: "Investigate", timestamp: "10:00 AM" },
+      { id: "reasoning-1", kind: "reasoning", label: "Reasoning", body: "Plan", status: "done", timestamp: "10:00 AM" },
+      { id: "assistant-progress", kind: "assistant", label: "Assistant", body: "I found the files.", status: "done", timestamp: "10:01 AM" },
+      { ...toolItem("done"), id: "tool-1" },
+      { id: "assistant-final", kind: "assistant", label: "Assistant", body: "Here is the answer.", status: "done", timestamp: "10:02 AM" },
+    ];
+
+    expect(groupConversationItems(items)).toEqual([
+      { kind: "message", item: items[0] },
+      { kind: "activity", items: items.slice(1, 4) },
+      { kind: "message", item: items[4] },
+    ]);
+  });
+
+  it("keeps an unfinished turn entirely inside activity until a response starts", () => {
+    const items: TimelineItem[] = [
+      { id: "user-1", kind: "user", label: "You", body: "Investigate", timestamp: "10:00 AM" },
+      { id: "reasoning-1", kind: "reasoning", label: "Reasoning", body: "Plan", status: "done", timestamp: "10:00 AM" },
+      { ...toolItem("running"), id: "tool-1" },
+    ];
+
+    expect(groupConversationItems(items)).toEqual([
+      { kind: "message", item: items[0] },
+      { kind: "activity", items: items.slice(1) },
+    ]);
+  });
+
+  it("renders process items as one uniform narrative flow", () => {
+    const startedAt = new Date("2026-08-15T10:00:00.000Z").getTime();
+    const items: TimelineItem[] = [
+      { id: "reasoning-1", kind: "reasoning", label: "Reasoning", body: "Inspect the current implementation.", status: "done", timestamp: "10:00 AM" },
+      { id: "progress-1", kind: "assistant", label: "Assistant", body: "I found the relevant files.", status: "done", timestamp: "10:01 AM" },
+      toolItem("done"),
+      { ...toolItem("done"), id: "tool-2" },
+      { id: "progress-2", kind: "assistant", label: "Assistant", body: "The visual contract is now clear.", status: "done", timestamp: "10:02 AM" },
+    ];
+    const result = render(<ActivityGroup items={items} startedAt={startedAt} endedAt={startedAt + 120_000} />);
+    roots.push(result.root);
+    act(() => (result.host.querySelector('[data-slot="task-trigger"]') as HTMLButtonElement).click());
+
+    expect(result.host.textContent).not.toContain("Progress update");
+    expect(result.host.querySelector('.reasoning-row [data-slot="collapsible-trigger"]')).toBeNull();
+    expect(result.host.querySelectorAll('[data-slot="tool-header"]')).toHaveLength(1);
+    expect(result.host.textContent).toContain("Ran commands");
+    expect(result.host.textContent).toContain("Inspect the current implementation.");
+    expect(result.host.textContent).toContain("I found the relevant files.");
   });
 
   it("renders restored and streaming messages through MessageResponse", () => {
@@ -130,6 +190,7 @@ describe("AI Elements renderer adapters", () => {
   it("renders shell commands as terminal text instead of nested JSON", () => {
     const result = render(<ActivityGroup items={[toolItem("done")]} />);
     roots.push(result.root);
+    act(() => (result.host.querySelector('[data-slot="task-trigger"]') as HTMLButtonElement).click());
     const tool = result.host.querySelector('[data-slot="tool"]') as HTMLDetailsElement;
     const terminalContent = result.host.querySelector('[data-slot="terminal-content"]') as HTMLDivElement;
     terminalContent.scrollLeft = 120;
@@ -147,6 +208,7 @@ describe("AI Elements renderer adapters", () => {
   it("keeps non-shell tool input visible", () => {
     const result = render(<ActivityGroup items={[{ ...toolItem("done"), label: "Tool · read", input: '{"path":"README.md"}' }]} />);
     roots.push(result.root);
+    act(() => (result.host.querySelector('[data-slot="task-trigger"]') as HTMLButtonElement).click());
     expect(result.host.querySelector('[data-slot="tool-input"]')?.textContent).toContain("README.md");
     expect(result.host.querySelector('[data-slot="tool-output"]')?.textContent).toContain("done");
   });

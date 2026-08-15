@@ -31,7 +31,7 @@ Known gaps:
 - Define explicit `allow` / `ask` / `deny` rules per tool and relevant resource scope.
 - Require approval before write, edit, and shell actions unless a deliberately configured narrow rule allows them.
 - Show the command, target, and expected effect before approval.
-- Keep denied/cancelled actions visible in Agent activity without converting them into assistant prose.
+- Keep denied/cancelled actions visible in the per-turn working disclosure without converting them into assistant prose.
 - Decide whether shell/filesystem execution remains on the host or moves into a sandboxed workspace runtime.
 - Keep credential, workspace, and tool-policy state out of the renderer.
 

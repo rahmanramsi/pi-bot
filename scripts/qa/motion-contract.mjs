@@ -30,6 +30,11 @@ function requireText(name, pattern, description) {
   if (!pattern.test(sources[name])) failures.push(description);
 }
 
+function forbidText(name, pattern, description) {
+  checkCount += 1;
+  if (pattern.test(sources[name])) failures.push(description);
+}
+
 checkCount += 1;
 if (!packageJson.dependencies?.motion) failures.push("motion must be a production dependency");
 requireText("motion", /from ["']motion\/react["']/, "shared motion boundary must import motion/react");
@@ -40,7 +45,6 @@ requireText("main", /<MotionProvider>/, "renderer root must use MotionProvider")
 requireText("app", /AnimatePresence/, "interaction surfaces must use AnimatePresence");
 requireText("app", /function ActivityItem[\s\S]*?<Tool className=\{`activity-item/, "activity items should use the AI Elements Tool adapter");
 requireText("app", /function ActivityGroup[\s\S]*?<Task className=["']activity-group["']/, "activity groups should use the AI Elements Task adapter");
-requireText("app", /className=["']activity-list-motion["']/, "activity group details should expose the fade surface");
 requireText("aiTask", /CollapsibleContent[\s\S]*data-slot=["']task-content["']/, "Task content should use the shared Collapsible primitive");
 requireText("app", /layoutId=/, "selection or navigation needs a shared layout indicator");
 requireText("app", /whileTap=/, "actionable interaction surfaces need press feedback");
@@ -69,10 +73,7 @@ requireText("design", /prefers-reduced-motion/, "design contract must mention re
 requireText("styles", /data-motion=\"streaming-caret\"\]\s*>\s*:last-child::after/, "streaming caret must stay inline with the final markdown block");
 requireText("styles", /prefers-reduced-motion[\s\S]*streaming-caret/, "streaming caret must have a reduced-motion CSS path");
 
-requireText("styles", /@keyframes activity-fade-in/, "activity Task details should define an opacity-only fade");
-requireText("styles", /data-slot=["']task-content["'][^}]*animation: activity-fade-in 220ms ease-out both/, "activity Task details should animate opacity without reflow");
-requireText("styles", /data-slot=["']tool["']\]\[open\][^}]*data-slot=["']tool-content["'][^}]*animation: activity-fade-in 220ms ease-out both/, "activity Tool details should fade when opened");
-requireText("styles", /activity-fade-in[\s\S]*prefers-reduced-motion/, "activity Task fade must have a reduced-motion path");
+forbidText("styles", /activity-fade-in/, "activity disclosures should rely on the AI Elements component instead of a custom fade rule");
 
 const directLayoutAnimation = /animate=\{[^}]*\b(?:width|height|top|right|bottom|left|margin|padding)\s*:/s;
 if (directLayoutAnimation.test(sources.app) || directLayoutAnimation.test(sources.motion)) {

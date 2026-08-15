@@ -19,6 +19,7 @@ import {
   removePendingSession,
   savePendingSession,
 } from "./session-persistence.mjs";
+import { reasoningId, thinkingText } from "./reasoning.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
@@ -434,11 +435,24 @@ function transcriptFromManager(manager, profile = activeProfile()) {
     if (entry.type !== "message") continue;
     const message = entry.message;
     const timestamp = displayTime(message.timestamp);
+    const timestampMs = new Date(entry.timestamp).getTime();
     if (message.role === "user") {
-      items.push({ id: entry.id, kind: "user", label: "You", body: messageText(message.content), timestamp });
+      items.push({ id: entry.id, kind: "user", label: "You", body: messageText(message.content), timestamp, timestampMs });
       continue;
     }
     if (message.role === "assistant") {
+      const reasoning = thinkingText(message.content);
+      if (reasoning) {
+        items.push({
+          id: `reasoning-${entry.id}`,
+          kind: "reasoning",
+          label: "Reasoning",
+          body: reasoning,
+          timestamp,
+          timestampMs,
+          status: "done",
+        });
+      }
       const body = messageText(message.content);
       if (body || message.errorMessage) {
         items.push({
@@ -447,13 +461,14 @@ function transcriptFromManager(manager, profile = activeProfile()) {
           label: profile?.name ?? "Assistant",
           body: body || message.errorMessage,
           timestamp,
+          timestampMs,
           status: message.errorMessage ? "failed" : "done",
         });
       }
       for (const part of message.content ?? []) {
         if (part?.type !== "toolCall") continue;
         const input = stringify(part.arguments);
-        const tool = { id: part.id, kind: "tool", label: `Tool · ${part.name}`, body: input, input, timestamp, status: "done" };
+        const tool = { id: part.id, kind: "tool", label: `Tool · ${part.name}`, body: input, input, timestamp, timestampMs, status: "done" };
         items.push(tool);
         toolRows.set(part.id, tool);
       }
@@ -472,6 +487,7 @@ function transcriptFromManager(manager, profile = activeProfile()) {
           label: `Tool · ${message.toolName}`,
           body,
           timestamp,
+          timestampMs,
           status: message.isError ? "failed" : "done",
         });
       }
@@ -651,22 +667,54 @@ async function bootstrap() {
 
 function updateRuntimeTranscript(runtime, event) {
   runtime.transcript ??= transcriptFromManager(runtime.sessionManager, agentProfiles[runtime.agentId]);
+  const assistantMessageEvent = event.type === "message_update" ? event.assistantMessageEvent : undefined;
+  if (assistantMessageEvent?.type === "thinking_start") {
+    const id = reasoningId(event.message);
+    const existing = runtime.transcript.find((item) => item.id === id);
+    if (existing) {
+      if (existing.body) existing.body = `${existing.body}\n\n`;
+      existing.status = "running";
+    } else {
+      runtime.transcript.push({
+        id,
+        kind: "reasoning",
+        label: "Reasoning",
+        body: "",
+        status: "running",
+        timestamp: displayTime(event.message.timestamp),
+        timestampMs: event.message.timestamp,
+      });
+    }
+  }
+  if (assistantMessageEvent?.type === "thinking_delta") {
+    const item = runtime.transcript.find((entry) => entry.id === reasoningId(event.message));
+    if (item) item.body = `${item.body}${assistantMessageEvent.delta}`;
+  }
+  if (event.type === "message_end" && event.message?.role === "assistant") {
+    const id = reasoningId(event.message);
+    const item = runtime.transcript.find((entry) => entry.id === id);
+    if (item && item.body.trim()) item.status = "done";
+    else if (item) runtime.transcript = runtime.transcript.filter((entry) => entry.id !== id);
+  }
   if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
     const last = runtime.transcript.at(-1);
     if (last?.kind === "assistant" && last.status === "running") {
       last.body = `${last.body}${event.assistantMessageEvent.delta}`;
     } else {
+      const timestampMs = Date.now();
       runtime.transcript.push({
-        id: `assistant-${Date.now()}`,
+        id: `assistant-${timestampMs}`,
         kind: "assistant",
         label: agentProfiles[runtime.agentId]?.name ?? "Assistant",
         body: event.assistantMessageEvent.delta,
         status: "running",
-        timestamp: displayTime(Date.now()),
+        timestamp: displayTime(timestampMs),
+        timestampMs,
       });
     }
   }
   if (event.type === "tool_execution_start") {
+    const timestampMs = Date.now();
     runtime.transcript.push({
       id: event.toolCallId,
       kind: "tool",
@@ -674,7 +722,8 @@ function updateRuntimeTranscript(runtime, event) {
       body: stringify(event.args),
       input: stringify(event.args),
       status: "running",
-      timestamp: displayTime(Date.now()),
+      timestamp: displayTime(timestampMs),
+      timestampMs,
     });
   }
   if (event.type === "tool_execution_update") {
@@ -716,6 +765,15 @@ function relay(runtime, event) {
   updateRuntimeTranscript(runtime, event);
   updatePendingSession(runtime, event);
   if (runtime.key !== activeRuntimeKey) return;
+  if (event.type === "message_update" && event.assistantMessageEvent?.type === "thinking_start") {
+    send({ type: "reasoning-start", id: reasoningId(event.message) });
+  }
+  if (event.type === "message_update" && event.assistantMessageEvent?.type === "thinking_delta") {
+    send({ type: "reasoning-delta", id: reasoningId(event.message), delta: event.assistantMessageEvent.delta });
+  }
+  if (event.type === "message_end" && event.message?.role === "assistant") {
+    send({ type: "reasoning-end", id: reasoningId(event.message) });
+  }
   if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
     send({ type: "assistant-delta", delta: event.assistantMessageEvent.delta });
   }
@@ -1122,12 +1180,14 @@ ipcMain.handle("pi:prompt", async (_event, message) => {
   const hasUserMessage = runtime.sessionManager.getEntries().some((entry) => entry.type === "message" && entry.message.role === "user");
   if (!hasUserMessage) runtime.sessionManager.appendSessionInfo(titleFromPrompt(message));
   runtime.transcript = transcriptFromManager(runtime.sessionManager, agentProfiles[runtime.agentId]);
+  const timestampMs = Date.now();
   runtime.transcript.push({
-    id: `user-${Date.now()}`,
+    id: `user-${timestampMs}`,
     kind: "user",
     label: "You",
     body: message,
-    timestamp: displayTime(Date.now()),
+    timestamp: displayTime(timestampMs),
+    timestampMs,
   });
   try {
     await promptSession.prompt(message);
