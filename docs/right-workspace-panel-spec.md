@@ -11,7 +11,7 @@ Pengguna dapat:
 - menelusuri, memfilter, dan membuka file yang aman di workspace aktif;
 - membuka URL HTTP(S) di browser terisolasi, bernavigasi, dan membukanya di browser default.
 
-Browser v1 selalu dikendalikan pengguna. AI tidak dapat membaca, mengklik, mengetik, mengunduh, atau memakai cookie browser. Files v1 adalah tampilan file workspace yang sudah ada; upload bahan ke model ditunda sampai kontrak model/context ditetapkan.
+Browser tetap terlihat dan dapat dikendalikan pengguna. Agent pada chat aktif mendapat tool sempit: `tabs` menemukan tab pada session chat, `read` mengembalikan konten terlihat serta target stabil, lalu `navigate`, `click`, `type`, dan `submit` menjalankan navigasi atau kontrol normal yang masih terlihat dan enabled. Agent tidak mendapat cookie, local storage, password, credential API, download, popup, atau akses ke tab pada chat lain. Files v1 adalah tampilan file workspace yang sudah ada; upload bahan ke model ditunda sampai kontrak model/context ditetapkan.
 
 ## Tech stack
 
@@ -57,19 +57,19 @@ function isInsideWorkspace(workspace: string, target: string) {
 
 ## Testing strategy
 
-This repository has no test runner or `npm test` command. Do not add one in this feature because that would introduce a new dependency and test seam without a separate approval.
+The repository uses Node's built-in test runner through `npm test`; Browser action and JSDOM tests live in `tests/browser-automation.test.mjs`.
 
 Validation is:
 
-1. `npm run typecheck` and `npm run build`.
+1. `npm test`, `npm run typecheck`, and `npm run build`.
 2. `npm run smoke:packaged` after the production build.
-3. Manual Electron check: resize panel; switch tabs; reopen app to confirm state; open/reveal a workspace file; navigate a normal HTTPS page; verify popup, file URL, and browser permissions are rejected.
+3. Manual Electron check: resize panel; switch tabs; reopen app to confirm state; open/reveal a workspace file; use the active chat agent's Browser tool across multiple tabs; verify popup, file URL, and browser permissions are rejected.
 
 ## Boundaries
 
 - Always: resolve workspace paths in main process; skip symlinks; bound file listings; validate browser URLs; preserve the three-column layout and existing session-sidebar behavior.
-- Ask first: new dependency, model attachment/upload support, browser AI control, downloads, browser credential sharing, settings schema migration, or changes to provider/Pi runtime behavior.
-- Never: expose Node APIs to the renderer; load browser preloads; permit non-HTTP(S) browser URLs; parse shell output as file paths; make Browser a tool the AI controls in v1.
+- Ask first: new dependency, model attachment/upload support, broader computer use, downloads, browser credential sharing, settings schema migration, or changes to provider/Pi runtime behavior.
+- Never: expose Node APIs to the renderer; load browser preloads; permit non-HTTP(S) browser URLs; parse shell output as file paths; let the renderer attach an arbitrary guest or pass a raw `webContents` ID; expand Browser beyond visible normal controls without a new security decision.
 
 ## Success criteria
 
@@ -77,8 +77,9 @@ Validation is:
 2. The panel resizes by drag and remembers its visibility, tab, and width locally per session; it becomes an overlay at narrow widths.
 3. Files menawarkan tree yang dapat difilter serta hanya membuka path di workspace agent terpilih.
 4. Browser uses an isolated persistent partition, no Node/preload/permissions/popups, and accepts only credential-free HTTP(S) URLs.
-5. Switching from Browser to another tab does not destroy or reload the browser guest.
-6. Typecheck, build, packaged smoke, and `git diff --check` pass.
+5. The active chat agent can call `tabs`, then use `read` targets for visible controls across multiple Browser tabs; hidden and disabled controls fail with stable redacted errors.
+6. Switching from Browser to another tab does not destroy or reload the browser guest, and an active operation is visible in both its panel and tab strip.
+7. Typecheck, build, packaged smoke, and `git diff --check` pass.
 
 ## Open questions
 

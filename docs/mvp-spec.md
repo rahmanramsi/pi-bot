@@ -27,13 +27,14 @@ Select an agent from the permanent rail, open or create an agent-scoped chat, se
 - One flat collapsible `Working for …` disclosure per user turn containing reasoning and progress as aligned narrative text plus compact summaries for consecutive tool calls; full command/output remains inspectable.
 - Compact composer that autosizes vertically for longer messages.
 - One collapsible left sidebar containing agent selection and active-agent session history; no permanent right-side Context panel.
+- A resizable right workspace with Files and session-scoped Browser tabs. The active chat agent can discover its Browser tabs with `tabs`, read visible page content, and use normal visible controls through `click`, `type`, and `submit`.
 - Light and dark themes using shared design tokens.
 - Visible loading, setup, unauthenticated, working, empty, error, and disabled states.
 
 ## Explicit non-goals
 
 - Cloud sync, Pi Bot accounts, billing, or team collaboration.
-- Browser automation, computer use, connectors, MCP, or arbitrary runtime extensions.
+- Broad computer use, unrestricted browser automation, connectors, MCP, or arbitrary runtime extensions. Browser support is limited to the narrow visible-page tool described below.
 - Automatic multi-agent orchestration, agent-to-agent handoffs, background jobs, routines, or schedules.
 - Attachments, generated artifact previews, Git workflow automation, or auto-update distribution.
 - A production sandbox or finished permission/approval policy.
@@ -42,6 +43,7 @@ Select an agent from the permanent rail, open or create an agent-scoped chat, se
 
 - The Electron main process owns Pi, models, credentials, files, sessions, and lifecycle.
 - The renderer receives only the explicit API exposed by `electron/preload.cjs`.
+- Browser guests are created by the main process from `did-attach-webview`; before mounting, the renderer asks main for a collision-resistant persistent partition derived from the active session and tab. Registration accepts only opaque tab/session values and binds the already-attached guest whose actual partition matches that main-issued per-tab partition; no token is sent through the page URL, `name`, or renderer web contents ID.
 - Each agent owns one current workspace and a separate session directory for each workspace identity.
 - The app persists agent profiles and current-session mappings in Electron user data.
 - App-owned workspaces are created below Electron user data with empty `AGENTS.md` and `.agents/skills/` paths.
@@ -68,7 +70,9 @@ See [design-system.md](design-system.md) for the complete visual contract.
 
 - `contextIsolation: true`; `nodeIntegration: false`.
 - No direct Node/filesystem access from the renderer.
-- Enabled Pi tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`.
+- Enabled Pi tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`, and `browser`.
+- The `browser` tool accepts `tabs`, `read`, `navigate`, `click`, `type`, and `submit`. It is scoped to the active agent/chat session, returns stable targets from `read`, and rejects hidden or disabled controls at execution time.
+- Browser IPC never accepts a renderer `webContents` ID or arbitrary guest attachment. The main process derives a stable collision-resistant partition and exposes only that opaque value through bootstrap. Main-process activity summaries and tool failures use redacted, action-specific text.
 - No sandbox and no allow/ask/deny approval layer yet.
 - External-workspace trust gates `.agents/skills`, not `AGENTS.md`.
 - Pi extensions, implicit context files, prompt templates, and runtime themes are disabled.
@@ -89,9 +93,10 @@ This Public Alpha boundary is not suitable for untrusted autonomous execution.
 10. Light mode uses a white chat canvas and both themes remain readable.
 11. Closing and reopening the app restores the active agent and available session history.
 12. Destructive session/agent operations require confirmation and external workspaces are preserved.
+13. Browser actions discover only tabs in the active chat session, operate visible normal controls, and keep typed values out of tool activity and failure messages.
 
 ## Verification strategy
 
 - TypeScript validation and Vite production build.
 - Manual Electron QA for first setup, provider cancellation, theme switching, agent lifecycle, workspace trust, session lifecycle, long chats, activity disclosure, composer autosize, Stop, minimum window size, and restart persistence.
-- Automated regression tests are not implemented yet and are part of the next-stage plan.
+- `npm test` covers persistence, renderer contracts, and Browser session/DOM behavior; Electron manual QA still covers the complete packaged surface.

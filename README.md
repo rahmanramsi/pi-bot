@@ -24,13 +24,13 @@ On Windows, download and run `PiBot-0.1.5-x64-setup.exe` from the same release. 
 - Load optional workspace skills from `.agents/skills` after the workspace is trusted.
 - Keep persistent agent-scoped chat sessions with first-prompt titles.
 - Stream Markdown responses while model reasoning, progress updates, and tool activity stay grouped under one flat `Working for …` disclosure.
-- Use a titleless, resizable right sidebar where users add filterable Files or private user-controlled Browser tabs.
+- Use a titleless, resizable right sidebar where users add filterable Files or private Browser tabs that the active chat agent can operate through normal page UI.
 - Connect providers through API keys, supported sign-in flows, or a one-time Pi credential import.
 - Store provider credentials in a permission-restricted local app file.
 
 ## Execution warning
 
-Pi Bot gives the agent `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`. The agent can run commands and modify or delete files in the selected workspace without asking for approval for each action. Pi Bot has no sandbox yet.
+Pi Bot gives the agent `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`, and a Browser tool for the active chat session. The agent can run commands, modify or delete files in the selected workspace, and operate visible Browser UI without asking for approval for each action. Pi Bot has no sandbox yet.
 
 The initial setup requires a one-time acknowledgement of this risk. It is a disclosure, not an approval system. Do not use Pi Bot with a workspace whose contents you cannot safely change.
 
@@ -40,7 +40,9 @@ Pi Bot stores settings, session mappings, agent/workspace-scoped sessions, app-o
 
 Prompts, workspace context, and tool results needed by an agent are sent to the model provider you connect. That provider's privacy policy applies to its handling of that data.
 
-The Browser uses its own local browser profile. It blocks downloads, popups, site permissions, and non-HTTP(S) navigation. It is controlled by you; agents cannot operate it.
+The Browser uses its own local profile per chat session. It blocks downloads, popups, site permissions, and non-HTTP(S) navigation. Agents can read visible page content and use normal controls in tabs owned by the active chat session, but never receive cookies, local storage, passwords, or credential APIs. Manual sign-in remains user-controlled.
+
+The Browser tool starts with `tabs` to discover the active chat's opaque tab IDs. Use `read` for visible page content and stable control targets, then `navigate`, `click`, `type`, or `submit`; hidden/disabled controls and page failures return stable redacted errors, and typed values never appear in activity summaries.
 
 ## Run from source
 

@@ -63,7 +63,7 @@ Consequential actions can stop for scoped approval. Attention, errors, and recov
 | Approval | Consequential actions stop before execution. | **Not implemented:** current `bash`, `edit`, and `write` tools have no allow/ask/deny gate. |
 | Attention | Ready/working/error/needs-input are distinct. | **Partial:** working and error exist; no durable needs-input queue or background execution. |
 | Handoffs/background | Delegation has ownership and history. | **Deferred:** no subagents, groups, handoffs, schedules, or work after app close. |
-| Browser/connectors | External capability has a credential and sandbox boundary. | **Deferred:** no browser/computer use, MCP, or connectors. |
+| Browser/connectors | External capability has a credential and sandbox boundary. | **Implemented narrowly:** the active chat exposes a visible-page Browser tool; broad computer use, MCP, and connectors remain deferred. |
 
 ## Current architecture baseline
 
@@ -97,7 +97,7 @@ OpenCode, Codex, Claude Code, Zed, Cline, and Kilo are more relevant permission 
 
 ### Deferred
 
-- Attachments, URL/web search, connectors, MCP, browser/computer use.
+- Attachments, URL/web search, connectors, MCP, and broad browser/computer use. The shipped Browser tool remains limited to visible normal controls in the active chat session.
 - Subagents, groups, mentions, handoffs, parallel or background agents.
 - Skills management, routines, event triggers, and notifications while closed.
 - Cloud session/memory sync, accounts, billing, and collaboration.

@@ -16,13 +16,13 @@ Already implemented:
 - App-owned and external workspaces with skill trust.
 - Provider authentication and model selection.
 - Agent-scoped persistent sessions and streaming tool events.
+- Session-scoped Browser tabs with a narrow visible-page tool (`tabs`, `read`, `navigate`, `click`, `type`, `submit`) and redacted activity/errors.
 - Conversation/activity separation, visible commands, Stop, autosizing composer, themes, settings, and design tokens.
 - Narrow context-isolated Electron bridge.
 
 Known gaps:
 
 - `bash`, `edit`, and `write` are enabled without a sandbox or approval policy.
-- No automated test command or test suite.
 - Credentials fall back to a permission-restricted app file when Electron encryption is unavailable.
 - No auto-update workflow.
 
@@ -63,7 +63,7 @@ Known gaps:
 
 ## Deferred
 
-- MCP, connectors, browser/computer use, and arbitrary extensions.
+- Broad browser/computer use, MCP, connectors, and arbitrary extensions. The shipped Browser tool remains limited to visible normal controls in the active chat session.
 - Subagents, handoffs, parallel tasks, background jobs, routines, and schedules.
 - Cloud sync, accounts, billing, or collaboration.
 - Attachments and structured artifact cards.
@@ -78,16 +78,11 @@ npm install
 npm run dev
 npm run typecheck
 npm run build
+npm test
 npm run dist
 ```
 
-Planned addition:
-
-```bash
-npm test
-```
-
-Do not document `npm test` as available until the script and tests exist.
+`npm test` runs the repository's Node test suite, including persistence and Browser JSDOM coverage.
 
 ## Project structure
 
@@ -99,12 +94,13 @@ src/styles.css          theme and design-system tokens
 src/components/ui/      shared interface primitives
 src/types.ts            renderer and IPC types
 docs/                   current specs and research artifacts
-tests/                  planned automated tests; not present yet
+tests/                  Node test suite, including Browser automation contracts
 ```
 
 ## Boundaries
 
 - **Always:** validate IPC input, keep secrets out of the repository and renderer, show real tool activity, and run typecheck/build.
+- **Browser IPC:** main owns guests observed through `did-attach-webview`; before mounting a webview, preload asks main for the opaque persistent partition derived from `browserPartitionForTab(sessionKey, tabId)`. Registration accepts only tab/session values and binds the already-attached guest whose actual partition matches that per-tab partition; no page-visible token or renderer `webContents` ID is accepted.
 - **Ask first:** new runtime dependencies, tool-policy changes, settings-schema changes, credential-storage changes, or packaged releases.
 - **Never:** claim sandboxing or approvals exist before they are implemented; expose Node APIs to the renderer; delete an external workspace; hide a command that was actually executed.
 

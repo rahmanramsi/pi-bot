@@ -66,14 +66,14 @@ Ini adalah pola yang paling bernilai dari GooeyPi. `BrowserPanel` menyimpan riwa
 1. **Panel kanan resizable**: Ringkasan, Files, dan Browser, dengan state aktif/lebar tersimpan per perangkat.
 2. **Files / Bahan saya**: native file picker; salin atau catat referensi file sesuai model penyimpanan yang diputuskan; tampilkan nama, tipe, ukuran, dan hapus dari konteks chat.
 3. **Files / Hasil AI**: result card setelah respons AI, dengan preview untuk gambar, PDF, dan HTML serta Open/Reveal.
-4. **Browser / Tinjau**: satu webview terisolasi untuk navigasi manual dan preview halaman hasil AI.
+4. **Browser / Tinjau**: satu webview terisolasi untuk navigasi manual dan preview halaman hasil AI. Pi Bot issue #10 now also exposes a narrow `tabs`/`read`/`navigate`/`click`/`type`/`submit` tool for visible controls in the active chat session.
 5. **Anotasi**: pilih elemen, tulis komentar, tampilkan sebagai attachment yang jelas sebelum pesan dikirim.
 
 Hasil fase ini: pengguna umum dapat membawa bahan, melihat hasil, dan memberi arahan visual tanpa mengetahui path atau menjelaskan ulang lokasinya.
 
 ### Fase 2 — Browser yang dibantu AI, dengan persetujuan
 
-Tambahkan capability **Bantu di browser** yang selalu off secara default. Saat aktif, AI hanya boleh membaca halaman/tab yang sedang pengguna pilih. Aksi yang mengubah keadaan—klik, mengetik, mengunduh, login, submit, atau membuka tab baru—harus dipisahkan sebagai proposal yang jelas untuk disetujui pengguna.
+Untuk perluasan di luar tool sempit yang sudah shipped, tambahkan capability **Bantu di browser** yang selalu off secara default. Saat aktif, AI hanya boleh membaca halaman/tab yang sedang pengguna pilih. Aksi yang mengubah keadaan—klik, mengetik, mengunduh, login, submit, atau membuka tab baru—harus dipisahkan sebagai proposal yang jelas untuk disetujui pengguna. Tool Pi Bot saat ini tidak menyentuh password-bearing forms, downloads, popup, credentials, atau arbitrary guest attachment.
 
 GooeyPi mengimplementasikan versi yang jauh lebih kuat: tab terikat sesi, maksimum 6 tab per sesi dan 24 total, service browser berada di main process, dan tab Preview milik pengguna tidak bisa ditutup agent. Struktur ini layak dijadikan referensi bila Pi Bot benar-benar sampai ke tahap kontrol AI. Lihat [AgentBrowserService](https://github.com/am-will/gooey-pi/blob/54eae316611246578837fad29695cab6287daba5/electron/main/browser/agent-service.ts).
 
@@ -92,6 +92,6 @@ GooeyPi menerapkan hardening ini dalam [webview gate](https://github.com/am-will
 
 ## Dampak ke Pi Bot saat ini
 
-Pi Bot sudah punya Electron main process, preload bridge yang sempit, `contextIsolation: true`, dan `nodeIntegration: false`. Fase 1 dapat menambah API kecil pada bridge untuk memilih file, membuka/reveal hasil yang sudah diotorisasi, dan mengelola browser panel. Tidak perlu menambah SDK provider atau memberi renderer kemampuan Node.
+Pi Bot sudah punya Electron main process, preload bridge yang sempit, `contextIsolation: true`, dan `nodeIntegration: false`. Browser issue #10 mengikat guest dari `did-attach-webview` di main process, memberi renderer hanya nilai tab/session opaque, dan memeriksa partition sesi sebelum action. Tidak perlu menambah SDK provider atau memberi renderer kemampuan Node.
 
 Browser AI dan File input ke model adalah pekerjaan terpisah: keduanya memerlukan kontrak penyimpanan, izin, ukuran file yang didukung, dan cara memberi konteks ke Pi runtime sebelum UI dijanjikan ke pengguna.

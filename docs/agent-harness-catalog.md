@@ -889,7 +889,7 @@ Setiap entri mencatat:
 - **Cline/Kilo Code — high fit for agent profiles:** modes, custom agents, permission-scoped tools, MCP, browser, and subagent context are directly relevant to Pi Bot's agent profile direction. Both are more IDE-centric.
 - **Zed Agent — high fit for UI contract:** Agent Profiles, Skills, Instructions, MCP, tool permissions, threads, checkpoints, and parallel agents map cleanly to an agent-first workspace UI.
 - **Claude Code/Codex — high fit for safety patterns:** CLAUDE.md/AGENTS.md, skills, subagents, hooks, approvals, sandboxes, and worktrees are useful feature references. Their provider lock and product terms make them poor runtime dependencies for a provider-neutral Pi Bot.
-- **Browser Use/Stagehand/Playwright MCP — future browser path:** use only when Pi Bot has a concrete browser workflow and an explicit credential/sandbox policy. Do not add browser controls as a cosmetic feature.
+- **Browser Use/Stagehand/Playwright MCP — broader future browser path:** Pi Bot issue #10 already ships a narrow visible-page Browser tool with main-owned guest binding, session-scoped partitions, opaque read handles, and redacted persistence. These external harnesses remain references for any broader workflow with an explicit credential/sandbox policy; do not expand the shipped tool as a cosmetic feature.
 
 ### Capability fit summary
 
@@ -909,7 +909,7 @@ Setiap entri mencatat:
 - Make the existing agent profile, workspace trust, AGENTS.md, skills, model, thinking level, session history, and tool list visible as one capability contract.
 - Add a permission policy layer before adding more powerful tools. The current tool list includes bash, edit, and write, so the app needs an explicit allow/ask/deny story if it is going to remain understandable.
 - Treat MCP as an extension boundary with per-server approval and visible provenance, following the safer parts of OpenCode, Goose, Cline, Kilo, Zed, and Claude Code.
-- Treat subagents, background tasks, browser control, and cloud execution as separate milestones with their own persistence, credential, cancellation, and audit rules.
+- Treat subagents, background tasks, broad browser control, and cloud execution as separate milestones with their own persistence, credential, cancellation, and audit rules. Pi Bot's shipped Browser tool is the narrow visible-control exception documented in issue #10.
 - Keep the current narrow Electron bridge and main-process runtime boundary. Do not expose Node APIs or arbitrary tool execution directly to the renderer.
 - Prefer small, inspectable additions: first a capability/permission model, then an evidence-rich timeline, then optional skills/MCP, then any orchestration.
 

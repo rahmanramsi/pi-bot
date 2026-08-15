@@ -84,7 +84,7 @@ The current renderer and runtime now implement the main two-layer model:
 
 ### Deferred
 
-Attachments, URL fetching, connectors, MCP, browser/computer use, nested threads, mentions, groups, handoffs, background notifications, cloud sync, and scheduled routines require separate product and security decisions.
+Attachments, URL fetching, connectors, MCP, and broad browser/computer use, plus nested threads, mentions, groups, handoffs, background notifications, cloud sync, and scheduled routines require separate product and security decisions. The shipped Browser tool remains limited to visible controls in the active chat session.
 
 ## QA checklist
 
