@@ -39,12 +39,14 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { AnimatePresence, motion, motionSprings, motionTransitions, useReducedMotion } from "./lib/motion";
+import { AnimatePresence, motion, motionSprings, motionTimings, motionTransitions, useReducedMotion } from "./lib/motion";
+import { createStreamDeltaBatcher, type StreamDeltaBatcher } from "./lib/streaming";
 import { WorkspaceMentionMenu } from "./components/workspace-mention-menu";
 import { findWorkspaceMention, insertWorkspaceMention, matchingWorkspaceFiles, type MentionRange } from "./lib/workspace-mentions";
 import type {
@@ -147,6 +149,18 @@ function labelThinkingLevel(level: ThinkingLevel) {
 
 function findAgent(agents: AgentProfile[], id?: AgentId | null) {
   return agents.find((agent) => agent.id === id) ?? agents.find((agent) => !agent.archived) ?? agents[0];
+}
+
+function appendAssistantDelta(previous: PiBootstrap | null, delta: string) {
+  if (!previous) return previous;
+  const transcript = [...previous.transcript];
+  const last = transcript.at(-1);
+  if (last?.kind === "assistant" && last.status === "running") {
+    transcript[transcript.length - 1] = { ...last, body: `${last.body}${delta}`, status: "running" };
+  } else {
+    transcript.push({ id: `assistant-${Date.now()}`, kind: "assistant", label: findAgent(previous.agents, previous.activeAgentId)?.name ?? "Assistant", body: delta, status: "running", timestamp: timeNow() });
+  }
+  return { ...previous, transcript };
 }
 
 function providerLabel(provider: string) {
@@ -475,26 +489,28 @@ function ActivityItem({ item }: { item: TimelineItem }) {
   const output = state.status === "running" && item.body === item.input ? "Running…" : item.body || "No output returned.";
   const outcome = state.status === "running" ? "Running" : state.status === "failed" ? "Failed" : "Success";
   return (
-    <motion.details layout className={`activity-item ${state.status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-motion="activity-item">
-      <summary>
+    <Accordion className="activity-item-accordion" value={open ? ["activity"] : []} onValueChange={(next) => setOpen(next.includes("activity"))} data-motion="activity-item">
+      <AccordionItem value="activity" className={`activity-item ${state.status}`}>
+        <AccordionTrigger className="activity-item-trigger">
         <span className="activity-glyph"><Terminal /></span>
         <span className="activity-summary-copy">
           <strong className="activity-summary-closed">{command ? <>Ran <code title={command}>{command}</code></> : title}</strong>
           <strong className="activity-summary-open">{command ? "Ran command" : title}</strong>
         </span>
         <motion.span className="activity-chevron" animate={{ rotate: open ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span>
-      </summary>
-      <AnimatePresence initial={false}>
-        {open && <motion.div className="activity-output-motion" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.standard}>
-          <div className="activity-output-card">
-            <div className="activity-output-heading">{command ? "Shell" : "Details"}</div>
-            {command && <code className="activity-command-full">$ {command}</code>}
-            <pre>{output}</pre>
-            <div className={`activity-outcome ${state.status}`}>{state.icon}<span>{outcome}</span></div>
+        </AccordionTrigger>
+        <AccordionContent className="activity-output-content">
+          <div className="activity-output-motion">
+            <div className="activity-output-card">
+              <div className="activity-output-heading">{command ? "Shell" : "Details"}</div>
+              {command && <code className="activity-command-full">$ {command}</code>}
+              <pre>{output}</pre>
+              <div className={`activity-outcome ${state.status}`}>{state.icon}<span>{outcome}</span></div>
+            </div>
           </div>
-        </motion.div>}
-      </AnimatePresence>
-    </motion.details>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 }
 
@@ -513,8 +529,9 @@ function ActivityGroup({ items }: { items: TimelineItem[] }) {
       ? `${doneCount} of ${items.length} steps completed`
       : `All ${items.length} ${items.length === 1 ? "step" : "steps"} completed`;
   return (
-    <motion.details layout className="activity-group" open={open} onToggle={(event) => setOpen(event.currentTarget.open)} data-motion="activity-group">
-      <summary>
+    <Accordion className="activity-group" value={open ? ["activity"] : []} onValueChange={(next) => setOpen(next.includes("activity"))} data-motion="activity-group">
+      <AccordionItem value="activity" className="activity-group-item">
+        <AccordionTrigger className="activity-group-trigger">
         <span className="activity-group-glyph" aria-hidden="true"><i /><i /><i /></span>
         <span className="activity-group-copy">
           <strong>Agent activity</strong>
@@ -522,9 +539,14 @@ function ActivityGroup({ items }: { items: TimelineItem[] }) {
         </span>
         <span className="activity-group-toggle">{open ? "Hide details" : "Show details"}</span>
         <motion.span className="activity-group-chevron" animate={{ rotate: open ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span>
-      </summary>
-      <ActivityList items={items} />
-    </motion.details>
+        </AccordionTrigger>
+        <AccordionContent className="activity-group-content">
+          <div className="activity-list-motion">
+            <ActivityList items={items} />
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 }
 
@@ -575,9 +597,9 @@ function MarkdownPre({ children, ...props }: ComponentPropsWithoutRef<"pre">) {
   return <pre {...props}>{children}</pre>;
 }
 
-function MarkdownContent({ body }: { body: string }) {
+export function MarkdownContent({ body, streaming }: { body: string; streaming: boolean }) {
   return (
-    <div className="markdown-content">
+    <div className="markdown-content" data-motion={streaming ? "streaming-caret" : undefined}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -593,8 +615,10 @@ function MarkdownContent({ body }: { body: string }) {
 
 function ChatMessage({ item, agent }: { item: TimelineItem; agent?: AgentProfile }) {
   const isUser = item.kind === "user";
+  const streaming = !isUser && item.status === "running";
+  const reducedMotion = useReducedMotion();
   return (
-    <motion.article className={`chat-message ${isUser ? "user" : "assistant"}`} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
+    <motion.article className={`chat-message ${isUser ? "user" : "assistant"}`} layout="position" initial={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
       {isUser ? <div className="chat-avatar" aria-hidden="true">YO</div> : agent ? <AgentAvatar agent={agent} className="chat-avatar" /> : <div className="chat-avatar" aria-hidden="true">AS</div>}
       <div className="chat-message-main">
         <div className="chat-message-meta">
@@ -602,7 +626,7 @@ function ChatMessage({ item, agent }: { item: TimelineItem; agent?: AgentProfile
           <time>{item.timestamp}</time>
           {item.status === "failed" && <Badge variant="destructive">Failed</Badge>}
         </div>
-        <div className="chat-bubble"><div className="chat-body"><MarkdownContent body={item.body || "Thinking…"} /></div></div>
+        <div className="chat-bubble"><div className="chat-body"><MarkdownContent body={item.body || "Thinking…"} streaming={streaming} /></div></div>
       </div>
     </motion.article>
   );
@@ -1079,7 +1103,7 @@ function ChatWorkspace({ data, busy, error, sessionSidebarOpen, onOpenSessionSid
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", end);
   };
-  return <motion.section layout transition={motionSprings.layout} className={`chat-workspace ${panelOpen ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${panelWidth}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} error={error} sessionSidebarOpen={sessionSidebarOpen} onOpenSessionSidebar={onOpenSessionSidebar} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />{panelOpen && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<Button className="workspace-panel-toggle" variant="ghost" size="icon-sm" onClick={() => setPanelOpen((value) => !value)} title={panelOpen ? "Hide workspace" : "Show workspace"} aria-label={panelOpen ? "Hide workspace" : "Show workspace"}>{panelOpen ? <PanelRightClose /> : <PanelRightOpen />}</Button><AnimatePresence initial={false} mode="popLayout">{panelOpen && <RightWorkspacePanel key="workspace-panel" data={data} open={panelOpen} storageKey={storageKey} />}</AnimatePresence></motion.section>;
+  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${panelOpen ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${panelWidth}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} error={error} sessionSidebarOpen={sessionSidebarOpen} onOpenSessionSidebar={onOpenSessionSidebar} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />{panelOpen && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<Button className="workspace-panel-toggle" variant="ghost" size="icon-sm" onClick={() => setPanelOpen((value) => !value)} title={panelOpen ? "Hide workspace" : "Show workspace"} aria-label={panelOpen ? "Hide workspace" : "Show workspace"}>{panelOpen ? <PanelRightClose /> : <PanelRightOpen />}</Button><AnimatePresence initial={false} mode="popLayout">{panelOpen && <RightWorkspacePanel key="workspace-panel" data={data} open={panelOpen} storageKey={storageKey} />}</AnimatePresence></motion.section>;
 }
 
 function ChatView({
@@ -1108,7 +1132,7 @@ function ChatView({
   const responding = busy || data.config.streaming;
   const reducedMotion = useReducedMotion();
   return (
-    <motion.main className="chat-pane" layout data-motion="chat-view">
+    <motion.main className="chat-pane" layout="position" data-motion="chat-view">
       <header className="chat-header">
         <div className="chat-header-leading">
           {!sessionSidebarOpen && <div className="header-launchers"><motion.button type="button" onClick={onOpenSessionSidebar} title="Show sessions" aria-label="Show sessions" whileHover={{ y: -1 }} whileTap={{ scale: 0.94 }} transition={motionSprings.press} data-motion="sidebar-toggle"><MessagesSquare /></motion.button></div>}
@@ -1286,6 +1310,12 @@ export function App() {
   const [createNewAgent, setCreateNewAgent] = useState(false);
   const [authPrompt, setAuthPrompt] = useState<{ id: string; prompt: AuthPrompt }>();
   const [authNotice, setAuthNotice] = useState<string>();
+  const streamBatcherRef = useRef<StreamDeltaBatcher | null>(null);
+  if (!streamBatcherRef.current) {
+    streamBatcherRef.current = createStreamDeltaBatcher((delta) => {
+      setData((previous) => appendAssistantDelta(previous, delta));
+    }, motionTimings.streamBatchMs);
+  }
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -1294,33 +1324,32 @@ export function App() {
   useEffect(() => {
     const unsubscribe = window.piBot.onEvent((event: PiEvent) => {
       if (event.type === "assistant-delta") {
-        setData((previous) => {
-          if (!previous) return previous;
-          const transcript = [...previous.transcript];
-          const last = transcript.at(-1);
-          if (last?.kind === "assistant" && last.status === "running") transcript[transcript.length - 1] = { ...last, body: `${last.body}${event.delta}`, status: "running" };
-          else transcript.push({ id: `assistant-${Date.now()}`, kind: "assistant", label: findAgent(previous.agents, previous.activeAgentId)?.name ?? "Assistant", body: event.delta, status: "running", timestamp: timeNow() });
-          return { ...previous, transcript };
-        });
-      } else if (event.type === "tool-start") {
-        setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: event.id, kind: "tool", label: `Tool · ${event.name}`, body: event.detail, input: event.detail, status: "running", timestamp: timeNow() }] } : previous);
-      } else if (event.type === "tool-update") {
-        setData((previous) => {
-          if (!previous) return previous;
-          return { ...previous, transcript: previous.transcript.map((item) => item.id === event.id ? { ...item, body: event.detail } : item) };
-        });
-      } else if (event.type === "tool-end") {
-        setData((previous) => previous ? { ...previous, transcript: previous.transcript.map((item) => item.id === event.id ? { ...item, body: event.detail, status: event.failed ? "failed" : "done" } : item) } : previous);
-      } else if (event.type === "agent-start") setBusy(true);
-      else if (event.type === "agent-settled" || event.type === "aborted") setBusy(false);
-      else if (event.type === "agent-end" && !event.retrying) setBusy(false);
-      else if (event.type === "error") { setBusy(false); setError(event.message); }
-      else if (event.type === "auth-prompt") setAuthPrompt({ id: event.id, prompt: event.prompt });
-      else if (event.type === "auth-notify") setAuthNotice(event.event.message || event.event.instructions || (event.event.url ? `Continue in your browser: ${event.event.url}` : undefined));
-      else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId } : previous);
+        streamBatcherRef.current?.push(event.delta);
+      } else {
+        streamBatcherRef.current?.flush();
+        if (event.type === "tool-start") {
+          setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: event.id, kind: "tool", label: `Tool · ${event.name}`, body: event.detail, input: event.detail, status: "running", timestamp: timeNow() }] } : previous);
+        } else if (event.type === "tool-update") {
+          setData((previous) => {
+            if (!previous) return previous;
+            return { ...previous, transcript: previous.transcript.map((item) => item.id === event.id ? { ...item, body: event.detail } : item) };
+          });
+        } else if (event.type === "tool-end") {
+          setData((previous) => previous ? { ...previous, transcript: previous.transcript.map((item) => item.id === event.id ? { ...item, body: event.detail, status: event.failed ? "failed" : "done" } : item) } : previous);
+        } else if (event.type === "agent-start") setBusy(true);
+        else if (event.type === "agent-settled" || event.type === "aborted") setBusy(false);
+        else if (event.type === "agent-end" && !event.retrying) setBusy(false);
+        else if (event.type === "error") { setBusy(false); setError(event.message); }
+        else if (event.type === "auth-prompt") setAuthPrompt({ id: event.id, prompt: event.prompt });
+        else if (event.type === "auth-notify") setAuthNotice(event.event.message || event.event.instructions || (event.event.url ? `Continue in your browser: ${event.event.url}` : undefined));
+        else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId } : previous);
+      }
     });
     window.piBot.connect().then((result) => { setData(result); setConnecting(false); }).catch((reason) => { setError(readableError(reason)); setConnecting(false); });
-    return unsubscribe;
+    return () => {
+      streamBatcherRef.current?.cancel();
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {

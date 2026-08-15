@@ -18,6 +18,8 @@ This contract extends [`docs/design-system.md`](docs/design-system.md) with the 
 | `--motion-micro` | `120ms ease-out` | press, hover lift, icon swap |
 | `--motion-standard` | `220ms cubic-bezier(.2,.8,.2,1)` | disclosure, navigation, panel entry |
 | `--motion-emphasis` | `360ms cubic-bezier(.16,1,.3,1)` | workspace and view transitions |
+| `--motion-stream-batch` | `40ms` | coalesce assistant text deltas before a markdown render |
+| `--motion-stream-caret` | `1100ms ease-in-out` | active-generation caret pulse |
 
 Motion spring equivalents live in `src/lib/motion.tsx`:
 
@@ -32,7 +34,7 @@ Motion spring equivalents live in `src/lib/motion.tsx`:
 | Shared `Button` | stable | subtle hover lift and press compression | none | focus ring remains visible |
 | Agent/session navigation | selected state | active indicator uses shared layout | old indicator leaves with the layout transition | selection is still clear without motion |
 | Chat message/activity row | stable reading position | fade and translate a small distance | fade out only when removed | transcript order never changes |
-| Disclosure/details | native closed/open state | content fades and reflows with layout | content fades | `summary` remains keyboard native |
+| Disclosure/details | native closed/open state | content fades in; use layout only when spatial continuity is needed | native details closes immediately unless an explicit exit is visible | `summary` remains keyboard native |
 | Workspace panel | closed/open state | panel moves in with the control | panel moves out while its state remains announced | no direct width/height animation |
 | Dialog/auth prompt | modal surface | fade and rise slightly | fade and lower slightly | focus and escape behavior remain unchanged |
 | Async status | compact indicator | opacity/transform communicates working | immediate when complete | no distracting infinite decoration |
@@ -55,6 +57,7 @@ Motion spring equivalents live in `src/lib/motion.tsx`:
 - Never use motion to conceal an error, delay a destructive action, or create an unexpected focus jump.
 - Keep transitions brief enough that a person can continue working without waiting for an effect.
 - Make cancellation and stop controls respond immediately, even while an enter/exit transition is running.
+- Streamed assistant text is rendered in short batches instead of animating each character. This keeps markdown structure stable and leaves the caret as the only repeating cue for active generation.
 
 ## 6. Review gate
 
