@@ -219,6 +219,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .agent-sidebar-group { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; padding: 0 8px; }
 .agent-list { display: grid; align-content: start; grid-auto-rows: max-content; flex: 1 1 auto; gap: 3px; max-height: none; min-height: 0; margin: 0; padding: 0; overflow-y: auto; list-style: none; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .agent-list > li { min-width: 0; list-style: none; }
+.agent-list-row { position: relative; }
 .agent-list-item {
   display: flex;
   align-items: center;
@@ -227,7 +228,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   min-width: 0;
   min-height: 66px;
   margin: 0;
-  padding: 9px 10px;
+  padding: 9px 42px 9px 10px;
   border: 0;
   border-radius: 11px;
   color: var(--foreground);
@@ -244,7 +245,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .agent-list-item small { color: var(--muted-foreground); font-size: var(--text-caption); }
 .agent-list-copy { display: grid; flex: 1 1 auto; gap: 2px; min-width: 0; margin-left: 10px; }
 .agent-list-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.agent-list-meta { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+.agent-pin-indicator { display: inline-flex; color: var(--muted-foreground); }
+.agent-pin-indicator svg { width: 12px; height: 12px; }
 .agent-list-heading time { flex: 0 0 auto; color: var(--muted-foreground); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
+.agent-list-menu { position: absolute; top: 19px; right: 10px; width: 28px; height: 28px; border-radius: 7px; color: var(--muted-foreground); opacity: 0; }
+.agent-list-row:hover .agent-list-menu, .agent-list-row:focus-within .agent-list-menu, .agent-list-menu[data-popup-open] { opacity: 1; }
+.agent-list-menu:hover { color: var(--foreground); background: var(--accent); }
+.agent-list-menu-content { width: 152px; }
 .agent-list-empty { padding: 12px 10px; }
 .agent-avatar {
   display: grid;

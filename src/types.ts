@@ -13,6 +13,7 @@ export type AgentProfile = {
   defaultModelKey: string;
   thinkingLevel: ThinkingLevel;
   archived: boolean;
+  pinned: boolean;
 };
 
 export type AgentDraft = {

@@ -203,6 +203,7 @@ function defaultAgentProfile() {
     defaultModelKey: "",
     thinkingLevel: preferredThinkingLevel,
     archived: false,
+    pinned: false,
   };
 }
 
@@ -231,6 +232,7 @@ function normalizeProfile(id, value = {}, fallback = {}) {
     defaultModelKey: cleanText(value.defaultModelKey ?? value.modelKey, fallback.defaultModelKey || "", 240),
     thinkingLevel: thinkingLevels.includes(value.thinkingLevel) ? value.thinkingLevel : fallback.thinkingLevel || preferredThinkingLevel,
     archived: Boolean(value.archived),
+    pinned: Boolean(value.pinned),
   };
 }
 

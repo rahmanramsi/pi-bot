@@ -65,6 +65,19 @@ test("agent rows show the latest response preview and a selected state", async (
   assert.match(inbox, /isActive|agent\.id === data\.activeAgentId/);
 });
 
+test("agents are ordered by pins and latest chat activity", async () => {
+  const { app, styles } = await readLayoutSources();
+  const inbox = agentInboxSource(app);
+
+  assert.match(inbox, /latestTimestampFor/);
+  assert.match(inbox, /Number\(b\.pinned\) - Number\(a\.pinned\)/);
+  assert.match(inbox, /latestTimestampFor\(b\) - latestTimestampFor\(a\)/);
+  assert.match(inbox, /agent\.pinned \? "Unpin agent" : "Pin agent"/);
+  assert.match(inbox, /onTogglePin\(agent\)/);
+  assert.match(inbox, /agent-pin-indicator/);
+  assert.match(styles, /\.agent-list-row:hover \.agent-list-menu/);
+});
+
 test("history is an in-place sidebar mode with back, new, open, and delete actions", async () => {
   const { app } = await readLayoutSources();
   const sidebar = appSidebarSource(app);

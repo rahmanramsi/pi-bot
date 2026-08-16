@@ -8,7 +8,7 @@ import type { PiBootstrap, PiBotBridge } from "@/types";
 
 const data: PiBootstrap = {
   activeAgentId: "assistant",
-  agents: [{ id: "assistant", name: "Assistant", initials: "🤖", description: "", instructions: "", workspace: "/tmp/pi-bot", workspaceKind: "app", workspaceTrusted: true, defaultModelKey: "test:model", thinkingLevel: "off", archived: false }],
+  agents: [{ id: "assistant", name: "Assistant", initials: "🤖", description: "", instructions: "", workspace: "/tmp/pi-bot", workspaceKind: "app", workspaceTrusted: true, defaultModelKey: "test:model", thinkingLevel: "off", archived: false, pinned: false }],
   authenticated: true,
   config: {
     agentId: "assistant", workspace: "/tmp/pi-bot", workspaceKind: "app", workspaceTrusted: true,

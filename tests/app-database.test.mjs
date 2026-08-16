@@ -32,6 +32,7 @@ function profile(id, workspace, overrides = {}) {
     defaultModelKey: "",
     thinkingLevel: "medium",
     archived: false,
+    pinned: false,
     ...overrides,
   };
 }
@@ -79,7 +80,7 @@ test("creates a versioned SQLite store with explicit durability pragmas", () => 
   const database = createAppDatabase(databasePath);
 
   assert.equal(existsSync(databasePath), true);
-  assert.equal(database.schemaVersion(), 4);
+  assert.equal(database.schemaVersion(), 5);
   assert.equal(database.pragma("foreign_keys"), 1);
   assert.equal(database.pragma("busy_timeout"), 5000);
   assert.equal(database.pragma("journal_mode"), "wal");
@@ -90,9 +91,9 @@ test("creates a versioned SQLite store with explicit durability pragmas", () => 
   assert.equal(existsSync(path.join(directory, "sessions")), false);
 }));
 
-test("persists agent descriptions", () => withTempDir((directory) => {
+test("persists agent descriptions and pin state", () => withTempDir((directory) => {
   const database = createAppDatabase(path.join(directory, "pi-bot.sqlite"));
-  const agent = profile("assistant", path.join(directory, "workspace"), { description: "Helps ship releases" });
+  const agent = profile("assistant", path.join(directory, "workspace"), { description: "Helps ship releases", pinned: true });
 
   database.saveState({
     setupComplete: true,
@@ -104,6 +105,7 @@ test("persists agent descriptions", () => withTempDir((directory) => {
   });
 
   assert.equal(database.getState().agents[0]?.description, "Helps ship releases");
+  assert.equal(database.getState().agents[0]?.pinned, true);
   database.close();
 }));
 
@@ -226,40 +228,48 @@ test("upgrades older schema markers and rejects unsupported newer versions", () 
   database.close();
 
   const upgraded = createAppDatabase(databasePath);
-  assert.equal(upgraded.schemaVersion(), 4);
+  assert.equal(upgraded.schemaVersion(), 5);
   upgraded.db.exec("DROP TABLE preferences");
   upgraded.db.exec("ALTER TABLE agents DROP COLUMN description");
+  upgraded.db.exec("ALTER TABLE agents DROP COLUMN pinned");
   upgraded.db.prepare("UPDATE schema_meta SET value = ? WHERE key = 'schema_version'").run("1");
   upgraded.db.prepare("DELETE FROM schema_migrations WHERE version = 2").run();
   upgraded.db.prepare("DELETE FROM schema_migrations WHERE version = 3").run();
   upgraded.db.prepare("DELETE FROM schema_migrations WHERE version = 4").run();
+  upgraded.db.prepare("DELETE FROM schema_migrations WHERE version = 5").run();
   upgraded.close();
 
   const migrated = createAppDatabase(databasePath);
-  assert.equal(migrated.schemaVersion(), 4);
+  assert.equal(migrated.schemaVersion(), 5);
   assert.equal(migrated.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'preferences'").get()?.name, "preferences");
   assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 2").get()?.version, 2);
   assert.equal(migrated.db.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'description'").get()?.name, "description");
   assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 3").get()?.version, 3);
   assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 4").get()?.version, 4);
+  assert.equal(migrated.db.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'pinned'").get()?.name, "pinned");
+  assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 5").get()?.version, 5);
   migrated.db.prepare("UPDATE schema_meta SET value = ? WHERE key = 'schema_version'").run("999");
   migrated.close();
 
   assert.throws(() => createAppDatabase(databasePath), /Unsupported database schema version/);
 }));
 
-test("creates scheduled jobs when upgrading a description-only schema version 3 database", () => withTempDir((directory) => {
+test("creates scheduled jobs and agent pins when upgrading a description-only schema version 3 database", () => withTempDir((directory) => {
   const databasePath = path.join(directory, "pi-bot.sqlite");
   const database = createAppDatabase(databasePath);
   database.db.exec("DROP TABLE scheduled_jobs");
+  database.db.exec("ALTER TABLE agents DROP COLUMN pinned");
   database.db.prepare("UPDATE schema_meta SET value = ? WHERE key = 'schema_version'").run("3");
   database.db.prepare("DELETE FROM schema_migrations WHERE version = 4").run();
+  database.db.prepare("DELETE FROM schema_migrations WHERE version = 5").run();
   database.close();
 
   const upgraded = createAppDatabase(databasePath);
-  assert.equal(upgraded.schemaVersion(), 4);
+  assert.equal(upgraded.schemaVersion(), 5);
   assert.equal(upgraded.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_jobs'").get()?.name, "scheduled_jobs");
   assert.equal(upgraded.db.prepare("SELECT version FROM schema_migrations WHERE version = 4").get()?.version, 4);
+  assert.equal(upgraded.db.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'pinned'").get()?.name, "pinned");
+  assert.equal(upgraded.db.prepare("SELECT version FROM schema_migrations WHERE version = 5").get()?.version, 5);
   upgraded.close();
 }));
 

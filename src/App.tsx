@@ -30,6 +30,8 @@ import {
   PanelRightOpen,
   Pause,
   Pencil,
+  Pin,
+  PinOff,
   Play,
   Plus,
   RotateCcw,
@@ -772,6 +774,7 @@ function AgentSidebarSection({
   query,
   onQueryChange,
   onSelect,
+  onTogglePin,
   onCreateAgent,
   onToggleTheme,
   onSettings,
@@ -782,16 +785,22 @@ function AgentSidebarSection({
   query: string;
   onQueryChange: (query: string) => void;
   onSelect: (agentId: AgentId) => void;
+  onTogglePin: (agent: AgentProfile) => void;
   onCreateAgent: () => void;
   onToggleTheme: () => void;
   onSettings: () => void;
 }) {
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const agents = data.agents
-    .filter((agent) => !agent.archived)
-    .filter((agent) => !normalizedQuery || `${agent.name} ${agent.description}`.toLocaleLowerCase().includes(normalizedQuery));
   const latestSessionFor = (agent: AgentProfile) => [...(data.sessionsByAgent[agent.id] ?? [])]
     .sort((a, b) => new Date(b.modified ?? b.created ?? 0).getTime() - new Date(a.modified ?? a.created ?? 0).getTime())[0];
+  const latestTimestampFor = (agent: AgentProfile) => {
+    const latest = latestSessionFor(agent);
+    return new Date(latest?.modified ?? latest?.created ?? 0).getTime();
+  };
+  const agents = data.agents
+    .filter((agent) => !agent.archived)
+    .filter((agent) => !normalizedQuery || `${agent.name} ${agent.description}`.toLocaleLowerCase().includes(normalizedQuery))
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || latestTimestampFor(b) - latestTimestampFor(a) || a.name.localeCompare(b.name));
   return (
     <section className="agent-sidebar-section">
       <header className="agent-inbox-header">
@@ -809,14 +818,20 @@ function AgentSidebarSection({
         <SidebarMenu className="agent-list" aria-label="Agents">
           {agents.map((agent) => {
             const latest = latestSessionFor(agent);
-            return <SidebarMenuItem key={agent.id}>
+            return <SidebarMenuItem className="agent-list-row" key={agent.id}>
               <SidebarMenuButton className={`agent-list-item ${agent.id === data.activeAgentId ? "selected" : ""}`} isActive={agent.id === data.activeAgentId} onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} tooltip={agent.name} data-motion="agent-select">
                 <AgentAvatar agent={agent} />
                 <span className="agent-list-copy">
-                  <span className="agent-list-heading"><strong>{agent.name}</strong><time>{shortDate(latest?.modified ?? latest?.created)}</time></span>
+                  <span className="agent-list-heading"><strong>{agent.name}</strong><span className="agent-list-meta">{agent.pinned && <span className="agent-pin-indicator" title="Pinned"><Pin aria-hidden="true" /></span>}<time>{shortDate(latest?.modified ?? latest?.created)}</time></span></span>
                   <small>{latest?.preview ?? "Start a conversation"}</small>
                 </span>
               </SidebarMenuButton>
+              <DropdownMenu>
+                <DropdownMenuTrigger render={<Button className="agent-list-menu" variant="ghost" size="icon-sm" aria-label={`Actions for ${agent.name}`} />}><MoreHorizontal data-icon="inline-start" /></DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="agent-list-menu-content"><DropdownMenuGroup>
+                  <DropdownMenuItem disabled={busy} onClick={() => onTogglePin(agent)}>{agent.pinned ? <PinOff /> : <Pin />} {agent.pinned ? "Unpin agent" : "Pin agent"}</DropdownMenuItem>
+                </DropdownMenuGroup></DropdownMenuContent>
+              </DropdownMenu>
             </SidebarMenuItem>;
           })}
           {agents.length === 0 && <li className="muted-copy agent-list-empty">{normalizedQuery ? "No agents match your search." : "No agents yet."}</li>}
@@ -910,6 +925,7 @@ function AppSidebar({
   busy,
   historyAgentId,
   onSelectAgent,
+  onTogglePin,
   onCreateAgent,
   onToggleTheme,
   onSettings,
@@ -923,6 +939,7 @@ function AppSidebar({
   busy: boolean;
   historyAgentId: AgentId | null;
   onSelectAgent: (agentId: AgentId) => void;
+  onTogglePin: (agent: AgentProfile) => void;
   onCreateAgent: () => void;
   onToggleTheme: () => void;
   onSettings: () => void;
@@ -938,7 +955,7 @@ function AppSidebar({
         <SidebarTrigger className="sidebar-window-toggle" title="Hide sidebar" aria-label="Hide sidebar" data-motion="sidebar-toggle"><PanelLeftClose data-icon="inline-start" /></SidebarTrigger>
       </SidebarHeader>
       <SidebarContent className="app-sidebar-main">
-        {historyAgentId ? <HistorySidebar data={{ ...data, activeAgentId: historyAgentId }} theme={theme} busy={busy} onBack={onBackFromHistory} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} onToggleTheme={onToggleTheme} onSettings={onSettings} /> : <AgentSidebarSection data={data} theme={theme} busy={busy} query={query} onQueryChange={setQuery} onSelect={onSelectAgent} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} />}
+        {historyAgentId ? <HistorySidebar data={{ ...data, activeAgentId: historyAgentId }} theme={theme} busy={busy} onBack={onBackFromHistory} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} onToggleTheme={onToggleTheme} onSettings={onSettings} /> : <AgentSidebarSection data={data} theme={theme} busy={busy} query={query} onQueryChange={setQuery} onSelect={onSelectAgent} onTogglePin={onTogglePin} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} />}
       </SidebarContent>
     </Sidebar>
   );
@@ -1730,6 +1747,9 @@ export function App() {
     if (profile.workspaceKind !== "app" && !window.confirm(`Delete ${profile.name} and all of its sessions permanently? The external workspace folder will stay.`)) return;
     updateWith(() => window.piBot.deleteAgent(profile.id, deletesWorkspace));
   }
+  function toggleAgentPin(profile: AgentProfile) {
+    updateWith(() => window.piBot.updateAgent({ ...profile, pinned: !profile.pinned }));
+  }
   function createScheduledJob(draft: ScheduledJobDraft) {
     updateWith(() => window.piBot.createScheduledJob(draft));
   }
@@ -1761,7 +1781,7 @@ export function App() {
 
       return <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen} className="app-sidebar-provider">
         <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
-          <AppSidebar data={data} theme={theme} busy={busy} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
+          <AppSidebar data={data} theme={theme} busy={busy} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
           <AnimatePresence initial={false} mode="wait">
             {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
       </AnimatePresence>
