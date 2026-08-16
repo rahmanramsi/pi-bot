@@ -78,7 +78,7 @@ test("creates a versioned SQLite store with explicit durability pragmas", () => 
   const database = createAppDatabase(databasePath);
 
   assert.equal(existsSync(databasePath), true);
-  assert.equal(database.schemaVersion(), 2);
+  assert.equal(database.schemaVersion(), 3);
   assert.equal(database.pragma("foreign_keys"), 1);
   assert.equal(database.pragma("busy_timeout"), 5000);
   assert.equal(database.pragma("journal_mode"), "wal");
@@ -208,16 +208,17 @@ test("upgrades older schema markers and rejects unsupported newer versions", () 
   database.close();
 
   const upgraded = createAppDatabase(databasePath);
-  assert.equal(upgraded.schemaVersion(), 2);
+  assert.equal(upgraded.schemaVersion(), 3);
   upgraded.db.exec("DROP TABLE preferences");
   upgraded.db.prepare("UPDATE schema_meta SET value = ? WHERE key = 'schema_version'").run("1");
   upgraded.db.prepare("DELETE FROM schema_migrations WHERE version = 2").run();
   upgraded.close();
 
   const migrated = createAppDatabase(databasePath);
-  assert.equal(migrated.schemaVersion(), 2);
+  assert.equal(migrated.schemaVersion(), 3);
   assert.equal(migrated.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'preferences'").get()?.name, "preferences");
   assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 2").get()?.version, 2);
+  assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 3").get()?.version, 3);
   migrated.db.prepare("UPDATE schema_meta SET value = ? WHERE key = 'schema_version'").run("999");
   migrated.close();
 

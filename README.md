@@ -25,6 +25,8 @@ more like working with a capable teammate.
   optionally import credentials from an existing local Pi installation.
 - **Keep the workspace in view.** Browse project files and open web pages from
   the workspace panel without leaving the conversation.
+- **Prepare work for later.** Create one-time or recurring scheduled jobs that
+  keep their agent, workspace, model, reasoning level, and prompt.
 
 ## Start in minutes
 
@@ -79,6 +81,14 @@ build/               Application icons
 The renderer talks to Electron through the `window.piBot` preload bridge. The
 main process owns agent runtimes, provider authentication, workspace access,
 and session persistence.
+
+## Scheduled jobs
+
+Scheduled jobs run only while Pi Bot is open. They do not start a background
+process after the app closes. On the next launch, missed occurrences are
+skipped rather than caught up; overlapping runs are not started. Each completed
+run is saved as a normal local session and the job keeps its outcome and session
+path for inspection.
 
 ## Your data stays local
 

@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowLeft,
   Bot,
+  CalendarClock,
   Check,
   Copy,
   ChevronRight,
@@ -26,7 +27,9 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Pause,
   Pencil,
+  Play,
   Plus,
   RotateCcw,
   RefreshCw,
@@ -71,6 +74,9 @@ import type {
   PiEvent,
   PiModelOption,
   ProviderInfo,
+  ScheduledJob,
+  ScheduledJobDraft,
+  ScheduledJobRecurrence,
   SessionSummary,
   ThinkingLevel,
   TimelineItem,
@@ -80,7 +86,7 @@ import type {
 } from "./types";
 
 type View = "chat" | "settings";
-type SettingsSection = "agents" | "models";
+type SettingsSection = "agents" | "models" | "schedules";
 type Theme = "dark" | "light";
 type WorkspaceTabKind = WorkspacePanelTab["kind"];
 type WorkspaceTab = WorkspacePanelTab;
@@ -159,6 +165,59 @@ function shortDate(value?: string) {
   yesterday.setDate(now.getDate() - 1);
   if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(date);
+}
+
+function localDateTimeInputValue(date: Date, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
+}
+
+function formatScheduledDate(value: string | null, timeZone: string) {
+  if (!value) return "Not scheduled";
+  try {
+    return `${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", timeZone }).format(new Date(value))} · ${timeZone}`;
+  } catch {
+    return "Invalid date";
+  }
+}
+
+function recurrenceLabel(recurrence: ScheduledJobRecurrence) {
+  return recurrence === "once" ? "One time" : recurrence === "daily" ? "Every day" : recurrence === "weekly" ? "Every week" : "Every month";
+}
+
+function scheduledRunLabel(job: ScheduledJob) {
+  if (!job.lastStatus) return "No runs yet";
+  if (job.lastStatus === "failed") return `Failed${job.lastError ? ` · ${job.lastError}` : ""}`;
+  if (job.lastStatus === "missed") return "Missed while Pi Bot was closed";
+  if (job.lastStatus === "running") return "Running now";
+  return "Succeeded";
+}
+
+type ScheduledJobForm = Omit<ScheduledJobDraft, "startAt"> & { startAt: string };
+
+function scheduledJobDraftFromData(data: PiBootstrap): ScheduledJobForm {
+  const agent = findAgent(data.agents, data.activeAgentId) ?? data.agents.find((item) => !item.archived);
+  const modelKey = agent?.defaultModelKey || data.config.modelKey || data.config.models[0]?.key || "";
+  const model = data.config.models.find((item) => item.key === modelKey);
+  return {
+    name: "",
+    agentId: agent?.id ?? "",
+    modelKey,
+    thinkingLevel: model?.reasoning ? data.config.thinkingLevel : "off",
+    prompt: "",
+    recurrence: "once",
+    startAt: localDateTimeInputValue(new Date(Date.now() + 5 * 60 * 1000)),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
 }
 
 function groupSessions(sessions: SessionSummary[]) {
@@ -1321,6 +1380,88 @@ function ModelsSettings({ data, busy, onApiKey, onOAuth, onLogout, onImport }: {
   return <motion.section className="settings-detail" layout data-motion="models-settings"><div className="detail-heading"><div><span className="eyebrow">App settings</span><h2>Models & authentication</h2><p>Credentials are global. Each agent chooses its own default model.</p></div></div><div className="settings-card security-card"><LockKeyhole /><div><strong>{connected ? `${connected} provider${connected === 1 ? "" : "s"} connected` : "No provider connected"}</strong><small>Stored in the app’s protected app file.</small></div></div><AnimatePresence initial={false}>{apiProvider && <motion.div className="inline-auth-card" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><div><span className="eyebrow">Connect provider</span><strong>{apiProvider.name}</strong></div><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste an API key" autoFocus /><div className="settings-card-actions"><Button onClick={() => { onApiKey(apiProvider, apiKey); setApiKey(""); setApiProvider(undefined); }} disabled={busy || !apiKey.trim()}><KeyRound /> Save key</Button><Button variant="ghost" onClick={() => setApiProvider(undefined)}>Cancel</Button></div></motion.div>}</AnimatePresence><div className="provider-list">{data.setup.providers.length ? data.setup.providers.map((provider) => <motion.div key={provider.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }}><AuthProviderRow provider={provider} busy={busy} onApiKey={(selected) => setApiProvider(selected)} onOAuth={onOAuth} onLogout={onLogout} /></motion.div>) : <p className="muted-copy">No provider authentication methods are available.</p>}</div>{data.setup.canImportPiAuth && <motion.div className="import-card" layout><div><strong>Import from Pi</strong><p>One-time import of all credentials detected from your local Pi installation.</p></div><Button variant="outline" onClick={onImport} disabled={busy}><KeyRound /> Import Pi auth</Button></motion.div>}<p className="settings-footnote">Pi Bot works without the Pi desktop app or CLI. Existing Pi credentials are only copied when you choose the one-time import.</p></motion.section>;
 }
 
+function ScheduledJobsSettings({
+  data,
+  busy,
+  onSave,
+  onPause,
+  onRun,
+  onDelete,
+  onOpenSession,
+}: {
+  data: PiBootstrap;
+  busy: boolean;
+  onSave: (id: string | undefined, draft: ScheduledJobDraft) => void;
+  onPause: (job: ScheduledJob) => void;
+  onRun: (job: ScheduledJob) => void;
+  onDelete: (job: ScheduledJob) => void;
+  onOpenSession: (job: ScheduledJob) => void;
+}) {
+  const [editingId, setEditingId] = useState<string>();
+  const [form, setForm] = useState<ScheduledJobForm>(() => scheduledJobDraftFromData(data));
+  const editingJob = editingId && editingId !== "new" ? data.scheduledJobs.find((job) => job.id === editingId) : undefined;
+
+  useEffect(() => {
+    if (!editingId) return;
+    if (editingId === "new") {
+      setForm(scheduledJobDraftFromData(data));
+      return;
+    }
+    if (editingJob) {
+      setForm({
+        name: editingJob.name,
+        agentId: editingJob.agentId,
+        modelKey: editingJob.modelKey,
+        thinkingLevel: editingJob.thinkingLevel,
+        prompt: editingJob.prompt,
+        recurrence: editingJob.recurrence,
+        startAt: localDateTimeInputValue(new Date(editingJob.startAt), editingJob.timeZone),
+        timeZone: editingJob.timeZone,
+      });
+    }
+  }, [editingId, editingJob, data]);
+
+  const selectedModel = data.config.models.find((model) => model.key === form.modelKey);
+  const availableThinkingLevels: ThinkingLevel[] = selectedModel?.reasoning ? ["off", "minimal", "low", "medium", "high", "xhigh", "max"] : ["off"];
+  const activeAgents = data.agents.filter((agent) => !agent.archived);
+
+  function updateAgent(agentId: string) {
+    const agent = activeAgents.find((item) => item.id === agentId);
+    const modelKey = agent?.defaultModelKey && data.config.models.some((model) => model.key === agent.defaultModelKey)
+      ? agent.defaultModelKey
+      : data.config.models[0]?.key ?? "";
+    const model = data.config.models.find((item) => item.key === modelKey);
+    setForm((previous) => ({ ...previous, agentId, modelKey, thinkingLevel: model?.reasoning ? previous.thinkingLevel : "off" }));
+  }
+
+  function save() {
+    const startAt = new Date(form.startAt);
+    if (Number.isNaN(startAt.getTime())) return;
+    onSave(editingId === "new" ? undefined : editingId, {
+      ...form,
+      startAt: startAt.toISOString(),
+      thinkingLevel: availableThinkingLevels.includes(form.thinkingLevel) ? form.thinkingLevel : "off",
+    });
+    setEditingId(undefined);
+  }
+
+  return <motion.section className="settings-detail scheduled-settings" layout data-motion="scheduled-settings">
+    <div className="detail-heading"><div><span className="eyebrow">App settings</span><h2>Scheduled jobs</h2><p>Prepare work for an agent to run while Pi Bot is open. Each job keeps its own agent, workspace, model, reasoning level, and prompt.</p></div></div>
+    <div className="scheduled-toolbar"><Button onClick={() => { setForm(scheduledJobDraftFromData(data)); setEditingId("new"); }} disabled={busy || activeAgents.length === 0 || data.config.models.length === 0}><Plus /> New scheduled job</Button><span className="muted-copy">{data.scheduledJobs.length} job{data.scheduledJobs.length === 1 ? "" : "s"}</span></div>
+    <div className="scheduled-lifecycle-note"><CalendarClock /><span><strong>Open-app only</strong><small>Jobs do not run after Pi Bot closes. Missed runs are skipped on the next launch, and overlapping runs are not started.</small></span></div>
+    {data.scheduledJobs.length > 0 ? <div className="scheduled-job-list">{data.scheduledJobs.map((job) => {
+      const agent = findAgent(data.agents, job.agentId);
+      return <article className={`scheduled-job-row ${job.status === "paused" ? "paused" : ""}`} key={job.id}>
+        <header className="scheduled-job-header"><div><strong>{job.name}</strong><span>{agent?.name ?? "Agent unavailable"} · {compactWorkspace(job.workspace)}</span></div><span className={`scheduled-status ${job.status}`}>{job.status === "paused" ? "Paused" : "Active"}</span></header>
+        <p className="scheduled-job-prompt">{job.prompt}</p>
+        <div className="scheduled-job-meta"><span><b>Schedule</b>{recurrenceLabel(job.recurrence)} · {formatScheduledDate(job.startAt, job.timeZone)}</span><span><b>Next run</b>{formatScheduledDate(job.nextRunAt, job.timeZone)}</span><span title={job.lastError ?? undefined}><b>Last run</b>{job.lastRunAt ? `${scheduledRunLabel(job)} · ${formatScheduledDate(job.lastRunAt, job.timeZone)}` : scheduledRunLabel(job)}</span></div>
+        <div className="scheduled-job-actions"><Button variant="outline" size="sm" onClick={() => onPause(job)} disabled={busy}><>{job.status === "paused" ? <Play /> : <Pause />}{job.status === "paused" ? "Resume" : "Pause"}</></Button><Button variant="outline" size="sm" onClick={() => onRun(job)} disabled={busy}><RefreshCw /> Run now</Button><Button variant="ghost" size="sm" onClick={() => { setForm({ name: job.name, agentId: job.agentId, modelKey: job.modelKey, thinkingLevel: job.thinkingLevel, prompt: job.prompt, recurrence: job.recurrence, startAt: localDateTimeInputValue(new Date(job.startAt), job.timeZone), timeZone: job.timeZone }); setEditingId(job.id); }} disabled={busy}><Pencil /> Edit</Button>{job.lastSessionPath && <Button variant="ghost" size="sm" onClick={() => onOpenSession(job)} disabled={busy}><MessagesSquare /> Open session</Button>}<Button variant="ghost" size="sm" onClick={() => onDelete(job)} disabled={busy}><Trash2 /> Delete</Button></div>
+      </article>;
+    })}</div> : <Empty className="scheduled-empty"><EmptyMedia variant="icon"><CalendarClock /></EmptyMedia><EmptyTitle>No scheduled jobs yet</EmptyTitle><EmptyDescription>Create a recurring or one-time prompt for an agent. It will stay here across app restarts.</EmptyDescription></Empty>}
+    {editingId && <section className="scheduled-job-editor"><div className="detail-heading"><div><span className="eyebrow">{editingId === "new" ? "New job" : "Edit job"}</span><h3>{editingId === "new" ? "Schedule agent work" : "Update scheduled job"}</h3></div><Button variant="ghost" size="icon-sm" onClick={() => setEditingId(undefined)} aria-label="Close scheduled job editor"><X /></Button></div><div className="scheduled-form"><label className="form-field"><span>Name</span><Input autoFocus value={form.name} onChange={(event) => setForm((previous) => ({ ...previous, name: event.target.value }))} placeholder="e.g. Review open pull requests" /></label><div className="form-grid"><label className="form-field"><span>Agent</span><select className="field-select" value={form.agentId} onChange={(event) => updateAgent(event.target.value)}>{activeAgents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>)}</select></label><label className="form-field"><span>Model</span><select className="field-select" value={form.modelKey} onChange={(event) => { const model = data.config.models.find((item) => item.key === event.target.value); setForm((previous) => ({ ...previous, modelKey: event.target.value, thinkingLevel: model?.reasoning ? previous.thinkingLevel : "off" })); }} disabled={data.config.models.length === 0}>{data.config.models.map((model) => <option value={model.key} key={model.key}>{model.name} · {model.provider}</option>)}</select></label></div><div className="form-grid"><label className="form-field"><span>Recurrence</span><select className="field-select" value={form.recurrence} onChange={(event) => setForm((previous) => ({ ...previous, recurrence: event.target.value as ScheduledJobRecurrence }))}><option value="once">One time</option><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option></select></label><label className="form-field"><span>Reasoning</span><select className="field-select" value={form.thinkingLevel} onChange={(event) => setForm((previous) => ({ ...previous, thinkingLevel: event.target.value as ThinkingLevel }))}>{availableThinkingLevels.map((level) => <option value={level} key={level}>{labelThinkingLevel(level)}</option>)}</select></label></div><div className="form-grid"><label className="form-field"><span>{form.recurrence === "once" ? "Run at" : "First run at"}</span><Input type="datetime-local" value={form.startAt} onChange={(event) => setForm((previous) => ({ ...previous, startAt: event.target.value }))} /></label><label className="form-field"><span>Time zone</span><Input value={form.timeZone} readOnly /><small className="field-help">The schedule uses this IANA time zone. Recurring monthly dates clamp to the last day when a month is shorter.</small></label></div><label className="form-field"><span>Prompt</span><Textarea className="scheduled-prompt-field" rows={5} value={form.prompt} onChange={(event) => setForm((previous) => ({ ...previous, prompt: event.target.value }))} placeholder="What should the agent do?" /></label><div className="settings-actions"><Button variant="outline" onClick={() => setEditingId(undefined)} disabled={busy}>Cancel</Button><Button onClick={save} disabled={busy || !form.name.trim() || !form.agentId || !form.modelKey || !form.prompt.trim()}><Check /> Save scheduled job</Button></div></div></section>}
+  </motion.section>;
+}
+
 function SettingsPage({
   data,
   busy,
@@ -1338,6 +1479,12 @@ function SettingsPage({
   onOAuth,
   onLogout,
   onImport,
+  onCreateScheduledJob,
+  onUpdateScheduledJob,
+  onPauseScheduledJob,
+  onRunScheduledJob,
+  onDeleteScheduledJob,
+  onOpenScheduledSession,
 }: {
   data: PiBootstrap;
   busy: boolean;
@@ -1355,6 +1502,12 @@ function SettingsPage({
   onOAuth: (provider: ProviderInfo) => void;
   onLogout: (provider: ProviderInfo) => void;
   onImport: () => void;
+  onCreateScheduledJob: (draft: ScheduledJobDraft) => void;
+  onUpdateScheduledJob: (id: string, draft: ScheduledJobDraft) => void;
+  onPauseScheduledJob: (job: ScheduledJob) => void;
+  onRunScheduledJob: (job: ScheduledJob) => void;
+  onDeleteScheduledJob: (job: ScheduledJob) => void;
+  onOpenScheduledSession: (job: ScheduledJob) => void;
 }) {
   const [section, setSection] = useState<SettingsSection>("agents");
   const [selectedId, setSelectedId] = useState<AgentId | "new">(createNewAgent ? "new" : (data.activeAgentId ?? (data.agents[0]?.id ?? "new")));
@@ -1378,9 +1531,13 @@ function SettingsPage({
             {section === "models" && <motion.span className="settings-nav-active" layoutId="settings-nav-active" transition={motionSprings.layout} aria-hidden="true" />}
             <KeyRound /><span>Models & authentication</span>
           </motion.button>
+          <motion.button type="button" className={section === "schedules" ? "selected" : ""} onClick={() => setSection("schedules")} whileTap={{ scale: 0.98 }} transition={motionSprings.press} data-motion="settings-nav">
+            {section === "schedules" && <motion.span className="settings-nav-active" layoutId="settings-nav-active" transition={motionSprings.layout} aria-hidden="true" />}
+            <CalendarClock /><span>Scheduled jobs</span><small>{data.scheduledJobs.length}</small>
+          </motion.button>
         </nav>
         <AnimatePresence initial={false} mode="wait">
-          {section === "models" ? <motion.div key="models" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ModelsSettings data={data} busy={busy} onApiKey={onApiKey} onOAuth={onOAuth} onLogout={onLogout} onImport={onImport} /></motion.div> : <motion.div key="agents" className="agent-settings-layout" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}>
+          {section === "models" ? <motion.div key="models" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ModelsSettings data={data} busy={busy} onApiKey={onApiKey} onOAuth={onOAuth} onLogout={onLogout} onImport={onImport} /></motion.div> : section === "schedules" ? <motion.div key="schedules" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ScheduledJobsSettings data={data} busy={busy} onSave={(id, draft) => { if (id) onUpdateScheduledJob(id, draft); else onCreateScheduledJob(draft); }} onPause={onPauseScheduledJob} onRun={onRunScheduledJob} onDelete={onDeleteScheduledJob} onOpenSession={onOpenScheduledSession} /></motion.div> : <motion.div key="agents" className="agent-settings-layout" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}>
             <aside className="settings-agent-list"><div className="settings-list-heading"><span className="eyebrow">All agents</span><Button variant="outline" size="icon-sm" onClick={() => setSelectedId("new")} disabled={busy} aria-label="Create agent"><Plus /></Button></div>{data.agents.map((agent) => <motion.button type="button" className={`settings-agent-item ${selectedId === agent.id ? "selected" : ""} ${agent.archived ? "archived" : ""}`} key={agent.id} onClick={() => setSelectedId(agent.id)} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="settings-agent-select">{selectedId === agent.id && <motion.span className="settings-agent-active" layoutId="settings-agent-active" transition={motionSprings.layout} aria-hidden="true" />}<AgentAvatar agent={agent} /><span><strong>{agent.name}</strong><small>{agent.archived ? "Archived" : agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span></motion.button>)}{data.agents.length === 0 && <p className="muted-copy">No agents yet.</p>}</aside>
             <AgentEditor agent={selected} models={data.config.models} isNew={selectedId === "new"} busy={busy} onCreate={(name, initials) => onCreate(name, initials)} onSave={onUpdate} onChooseFolder={onChooseFolder} onTrustWorkspace={onTrustWorkspace} onArchive={onArchive} onDelete={onDelete} onModelChange={onModelChange} />
           </motion.div>}
@@ -1464,7 +1621,8 @@ export function App() {
         else if (event.type === "error") { setBusy(false); setError(event.message); }
         else if (event.type === "auth-prompt") setAuthPrompt({ id: event.id, prompt: event.prompt });
         else if (event.type === "auth-notify") setAuthNotice(event.event.message || event.event.instructions || (event.event.url ? `Continue in your browser: ${event.event.url}` : undefined));
-        else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId } : previous);
+        else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId, scheduledJobs: event.scheduledJobs } : previous);
+        else if (event.type === "scheduled-jobs-sync") setData((previous) => previous ? { ...previous, scheduledJobs: event.scheduledJobs } : previous);
       }
     });
     Promise.all([window.piBot.connect(), window.piBot.getTheme()]).then(([result, savedTheme]) => { setData(result); setTheme(savedTheme); setConnecting(false); }).catch((reason) => { setError(readableError(reason)); setConnecting(false); });
@@ -1546,6 +1704,26 @@ export function App() {
     if (profile.workspaceKind !== "app" && !window.confirm(`Delete ${profile.name} and all of its sessions permanently? The external workspace folder will stay.`)) return;
     updateWith(() => window.piBot.deleteAgent(profile.id, deletesWorkspace));
   }
+  function createScheduledJob(draft: ScheduledJobDraft) {
+    updateWith(() => window.piBot.createScheduledJob(draft));
+  }
+  function updateScheduledJob(id: string, draft: ScheduledJobDraft) {
+    updateWith(() => window.piBot.updateScheduledJob(id, draft));
+  }
+  function pauseScheduledJob(job: ScheduledJob) {
+    updateWith(() => window.piBot.setScheduledJobPaused(job.id, job.status !== "paused"));
+  }
+  function runScheduledJob(job: ScheduledJob) {
+    updateWith(() => window.piBot.runScheduledJob(job.id));
+  }
+  function deleteScheduledJob(job: ScheduledJob) {
+    if (!window.confirm(`Delete “${job.name}” permanently? Its run history will be removed.`)) return;
+    updateWith(() => window.piBot.deleteScheduledJob(job.id));
+  }
+  function openScheduledSession(job: ScheduledJob) {
+    if (!job.lastSessionPath) return;
+    navigateToChat(() => window.piBot.openScheduledSession(job.id));
+  }
   function toggleTheme() {
     const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
@@ -1559,7 +1737,7 @@ export function App() {
         <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
           <AppSidebar data={data} theme={theme} busy={busy} onSelectAgent={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onCreateAgent={() => { setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId))} onDeleteSession={deleteSession} />
           <AnimatePresence initial={false} mode="wait">
-            {view === "chat" ? <motion.div className="app-view" key={`chat-${workspacePanelSessionKey(data)}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} /></motion.div>}
+            {view === "chat" ? <motion.div className="app-view" key={`chat-${workspacePanelSessionKey(data)}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
       </AnimatePresence>
       <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
     </div>

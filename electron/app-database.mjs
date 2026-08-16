@@ -15,7 +15,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { recoverPendingSessions } from "./session-persistence.mjs";
 
 export const DATABASE_FILENAME = "pi-bot.sqlite";
-export const DATABASE_SCHEMA_VERSION = 2;
+export const DATABASE_SCHEMA_VERSION = 3;
 export const SESSION_PATH_PREFIX = "pi-session://";
 
 const migrationKey = "legacy-jsonl";
@@ -210,6 +210,33 @@ function migrateSchemaV2(database) {
   `);
 }
 
+function migrateSchemaV3(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS scheduled_jobs (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      workspace TEXT NOT NULL,
+      workspace_trusted INTEGER NOT NULL DEFAULT 0,
+      model_key TEXT NOT NULL,
+      thinking_level TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      recurrence TEXT NOT NULL,
+      start_at TEXT NOT NULL,
+      time_zone TEXT NOT NULL,
+      status TEXT NOT NULL,
+      next_run_at TEXT,
+      last_run_at TEXT,
+      last_status TEXT,
+      last_error TEXT,
+      last_session_path TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS scheduled_jobs_due_idx ON scheduled_jobs (status, next_run_at);
+  `);
+}
+
 function normalizeWorkspacePreferences(value) {
   const record = asRecord(value);
   const tabs = Array.isArray(record.tabs)
@@ -269,6 +296,10 @@ export class AppDatabase {
       if (storedVersion < 2) {
         migrateSchemaV2(this.db);
         this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(2, nowIso());
+      }
+      if (storedVersion < 3) {
+        migrateSchemaV3(this.db);
+        this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(3, nowIso());
       }
       this.db.prepare("INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(DATABASE_SCHEMA_VERSION));
     });
@@ -369,6 +400,114 @@ export class AppDatabase {
       this.db.prepare("INSERT INTO preferences (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at").run(themePreferenceKey, JSON.stringify(theme), nowIso());
     });
     return theme;
+  }
+
+  listScheduledJobs() {
+    return readRows(this.db.prepare(`
+      SELECT id, name, agent_id, workspace, workspace_trusted, model_key, thinking_level,
+        prompt, recurrence, start_at, time_zone, status, next_run_at, last_run_at,
+        last_status, last_error, last_session_path, created_at, updated_at
+      FROM scheduled_jobs
+      ORDER BY CASE WHEN next_run_at IS NULL THEN 1 ELSE 0 END, next_run_at, name
+    `)).map((row) => ({
+      id: row.id,
+      name: row.name,
+      agentId: row.agent_id,
+      workspace: row.workspace,
+      workspaceTrusted: integerToBool(row.workspace_trusted),
+      modelKey: row.model_key,
+      thinkingLevel: row.thinking_level,
+      prompt: row.prompt,
+      recurrence: row.recurrence,
+      startAt: row.start_at,
+      timeZone: row.time_zone,
+      status: row.status,
+      nextRunAt: row.next_run_at,
+      lastRunAt: row.last_run_at,
+      lastStatus: row.last_status,
+      lastError: row.last_error,
+      lastSessionPath: row.last_session_path,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  getScheduledJob(id) {
+    return this.listScheduledJobs().find((job) => job.id === id) ?? null;
+  }
+
+  createScheduledJob(job) {
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO scheduled_jobs (
+          id, name, agent_id, workspace, workspace_trusted, model_key, thinking_level,
+          prompt, recurrence, start_at, time_zone, status, next_run_at, last_run_at,
+          last_status, last_error, last_session_path, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        job.id,
+        job.name,
+        job.agentId,
+        job.workspace,
+        boolToInteger(job.workspaceTrusted),
+        job.modelKey,
+        job.thinkingLevel,
+        job.prompt,
+        job.recurrence,
+        job.startAt,
+        job.timeZone,
+        job.status,
+        job.nextRunAt,
+        job.lastRunAt,
+        job.lastStatus,
+        job.lastError,
+        job.lastSessionPath,
+        job.createdAt,
+        job.updatedAt,
+      );
+    });
+    return this.getScheduledJob(job.id);
+  }
+
+  updateScheduledJob(id, changes) {
+    const current = this.getScheduledJob(id);
+    if (!current) throw new Error("Scheduled job was not found.");
+    const next = { ...current, ...changes };
+    this.transaction(() => {
+      this.db.prepare(`
+        UPDATE scheduled_jobs SET
+          name = ?, agent_id = ?, workspace = ?, workspace_trusted = ?, model_key = ?,
+          thinking_level = ?, prompt = ?, recurrence = ?, start_at = ?, time_zone = ?,
+          status = ?, next_run_at = ?, last_run_at = ?, last_status = ?, last_error = ?,
+          last_session_path = ?, created_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        next.name,
+        next.agentId,
+        next.workspace,
+        boolToInteger(next.workspaceTrusted),
+        next.modelKey,
+        next.thinkingLevel,
+        next.prompt,
+        next.recurrence,
+        next.startAt,
+        next.timeZone,
+        next.status,
+        next.nextRunAt,
+        next.lastRunAt,
+        next.lastStatus,
+        next.lastError,
+        next.lastSessionPath,
+        next.createdAt,
+        next.updatedAt,
+        id,
+      );
+    });
+    return this.getScheduledJob(id);
+  }
+
+  deleteScheduledJob(id) {
+    return this.transaction(() => this.db.prepare("DELETE FROM scheduled_jobs WHERE id = ?").run(id).changes > 0);
   }
 
   getState() {
