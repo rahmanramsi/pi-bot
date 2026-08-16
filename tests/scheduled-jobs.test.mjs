@@ -78,6 +78,15 @@ test("calculates daily, weekly, and month-end recurrence in the saved timezone",
 
   const monthly = job("/workspace", { recurrence: "monthly", startAt: "2026-01-31T09:00:00.000Z" });
   assert.equal(nextRunAtForJob(monthly, new Date("2026-01-31T10:00:00.000Z")), "2026-02-28T09:00:00.000Z");
+
+  const longRunningMonthly = job("/workspace", { recurrence: "monthly", startAt: "2020-01-31T09:00:00.000Z" });
+  assert.equal(nextRunAtForJob(longRunningMonthly, new Date("2026-01-31T10:00:00.000Z")), "2026-02-28T09:00:00.000Z");
+});
+
+test("rejects an expired active one-time schedule", () => {
+  const expired = job("/workspace", { recurrence: "once", startAt: "2026-08-20T09:00:00.000Z" });
+  expired.startAt = "2026-08-14T09:00:00.000Z";
+  assert.throws(() => buildScheduledJob(expired, { now: new Date("2026-08-15T00:00:00.000Z") }), /must start in the future/);
 });
 
 test("pause and resume preserve history and recompute a future occurrence", async () => withDatabase(async ({ database, workspace }) => {

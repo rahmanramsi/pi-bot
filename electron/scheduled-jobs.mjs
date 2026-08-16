@@ -44,6 +44,10 @@ function calendarDate(parts) {
   return new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
 }
 
+function calendarDaysBetween(from, to) {
+  return Math.floor((calendarDate(to).getTime() - calendarDate(from).getTime()) / 86_400_000);
+}
+
 function daysInMonth(year, month) {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
@@ -99,25 +103,23 @@ export function nextRunAtForJob(job, after = new Date()) {
   }
 
   const first = occurrenceAt(job, 0);
-  const elapsed = Math.max(0, reference.getTime() - first.getTime());
-  const roughOccurrence = job.recurrence === "daily"
-    ? Math.max(0, Math.floor(elapsed / 86_400_000) - 1)
+  const firstParts = localParts(first, job.timeZone);
+  const referenceParts = localParts(reference, job.timeZone);
+  const calendarDays = Math.max(0, calendarDaysBetween(firstParts, referenceParts));
+  let occurrence = job.recurrence === "daily"
+    ? calendarDays
     : job.recurrence === "weekly"
-      ? Math.max(0, Math.floor(elapsed / (7 * 86_400_000)) - 1)
-      : Math.max(0, Math.floor(elapsed / (28 * 86_400_000)) - 1);
+      ? Math.floor(calendarDays / 7)
+      : Math.max(0, (referenceParts.year - firstParts.year) * 12 + referenceParts.month - firstParts.month);
 
-  for (let occurrence = roughOccurrence; occurrence < roughOccurrence + 8; occurrence += 1) {
-    const candidate = occurrenceAt(job, occurrence);
-    if (candidate.getTime() > reference.getTime()) return candidate.toISOString();
-  }
-  for (let occurrence = 0; occurrence < 10000; occurrence += 1) {
+  for (let attempts = 0; attempts < 10000; attempts += 1, occurrence += 1) {
     const candidate = occurrenceAt(job, occurrence);
     if (candidate.getTime() > reference.getTime()) return candidate.toISOString();
   }
   throw new Error("Could not calculate the next scheduled run.");
 }
 
-export function normalizeScheduledJob(value, { now = new Date() } = {}) {
+export function normalizeScheduledJob(value, { now = new Date(), allowExpiredOnce = false } = {}) {
   if (!value || typeof value !== "object") throw new Error("Invalid scheduled job.");
   const id = typeof value.id === "string" && value.id.trim() ? value.id.trim() : null;
   if (!id) throw new Error("Scheduled job id is required.");
@@ -160,17 +162,20 @@ export function normalizeScheduledJob(value, { now = new Date() } = {}) {
     updatedAt: timestamp,
   };
   base.nextRunAt = status === "active" ? nextRunAtForJob(base, now) : isoOrNull(value.nextRunAt);
+  if (base.status === "active" && base.recurrence === "once" && !base.nextRunAt && !allowExpiredOnce) {
+    throw new Error("One-time scheduled jobs must start in the future.");
+  }
   return base;
 }
 
-export function buildScheduledJob(value, { now = new Date() } = {}) {
+export function buildScheduledJob(value, { now = new Date(), allowExpiredOnce = false } = {}) {
   return normalizeScheduledJob({
     ...value,
     lastRunAt: null,
     lastStatus: null,
     lastError: null,
     lastSessionPath: null,
-  }, { now });
+  }, { now, allowExpiredOnce });
 }
 
 function errorMessage(error) {

@@ -1071,6 +1071,7 @@ function prepareScheduledJob(draft, existing = null) {
   const thinkingLevel = typeof draft.thinkingLevel === "string" ? draft.thinkingLevel : existing?.thinkingLevel;
   if (!thinkingLevels.includes(thinkingLevel)) throw new Error("Choose a valid reasoning level for this scheduled job.");
   if (!selectedModel.reasoning && thinkingLevel !== "off") throw new Error("That model only supports off reasoning.");
+  const allowExpiredOnce = existing?.lastStatus && existing.lastStatus !== "running";
   const record = buildScheduledJob({
     ...existing,
     ...draft,
@@ -1082,7 +1083,7 @@ function prepareScheduledJob(draft, existing = null) {
     thinkingLevel,
     status: "active",
     createdAt: existing?.createdAt,
-  });
+  }, { allowExpiredOnce: Boolean(allowExpiredOnce) });
   if (existing) {
     record.lastRunAt = existing.lastRunAt;
     record.lastStatus = existing.lastStatus;

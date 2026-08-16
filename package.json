@@ -16,7 +16,7 @@
   "scripts": {
     "dev": "node scripts/dev-worktree.mjs",
     "test": "node --test tests/*.test.mjs",
-    "test:motion": "node scripts/qa/motion-contract.mjs && vitest run scripts/qa/browser-navigation.test.tsx scripts/qa/dialog-lifecycle.test.tsx scripts/qa/reasoning.test.tsx scripts/qa/streaming-motion.test.ts scripts/qa/streaming-markdown.test.tsx scripts/qa/ai-elements-renderer.test.tsx --environment jsdom",
+    "test:motion": "node scripts/qa/motion-contract.mjs && vitest run scripts/qa/browser-navigation.test.tsx scripts/qa/dialog-lifecycle.test.tsx scripts/qa/reasoning.test.tsx scripts/qa/streaming-motion.test.ts scripts/qa/streaming-markdown.test.tsx scripts/qa/ai-elements-renderer.test.tsx scripts/qa/scheduled-time.test.ts --environment jsdom",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "verify:renderer": "node scripts/check-packaged-renderer.mjs",

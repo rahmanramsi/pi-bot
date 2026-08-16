@@ -65,6 +65,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AnimatePresence, motion, motionSprings, motionTimings, motionTransitions, useReducedMotion } from "./lib/motion";
 import { createStreamDeltaBatcher, type StreamDeltaBatcher } from "./lib/streaming";
+import { scheduledDateFromWallClock } from "./scheduled-time";
 import type {
   AgentId,
   AgentProfile,
@@ -1435,8 +1436,8 @@ function ScheduledJobsSettings({
   }
 
   function save() {
-    const startAt = new Date(form.startAt);
-    if (Number.isNaN(startAt.getTime())) return;
+    const startAt = scheduledDateFromWallClock(form.startAt, form.timeZone);
+    if (!startAt) return;
     onSave(editingId === "new" ? undefined : editingId, {
       ...form,
       startAt: startAt.toISOString(),
