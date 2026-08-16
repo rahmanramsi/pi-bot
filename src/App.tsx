@@ -1017,11 +1017,11 @@ function FilesSidebar({ workspace }: { workspace: string }) {
   return <div className="workspace-files"><AnimatePresence initial={false}>{error && <motion.div className="workspace-panel-error" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={motionTransitions.standard}><CircleAlert /><span>{error}</span></motion.div>}</AnimatePresence><div className="files-filter"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter files…" aria-label="Filter files" /><Button variant="ghost" size="icon-sm" onClick={() => void loadFiles()} disabled={loading} aria-label="Refresh files"><RefreshCw className={loading ? "spin" : ""} /></Button></div>{!loading && !error && files.length === 0 ? <Empty className="workspace-empty"><EmptyMedia variant="icon"><Files /></EmptyMedia><EmptyTitle>No files yet</EmptyTitle><EmptyDescription>Files created by your assistant will appear here.</EmptyDescription></Empty> : <div className="files-tree-list">{renderTree(roots)}</div>}</div>;
 }
 
-function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; partition: string; onChange: (next: Pick<WorkspaceTab, "url" | "title">) => void }) {
+export function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; partition: string; onChange: (next: Pick<WorkspaceTab, "url" | "title">) => void }) {
   const viewRef = useRef<BrowserView | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const [view, setView] = useState<BrowserView | null>(null);
-  const initialUrl = tab.url || defaultBrowserUrl;
+  const initialUrl = useRef(tab.url || defaultBrowserUrl).current;
   const [address, setAddress] = useState(initialUrl);
   const [currentUrl, setCurrentUrl] = useState(initialUrl);
   const [loading, setLoading] = useState(false);
