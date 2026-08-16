@@ -47,6 +47,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ContextMenu, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -818,20 +819,21 @@ function AgentSidebarSection({
         <SidebarMenu className="agent-list" aria-label="Agents">
           {agents.map((agent) => {
             const latest = latestSessionFor(agent);
-            return <SidebarMenuItem className="agent-list-row" key={agent.id}>
-              <SidebarMenuButton className={`agent-list-item ${agent.id === data.activeAgentId ? "selected" : ""}`} isActive={agent.id === data.activeAgentId} onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} tooltip={agent.name} data-motion="agent-select">
-                <AgentAvatar agent={agent} />
-                <span className="agent-list-copy">
-                  <span className="agent-list-heading"><strong>{agent.name}</strong><span className="agent-list-meta">{agent.pinned && <span className="agent-pin-indicator" title="Pinned"><Pin aria-hidden="true" /></span>}<time>{shortDate(latest?.modified ?? latest?.created)}</time></span></span>
-                  <small>{latest?.preview ?? "Start a conversation"}</small>
-                </span>
-              </SidebarMenuButton>
-              <DropdownMenu>
-                <DropdownMenuTrigger render={<Button className="agent-list-menu" variant="ghost" size="icon-sm" aria-label={`Actions for ${agent.name}`} />}><MoreHorizontal data-icon="inline-start" /></DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="agent-list-menu-content"><DropdownMenuGroup>
-                  <DropdownMenuItem disabled={busy} onClick={() => onTogglePin(agent)}>{agent.pinned ? <PinOff /> : <Pin />} {agent.pinned ? "Unpin agent" : "Pin agent"}</DropdownMenuItem>
-                </DropdownMenuGroup></DropdownMenuContent>
-              </DropdownMenu>
+            return <SidebarMenuItem key={agent.id}>
+              <ContextMenu>
+                <ContextMenuTrigger className="agent-list-context">
+                  <SidebarMenuButton className={`agent-list-item ${agent.id === data.activeAgentId ? "selected" : ""}`} isActive={agent.id === data.activeAgentId} onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} tooltip={agent.name} data-motion="agent-select">
+                    <AgentAvatar agent={agent} />
+                    <span className="agent-list-copy">
+                      <span className="agent-list-heading"><strong>{agent.name}</strong><span className="agent-list-meta">{agent.pinned && <span className="agent-pin-indicator" title="Pinned"><Pin aria-hidden="true" /></span>}<time>{shortDate(latest?.modified ?? latest?.created)}</time></span></span>
+                      <small>{latest?.preview ?? "Start a conversation"}</small>
+                    </span>
+                  </SidebarMenuButton>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="agent-context-menu-content"><ContextMenuGroup>
+                  <ContextMenuItem disabled={busy} onClick={() => onTogglePin(agent)}>{agent.pinned ? <PinOff /> : <Pin />} {agent.pinned ? "Unpin agent" : "Pin agent"}</ContextMenuItem>
+                </ContextMenuGroup></ContextMenuContent>
+              </ContextMenu>
             </SidebarMenuItem>;
           })}
           {agents.length === 0 && <li className="muted-copy agent-list-empty">{normalizedQuery ? "No agents match your search." : "No agents yet."}</li>}

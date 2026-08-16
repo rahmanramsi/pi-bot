@@ -75,7 +75,11 @@ test("agents are ordered by pins and latest chat activity", async () => {
   assert.match(inbox, /agent\.pinned \? "Unpin agent" : "Pin agent"/);
   assert.match(inbox, /onTogglePin\(agent\)/);
   assert.match(inbox, /agent-pin-indicator/);
-  assert.match(styles, /\.agent-list-row:hover \.agent-list-menu/);
+  assert.match(inbox, /<ContextMenu>[\s\S]*?<ContextMenuTrigger[\s\S]*?<SidebarMenuButton[\s\S]*?<ContextMenuContent/);
+  assert.doesNotMatch(inbox, /<DropdownMenu/);
+  assert.doesNotMatch(inbox, /agent-list-menu/);
+  assert.match(styles, /\.agent-context-menu-content/);
+  assert.doesNotMatch(styles, /\.agent-list-menu/);
 });
 
 test("history is an in-place sidebar mode with back, new, open, and delete actions", async () => {
