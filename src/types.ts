@@ -34,6 +34,7 @@ export type SessionSummary = {
   path: string;
   id: string;
   name: string;
+  preview?: string;
   agentId: AgentId;
   workspace?: string;
   created?: string;

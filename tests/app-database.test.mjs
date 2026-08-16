@@ -79,7 +79,7 @@ test("creates a versioned SQLite store with explicit durability pragmas", () => 
   const database = createAppDatabase(databasePath);
 
   assert.equal(existsSync(databasePath), true);
-  assert.equal(database.schemaVersion(), 3);
+  assert.equal(database.schemaVersion(), 4);
   assert.equal(database.pragma("foreign_keys"), 1);
   assert.equal(database.pragma("busy_timeout"), 5000);
   assert.equal(database.pragma("journal_mode"), "wal");
@@ -226,24 +226,41 @@ test("upgrades older schema markers and rejects unsupported newer versions", () 
   database.close();
 
   const upgraded = createAppDatabase(databasePath);
-  assert.equal(upgraded.schemaVersion(), 3);
+  assert.equal(upgraded.schemaVersion(), 4);
   upgraded.db.exec("DROP TABLE preferences");
   upgraded.db.exec("ALTER TABLE agents DROP COLUMN description");
   upgraded.db.prepare("UPDATE schema_meta SET value = ? WHERE key = 'schema_version'").run("1");
   upgraded.db.prepare("DELETE FROM schema_migrations WHERE version = 2").run();
   upgraded.db.prepare("DELETE FROM schema_migrations WHERE version = 3").run();
+  upgraded.db.prepare("DELETE FROM schema_migrations WHERE version = 4").run();
   upgraded.close();
 
   const migrated = createAppDatabase(databasePath);
-  assert.equal(migrated.schemaVersion(), 3);
+  assert.equal(migrated.schemaVersion(), 4);
   assert.equal(migrated.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'preferences'").get()?.name, "preferences");
   assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 2").get()?.version, 2);
   assert.equal(migrated.db.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'description'").get()?.name, "description");
   assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 3").get()?.version, 3);
+  assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 4").get()?.version, 4);
   migrated.db.prepare("UPDATE schema_meta SET value = ? WHERE key = 'schema_version'").run("999");
   migrated.close();
 
   assert.throws(() => createAppDatabase(databasePath), /Unsupported database schema version/);
+}));
+
+test("creates scheduled jobs when upgrading a description-only schema version 3 database", () => withTempDir((directory) => {
+  const databasePath = path.join(directory, "pi-bot.sqlite");
+  const database = createAppDatabase(databasePath);
+  database.db.exec("DROP TABLE scheduled_jobs");
+  database.db.prepare("UPDATE schema_meta SET value = ? WHERE key = 'schema_version'").run("3");
+  database.db.prepare("DELETE FROM schema_migrations WHERE version = 4").run();
+  database.close();
+
+  const upgraded = createAppDatabase(databasePath);
+  assert.equal(upgraded.schemaVersion(), 4);
+  assert.equal(upgraded.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_jobs'").get()?.name, "scheduled_jobs");
+  assert.equal(upgraded.db.prepare("SELECT version FROM schema_migrations WHERE version = 4").get()?.version, 4);
+  upgraded.close();
 }));
 
 test("imports legacy settings and current mapping while recovering a pending session first", () => withTempDir((directory) => {

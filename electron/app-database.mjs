@@ -15,7 +15,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { recoverPendingSessions } from "./session-persistence.mjs";
 
 export const DATABASE_FILENAME = "pi-bot.sqlite";
-export const DATABASE_SCHEMA_VERSION = 3;
+export const DATABASE_SCHEMA_VERSION = 4;
 export const SESSION_PATH_PREFIX = "pi-session://";
 
 const migrationKey = "legacy-jsonl";
@@ -212,6 +212,11 @@ function migrateSchemaV2(database) {
 }
 
 function migrateSchemaV3(database) {
+  const columns = readRows(database.prepare("PRAGMA table_info(agents)"));
+  if (!columns.some((column) => column.name === "description")) database.exec("ALTER TABLE agents ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+}
+
+function migrateSchemaV4(database) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS scheduled_jobs (
       id TEXT PRIMARY KEY,
@@ -236,8 +241,6 @@ function migrateSchemaV3(database) {
     );
     CREATE INDEX IF NOT EXISTS scheduled_jobs_due_idx ON scheduled_jobs (status, next_run_at);
   `);
-  const columns = readRows(database.prepare("PRAGMA table_info(agents)"));
-  if (!columns.some((column) => column.name === "description")) database.exec("ALTER TABLE agents ADD COLUMN description TEXT NOT NULL DEFAULT ''");
 }
 
 function normalizeWorkspacePreferences(value) {
@@ -303,6 +306,10 @@ export class AppDatabase {
       if (storedVersion < 3) {
         migrateSchemaV3(this.db);
         this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(3, nowIso());
+      }
+      if (storedVersion < 4) {
+        migrateSchemaV4(this.db);
+        this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(4, nowIso());
       }
       this.db.prepare("INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(DATABASE_SCHEMA_VERSION));
     });
