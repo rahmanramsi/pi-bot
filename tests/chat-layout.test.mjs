@@ -2,26 +2,29 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("chat header leads with the agent and uses the session as its subtitle", async () => {
+test("chat topbar carries the session title while agent identity belongs to sessions", async () => {
   const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   const chatView = app.match(/function ChatView[\s\S]*?function AgentEditor/)?.[0] ?? "";
 
-  assert.match(chatView, /chat-header-leading[\s\S]*?<AgentAvatar agent=\{agent\} \/>[\s\S]*?<h1>\{agent\?\.name \?\? "No active agent"\}<\/h1>[\s\S]*?<span>\{data\.config\.session\?\.name \?\? "New session"\}<\/span>/);
-  assert.doesNotMatch(chatView, /chat-header-avatar/);
+  assert.match(chatView, /chat-section-topbar[\s\S]*?<span className="chat-session-title" title=\{data\.config\.session\?\.name \?\? "New session"\}>[\s\S]*?<MessagesSquare aria-hidden="true" \/>[\s\S]*?<span>\{data\.config\.session\?\.name \?\? "New session"\}<\/span>[\s\S]*?<\/span>/);
+  assert.doesNotMatch(chatView, /chat-header|chat-header-leading|chat-header-avatar/);
   assert.doesNotMatch(chatView, /compactWorkspace/);
+  assert.match(app, /view === "chat" \? <motion\.div className="app-view" key="chat"/);
+  assert.doesNotMatch(app, /key=\{`chat-\$\{workspacePanelSessionKey\(data\)\}`\}/);
+  assert.match(app, /<Conversation key=\{sessionId\} className="conversation-scroll" aria-label="Conversation" initial="instant">/);
 
   const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
   const agentAvatar = app.match(/function AgentAvatar[\s\S]*?function AgentSidebarSection/)?.[0] ?? "";
+  const sessionSidebar = app.match(/const SessionSidebar[\s\S]*?function AppSidebar/)?.[0] ?? "";
   const avatar = styles.match(/\.agent-avatar\s*\{([^}]*)\}/)?.[1] ?? "";
-  const activeAvatar = styles.match(/\.agent-avatar\.active\s*\{([^}]*)\}/)?.[1] ?? "";
   assert.match(avatar, /width:\s*38px/);
   assert.match(avatar, /height:\s*38px/);
-  assert.match(agentAvatar, /display: "grid"/);
-  assert.match(agentAvatar, /color: "#fff"/);
-  assert.match(agentAvatar, /placeItems: "center"/);
-  assert.match(agentAvatar, /width: "100%"/);
-  assert.match(agentAvatar, /height: "100%"/);
-  assert.match(activeAvatar, /box-shadow:/);
+  assert.match(styles, /\.agent-avatar::after \{ display: none; \}/);
+  assert.match(styles, /\.agent-avatar \[data-slot="avatar-fallback"\]\s*\{[\s\S]*?background:\s*transparent;[\s\S]*?font-size:\s*32px/);
+  assert.doesNotMatch(agentAvatar, /agentColor|backgroundColor|active/);
+  assert.doesNotMatch(styles, /\.agent-avatar\.active/);
+  assert.match(sessionSidebar, /session-sidebar-header[\s\S]*?\{agent && <AgentAvatar agent=\{agent\} \/>\}[\s\S]*?<strong>\{agent\?\.name \?\? "No active agent"\}<\/strong>[\s\S]*?\{agent\?\.description && <small>\{agent\.description\}<\/small>\}/);
+  assert.doesNotMatch(sessionSidebar, /<span className="eyebrow">Sessions<\/span>/);
 });
 
 test("individual chat messages do not repeat avatars or names", async () => {
@@ -48,4 +51,19 @@ test("empty conversation does not repeat the agent avatar or name", async () => 
   assert.match(eventRows, /<ConversationEmptyState className="empty-conversation" title="Start a conversation"/);
   assert.doesNotMatch(eventRows, /icon=|agent\?\.name|Assistant/);
   assert.doesNotMatch(styles, /empty-orbit/);
+});
+
+test("agent avatars use an emoji picker with a robot default", async () => {
+  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const main = await readFile(new URL("../electron/main.mjs", import.meta.url), "utf8");
+  const editor = app.match(/function AvatarEmojiPicker[\s\S]*?function AuthProviderRow/)?.[0] ?? "";
+
+  assert.match(app, /import \{ EmojiPicker \} from "frimousse"/);
+  assert.match(app, /const defaultAvatarEmoji = "🤖"/);
+  assert.match(editor, /<PopoverTrigger render=\{<Button type="button" variant="outline" className="avatar-picker-trigger"/);
+  assert.match(editor, /<EmojiPicker\.Root columns=\{8\} onEmojiSelect=/);
+  assert.match(editor, /<EmojiPicker\.Search aria-label="Search emoji"/);
+  assert.match(editor, /<span>Avatar<\/span><AvatarEmojiPicker/);
+  assert.doesNotMatch(editor, /<span>Avatar<\/span><Input/);
+  assert.match(main, /initials: "🤖"/);
 });

@@ -274,7 +274,7 @@ describe("AI Elements renderer adapters", () => {
 
   it("sends Enter but preserves IME composition in the PromptInput composer", () => {
     const onPrompt = vi.fn();
-    const result = render(<Composer busy={false} disabled={false} agentName="Pi" config={config} onPrompt={onPrompt} onAbort={vi.fn()} onModelChange={vi.fn()} onThinkingChange={vi.fn()} />);
+    const result = render(<Composer busy={false} disabled={false} config={config} onPrompt={onPrompt} onAbort={vi.fn()} onModelChange={vi.fn()} onThinkingChange={vi.fn()} />);
     roots.push(result.root);
     const textarea = result.host.querySelector("textarea") as HTMLTextAreaElement;
     const send = result.host.querySelector('button[aria-label="Send message"]') as HTMLButtonElement;
@@ -310,7 +310,7 @@ describe("AI Elements renderer adapters", () => {
 
   it("uses the PromptInput status action to stop a streaming response", () => {
     const onAbort = vi.fn();
-    const result = render(<Composer busy disabled agentName="Pi" config={config} onPrompt={vi.fn()} onAbort={onAbort} onModelChange={vi.fn()} onThinkingChange={vi.fn()} />);
+    const result = render(<Composer busy disabled config={config} onPrompt={vi.fn()} onAbort={onAbort} onModelChange={vi.fn()} onThinkingChange={vi.fn()} />);
     roots.push(result.root);
     const stop = result.host.querySelector('button[aria-label="Stop response"]') as HTMLButtonElement;
     expect(stop).not.toBeNull();

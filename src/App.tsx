@@ -1,4 +1,5 @@
 import { createElement, forwardRef, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { EmojiPicker } from "frimousse";
 import {
   Archive,
   ArrowDown,
@@ -45,6 +46,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Context, ContextContent, ContextContentHeader, ContextTrigger } from "@/components/ai-elements/context";
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse, MessageToolbar } from "@/components/ai-elements/message";
@@ -84,6 +86,7 @@ type WorkspaceTabKind = WorkspacePanelTab["kind"];
 type WorkspaceTab = WorkspacePanelTab;
 
 const defaultBrowserUrl = "https://www.google.com/";
+const defaultAvatarEmoji = "🤖";
 
 function defaultWorkspacePanelPreferences(): WorkspacePanelPreferences {
   return {
@@ -169,12 +172,6 @@ function groupSessions(sessions: SessionSummary[]) {
     else groups.Older.push(session);
   }
   return Object.entries(groups).filter(([, items]) => items.length > 0);
-}
-
-function agentColor(id: string) {
-  const palette = ["#ff5d52", "#27b9df", "#9b5de5", "#ff7a1a", "#4e7ee8", "#e84a9b", "#12b8a6"];
-  const index = [...id].reduce((total, character) => total + character.charCodeAt(0), 0) % palette.length;
-  return palette[index];
 }
 
 function timeNow() {
@@ -341,7 +338,6 @@ function ThinkingSelect({
 export function Composer({
   busy,
   disabled,
-  agentName,
   config,
   onPrompt,
   onAbort,
@@ -350,7 +346,6 @@ export function Composer({
 }: {
   busy: boolean;
   disabled: boolean;
-  agentName: string;
   config: PiConfig;
   onPrompt: (message: string) => void;
   onAbort: () => void;
@@ -372,7 +367,7 @@ export function Composer({
       <PromptInputBody>
         <PromptInputTextarea
           className="composer-input"
-          aria-label={`Message ${agentName}`}
+          aria-label="Message"
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           placeholder="Do anything"
@@ -653,7 +648,7 @@ export function groupConversationItems(items: TimelineItem[]): ConversationBlock
   return blocks;
 }
 
-function EventRows({ items, responding }: { items: TimelineItem[]; responding: boolean }) {
+function EventRows({ items, responding, sessionId }: { items: TimelineItem[]; responding: boolean; sessionId: string }) {
   const blocks = groupConversationItems(items);
   const lastActivityIndex = blocks.findLastIndex((block) => block.kind === "activity");
 
@@ -662,7 +657,7 @@ function EventRows({ items, responding }: { items: TimelineItem[]; responding: b
       {items.length === 0 ? (
         <ConversationEmptyState className="empty-conversation" title="Start a conversation" description="Ask a question or describe what you want to work on." />
       ) : (
-        <Conversation className="conversation-scroll" aria-label="Conversation">
+        <Conversation key={sessionId} className="conversation-scroll" aria-label="Conversation" initial="instant">
           <ConversationContent className="conversation-blocks">
             <AnimatePresence initial={false}>
               {blocks.map((block, index) => {
@@ -683,8 +678,13 @@ function EventRows({ items, responding }: { items: TimelineItem[]; responding: b
   );
 }
 
-function AgentAvatar({ agent, active = false, className = "" }: { agent: AgentProfile; active?: boolean; className?: string }) {
-  return <Avatar className={`agent-avatar ${active ? "active" : ""} ${className}`} aria-hidden="true"><AvatarFallback style={{ backgroundColor: agentColor(agent.id), color: "#fff", display: "grid", placeItems: "center", width: "100%", height: "100%", lineHeight: 1, textAlign: "center" }}>{agent.initials}</AvatarFallback></Avatar>;
+function AgentAvatar({ agent, className = "" }: { agent: AgentProfile; className?: string }) {
+  return <Avatar className={`agent-avatar ${className}`} aria-hidden="true"><AvatarFallback>{agent.initials}</AvatarFallback></Avatar>;
+}
+
+function AvatarEmojiPicker({ value, onChange, disabled }: { value: string; onChange: (emoji: string) => void; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger render={<Button type="button" variant="outline" className="avatar-picker-trigger" disabled={disabled} aria-label="Choose avatar emoji" />}>{value || defaultAvatarEmoji}</PopoverTrigger><PopoverContent className="avatar-emoji-picker" align="end"><EmojiPicker.Root columns={8} onEmojiSelect={({ emoji }) => { onChange(emoji); setOpen(false); }}><EmojiPicker.Search aria-label="Search emoji" placeholder="Search emoji" /><EmojiPicker.Viewport><EmojiPicker.Loading>Loading…</EmojiPicker.Loading><EmojiPicker.Empty>No emoji found.</EmojiPicker.Empty><EmojiPicker.List /></EmojiPicker.Viewport></EmojiPicker.Root></PopoverContent></Popover>;
 }
 
 function AgentSidebarSection({
@@ -713,7 +713,7 @@ function AgentSidebarSection({
           {agents.map((agent) => (
             <SidebarMenuItem key={agent.id}>
               <SidebarMenuButton className={`agent-list-item ${agent.id === data.activeAgentId ? "selected" : ""}`} isActive={agent.id === data.activeAgentId} onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} tooltip={agent.name} data-motion="agent-select">
-                <AgentAvatar agent={agent} active={agent.id === data.activeAgentId} />
+                <AgentAvatar agent={agent} />
                 <span><strong>{agent.name}</strong><small>{agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -762,9 +762,10 @@ const SessionSidebar = forwardRef<HTMLElement, SessionSidebarProps>(function Ses
   return (
     <section ref={ref} className="session-sidebar" data-motion="session-sidebar">
       <header className="session-sidebar-header">
+        {agent && <AgentAvatar agent={agent} />}
         <div>
-          <span className="eyebrow">Sessions</span>
           <strong>{agent?.name ?? "No active agent"}</strong>
+          {agent?.description && <small>{agent.description}</small>}
         </div>
       </header>
       <Button className="new-chat-button" onClick={onNewChat} disabled={!data.activeAgentId}><MessageSquarePlus /> New session <Plus /></Button>
@@ -1155,20 +1156,18 @@ function ChatView({
     <motion.main className="chat-pane" layout="position" data-motion="chat-view">
       <header className="section-topbar chat-section-topbar" aria-label="Conversation toolbar">
         {!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle" title="Show sidebar" aria-label="Show sidebar" data-motion="sidebar-toggle"><PanelLeftOpen data-icon="inline-start" /></SidebarTrigger>}
+        <span className="chat-session-title" title={data.config.session?.name ?? "New session"}>
+          <MessagesSquare aria-hidden="true" />
+          <span>{data.config.session?.name ?? "New session"}</span>
+        </span>
         <AnimatePresence initial={false}>{responding && <motion.span className="responding-indicator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.micro}><motion.i animate={reducedMotion ? { opacity: 1 } : { opacity: [0.35, 1, 0.35] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1.2, repeat: Infinity, ease: "easeInOut" }} /> Responding</motion.span>}</AnimatePresence>
         {!workspaceOpen && onShowWorkspace && <Button className="workspace-panel-show" variant="ghost" size="icon-sm" onClick={onShowWorkspace} title="Show workspace" aria-label="Show workspace"><PanelRightOpen /></Button>}
-      </header>
-      <header className="chat-header">
-        <div className="chat-header-leading">
-          {agent && <AgentAvatar agent={agent} />}
-          <div><h1>{agent?.name ?? "No active agent"}</h1><span>{data.config.session?.name ?? "New session"}</span></div>
-        </div>
       </header>
       <ErrorBanner message={error} />
       {!data.authenticated && <Alert className="notice-line"><KeyRound /><AlertDescription>Add a provider credential in App Settings to start chatting.</AlertDescription></Alert>}
       {data.authenticated && blocked && agent && <Alert className="notice-line"><CircleAlert /><AlertDescription>This agent’s model is unavailable. Choose another model in App Settings.</AlertDescription></Alert>}
-      <EventRows items={data.transcript} responding={responding} />
-      <Composer busy={responding} disabled={blocked || responding} agentName={agent?.name ?? "Assistant"} config={data.config} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
+      <EventRows items={data.transcript} responding={responding} sessionId={data.config.session?.path ?? "new-session"} />
+      <Composer busy={responding} disabled={blocked || responding} config={data.config} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
     </motion.main>
   );
 }
@@ -1190,7 +1189,7 @@ function AgentEditor({
   models: PiModelOption[];
   isNew: boolean;
   busy: boolean;
-  onCreate: (name: string, initials: string) => void;
+  onCreate: (name: string, initials: string, description: string) => void;
   onSave: (agent: AgentProfile) => void;
   onChooseFolder: (agentId: AgentId) => void;
   onTrustWorkspace: (agentId: AgentId) => void;
@@ -1199,16 +1198,18 @@ function AgentEditor({
   onModelChange: (agentId: AgentId, key: string) => void;
 }) {
   const [name, setName] = useState(agent?.name ?? "");
-  const [initials, setInitials] = useState(agent?.initials ?? "");
+  const [initials, setInitials] = useState(agent?.initials ?? defaultAvatarEmoji);
+  const [description, setDescription] = useState(agent?.description ?? "");
   const [instructions, setInstructions] = useState(agent?.instructions ?? "");
   useEffect(() => {
     setName(agent?.name ?? "");
-    setInitials(agent?.initials ?? "");
+    setInitials(agent?.initials ?? defaultAvatarEmoji);
+    setDescription(agent?.description ?? "");
     setInstructions(agent?.instructions ?? "");
-  }, [agent?.id, agent?.name, agent?.initials, agent?.instructions, isNew]);
+  }, [agent?.id, agent?.name, agent?.initials, agent?.description, agent?.instructions, isNew]);
 
   if (isNew) {
-    return <section className="settings-detail"><div className="detail-heading"><div><span className="eyebrow">New agent</span><h2>Create an agent</h2><p>Give this teammate a name. Its workspace starts isolated and empty.</p></div></div><div className="settings-form"><label className="form-field"><span>Name</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Release helper" /></label><label className="form-field compact-field"><span>Initials <em>optional</em></span><Input maxLength={4} value={initials} onChange={(event) => setInitials(event.target.value.toUpperCase())} placeholder="Auto" /></label><div className="settings-actions"><Button onClick={() => onCreate(name, initials)} disabled={busy || !name.trim()}><Plus /> Create agent</Button></div></div></section>;
+    return <section className="settings-detail"><div className="detail-heading"><div><span className="eyebrow">New agent</span><h2>Create an agent</h2><p>Give this teammate a name. Its workspace starts isolated and empty.</p></div></div><div className="settings-form"><label className="form-field"><span>Name</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Deep Research Agent" /></label><label className="form-field compact-field"><span>Avatar</span><AvatarEmojiPicker value={initials} onChange={setInitials} /></label><label className="form-field"><span>Description <em>optional</em></span><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What does this agent do?" /></label><div className="settings-actions"><Button onClick={() => onCreate(name, initials, description)} disabled={busy || !name.trim()}><Plus /> Create agent</Button></div></div></section>;
   }
 
   if (!agent) return <Empty className="settings-detail empty-settings"><EmptyMedia variant="icon"><Bot /></EmptyMedia><EmptyTitle>No active agents</EmptyTitle><EmptyDescription>Create an agent to begin.</EmptyDescription></Empty>;
@@ -1216,11 +1217,12 @@ function AgentEditor({
     <section className="settings-detail">
       <div className="detail-heading"><div className="detail-agent-title"><AgentAvatar agent={{ ...agent, initials: initials || agent.initials }} /><div><span className="eyebrow">Agent settings</span><h2>{agent.name}</h2><p>Identity, instructions, workspace, and default model for new chats.</p></div></div></div>
       <div className="settings-form">
-        <div className="form-grid"><label className="form-field"><span>Name</span><Input value={name} onChange={(event) => setName(event.target.value)} disabled={busy} /></label><label className="form-field compact-field"><span>Initials</span><Input maxLength={4} value={initials} onChange={(event) => setInitials(event.target.value.toUpperCase())} disabled={busy} /></label></div>
-        <label className="form-field"><span>Instructions <em>saved to this agent’s AGENTS.md</em></span><Textarea className="instructions-field" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Leave empty to use Pi’s default behavior." disabled={busy} /></label>
+        <div className="form-grid"><label className="form-field"><span>Name</span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Deep Research Agent" disabled={busy} /></label><label className="form-field compact-field"><span>Avatar</span><AvatarEmojiPicker value={initials} onChange={setInitials} disabled={busy} /></label></div>
+        <label className="form-field"><span>Description</span><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What does this agent do?" disabled={busy} /></label>
+        <label className="form-field"><span>Instructions</span><Textarea className="instructions-field" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Write what this agent should do, what to focus on, what to avoid..." disabled={busy} /></label>
         <div className="settings-card"><div className="settings-card-heading"><div><span className="eyebrow">Workspace</span><strong>{agent.workspaceKind === "app" ? "App-owned workspace" : "External workspace"}</strong></div><FolderOpen /></div><p className="workspace-path" title={agent.workspace}>{agent.workspace || "No workspace"}</p><div className="settings-card-actions"><Button variant="outline" size="sm" onClick={() => onChooseFolder(agent.id)} disabled={busy}><FolderOpen /> Change workspace</Button>{agent.workspaceKind === "external" && !agent.workspaceTrusted && <Button variant="outline" size="sm" onClick={() => onTrustWorkspace(agent.id)} disabled={busy}><ShieldCheck /> Trust skills</Button>}</div><small>{agent.workspaceTrusted ? "Workspace skills are available from .agents/skills." : "Skills are disabled until this workspace is trusted."}</small></div>
         <div className="form-field"><span>Default model <em>applies to new chats</em></span><ModelSelect value={agent.defaultModelKey} models={models} onChange={(key) => onModelChange(agent.id, key)} disabled={busy || models.length === 0} className="field-select-trigger" /></div>
-        <div className="settings-actions"><Button onClick={() => onSave({ ...agent, name: name.trim() || agent.name, initials: initials.trim().slice(0, 4) || agent.initials, instructions })} disabled={busy || !name.trim()}><Check /> Save changes</Button></div>
+        <div className="settings-actions"><Button onClick={() => onSave({ ...agent, name: name.trim() || agent.name, initials, description: description.trim(), instructions })} disabled={busy || !name.trim()}><Check /> Save changes</Button></div>
       </div>
       <div className="danger-zone"><span className="eyebrow">Lifecycle</span><div className="danger-actions"><Button variant="outline" size="sm" onClick={() => onArchive(agent)} disabled={busy}>{agent.archived ? <RotateCcw /> : <Archive />}{agent.archived ? "Restore agent" : "Archive agent"}</Button><Button variant="destructive" size="sm" onClick={() => onDelete(agent)} disabled={busy}><Trash2 /> Delete permanently</Button></div><p>Archiving hides this agent from chat. Deleting removes its sessions; an external workspace folder is never deleted.</p></div>
     </section>
@@ -1262,7 +1264,7 @@ function SettingsPage({
   createNewAgent: boolean;
   onBack: () => void;
   onUpdate: (profile: AgentProfile) => void;
-  onCreate: (name: string, initials: string) => void;
+  onCreate: (name: string, initials: string, description: string) => void;
   onChooseFolder: (agentId: AgentId) => void;
   onTrustWorkspace: (agentId: AgentId) => void;
   onArchive: (agent: AgentProfile) => void;
@@ -1299,7 +1301,7 @@ function SettingsPage({
         <AnimatePresence initial={false} mode="wait">
           {section === "models" ? <motion.div key="models" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ModelsSettings data={data} busy={busy} onApiKey={onApiKey} onOAuth={onOAuth} onLogout={onLogout} onImport={onImport} /></motion.div> : <motion.div key="agents" className="agent-settings-layout" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}>
             <aside className="settings-agent-list"><div className="settings-list-heading"><span className="eyebrow">All agents</span><Button variant="outline" size="icon-sm" onClick={() => setSelectedId("new")} disabled={busy} aria-label="Create agent"><Plus /></Button></div>{data.agents.map((agent) => <motion.button type="button" className={`settings-agent-item ${selectedId === agent.id ? "selected" : ""} ${agent.archived ? "archived" : ""}`} key={agent.id} onClick={() => setSelectedId(agent.id)} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="settings-agent-select">{selectedId === agent.id && <motion.span className="settings-agent-active" layoutId="settings-agent-active" transition={motionSprings.layout} aria-hidden="true" />}<AgentAvatar agent={agent} /><span><strong>{agent.name}</strong><small>{agent.archived ? "Archived" : agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span></motion.button>)}{data.agents.length === 0 && <p className="muted-copy">No agents yet.</p>}</aside>
-            <AgentEditor agent={selected} models={data.config.models} isNew={selectedId === "new"} busy={busy} onCreate={(name, initials) => onCreate(name, initials)} onSave={onUpdate} onChooseFolder={onChooseFolder} onTrustWorkspace={onTrustWorkspace} onArchive={onArchive} onDelete={onDelete} onModelChange={onModelChange} />
+            <AgentEditor agent={selected} models={data.config.models} isNew={selectedId === "new"} busy={busy} onCreate={(name, initials, description) => onCreate(name, initials, description)} onSave={onUpdate} onChooseFolder={onChooseFolder} onTrustWorkspace={onTrustWorkspace} onArchive={onArchive} onDelete={onDelete} onModelChange={onModelChange} />
           </motion.div>}
         </AnimatePresence>
       </div>
@@ -1476,7 +1478,7 @@ export function App() {
         <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
           <AppSidebar data={data} theme={theme} busy={busy} onSelectAgent={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onCreateAgent={() => { setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId))} onDeleteSession={deleteSession} />
           <AnimatePresence initial={false} mode="wait">
-            {view === "chat" ? <motion.div className="app-view" key={`chat-${workspacePanelSessionKey(data)}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} /></motion.div>}
+            {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} /></motion.div>}
       </AnimatePresence>
       <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
     </div>

@@ -45,13 +45,13 @@ test("sidebar toggle keeps the main view placed and clear of window controls", a
 
   const toggle = styles.match(/\.sidebar-window-toggle\s*\{([^}]*)\}/)?.[1] ?? "";
   const appSidebarStyles = styles.match(/^\.app-sidebar\s*\{([^}]*)\}/m)?.[1] ?? "";
-  const chatHeader = styles.match(/^\.chat-header\s*\{([^}]*)\}/m)?.[1] ?? "";
+  const chatTopbar = styles.match(/^\.chat-section-topbar\s*\{([^}]*)\}/m)?.[1] ?? "";
   assert.match(toggle, /top:\s*10px/);
   assert.match(toggle, /left:\s*84px/);
   assert.match(toggle, /pointer-events:\s*auto/);
   assert.match(toggle, /-webkit-app-region:\s*no-drag/);
   assert.match(appSidebarStyles, /-webkit-app-region:\s*no-drag/);
-  assert.match(chatHeader, /-webkit-app-region:\s*drag/);
+  assert.match(chatTopbar, /-webkit-app-region:\s*drag/);
   assert.match(app, /combined-sidebar-topbar section-topbar[\s\S]*?<SidebarTrigger className="sidebar-window-toggle"/);
   assert.match(app, /!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle"/);
 });
