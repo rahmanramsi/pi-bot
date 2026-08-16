@@ -31,10 +31,8 @@ import {
   RotateCcw,
   RefreshCw,
   Search,
-  Send,
   Settings2,
   ShieldCheck,
-  Square,
   Sun,
   Trash2,
   X,
@@ -48,13 +46,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
-import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from "@/components/ai-elements/message";
-import { PromptInput, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from "@/components/ai-elements/prompt-input";
+import { Context, ContextContent, ContextContentHeader, ContextTrigger } from "@/components/ai-elements/context";
+import { Message, MessageAction, MessageActions, MessageContent, MessageResponse, MessageToolbar } from "@/components/ai-elements/message";
+import { PromptInput, PromptInputBody, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, PromptInputTools, type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent } from "@/components/ai-elements/reasoning";
 import { Task, TaskContent, TaskTrigger } from "@/components/ai-elements/task";
 import { Terminal } from "@/components/ai-elements/terminal";
 import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput, type ToolStatus } from "@/components/ai-elements/tool";
-import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -142,8 +140,6 @@ function workspacePanelSessionKey(data: PiBootstrap) {
   return data.config.session?.path ?? data.config.session?.id ?? data.activeAgentId ?? "no-session";
 }
 
-let mermaidDiagramId = 0;
-
 function readableError(reason: unknown) {
   if (reason instanceof Error) return reason.message;
   if (typeof reason === "string") return reason.replace(/^Error:\s*/, "");
@@ -193,13 +189,6 @@ function formatWorkingDuration(milliseconds: number) {
   if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
   if (minutes > 0) return `${minutes}m ${seconds}s`;
   return `${seconds}s`;
-}
-
-function formatTokenCount(value: number | null) {
-  if (value === null) return "—";
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
-  return String(value);
 }
 
 function labelThinkingLevel(level: ThinkingLevel) {
@@ -369,63 +358,45 @@ export function Composer({
   onThinkingChange: (level: ThinkingLevel) => void;
 }) {
   const [message, setMessage] = useState("");
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const contextPercent = config.context.percent === null ? 0 : Math.min(100, Math.max(0, config.context.percent));
-  const contextLabel = config.context.percent === null ? "—" : config.context.percent > 0 && config.context.percent < 1 ? "<1%" : `${config.context.percent.toFixed(0)}%`;
   const reasoningLevels = config.availableThinkingLevels.length > 0 ? config.availableThinkingLevels : ["off"] as ThinkingLevel[];
 
-  function submit(event: { preventDefault: () => void }) {
-    event.preventDefault();
-    const value = message.trim();
+  function submit(prompt: PromptInputMessage) {
+    const value = prompt.text.trim();
     if (!value || busy || disabled) return;
     setMessage("");
-    if (inputRef.current) {
-      inputRef.current.style.height = "40px";
-      inputRef.current.style.overflowY = "hidden";
-    }
     onPrompt(value);
   }
 
   return (
     <PromptInput className="composer" onSubmit={submit}>
-      <PromptInputTextarea
-        ref={inputRef}
-        className="composer-input"
-        aria-label={`Message ${agentName}`}
-        value={message}
-        onChange={(event) => {
-          setMessage(event.target.value);
-          event.currentTarget.style.height = "40px";
-          const nextHeight = Math.min(event.currentTarget.scrollHeight, 150);
-          event.currentTarget.style.height = `${nextHeight}px`;
-          event.currentTarget.style.overflowY = event.currentTarget.scrollHeight > 150 ? "auto" : "hidden";
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-          event.preventDefault();
-          event.currentTarget.form?.requestSubmit();
-        }}
-        placeholder="Do anything"
-        disabled={disabled}
-        rows={1}
-      />
+      <PromptInputBody>
+        <PromptInputTextarea
+          className="composer-input"
+          aria-label={`Message ${agentName}`}
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          placeholder="Do anything"
+          disabled={disabled}
+          rows={1}
+        />
+      </PromptInputBody>
       <PromptInputFooter className="composer-toolbar">
-        <PromptInputTools className="composer-toolbar-left">
-          <span className="composer-prefix" aria-hidden="true">+</span>
-          <span className="composer-divider" aria-hidden="true">•</span>
-          <div className="composer-context" title={`${formatTokenCount(config.context.tokens)} of ${formatTokenCount(config.context.contextWindow)} tokens used`}>
-            <span>{contextLabel} context used</span>
-            <Progress className="context-meter" value={contextPercent} aria-label="Context usage" />
-          </div>
-        </PromptInputTools>
         <PromptInputTools className="composer-actions">
+          <Context usedTokens={config.context.tokens ?? 0} maxTokens={config.context.tokens === null ? 0 : config.context.contextWindow}>
+            <ContextTrigger className="composer-context-trigger" aria-label="Context usage" />
+            <ContextContent>
+              <ContextContentHeader />
+            </ContextContent>
+          </Context>
           <ModelSelect value={config.modelKey} models={config.models} onChange={onModelChange} disabled={busy || config.models.length === 0} className="composer-model-select" />
           <ThinkingSelect value={config.thinkingLevel} levels={reasoningLevels} onChange={onThinkingChange} disabled={busy || !config.modelAvailable} />
-          {busy ? (
-            <PromptInputSubmit className="stop-button" size="icon" status="streaming" onClick={onAbort}><Square /></PromptInputSubmit>
-          ) : (
-            <PromptInputSubmit className="send-button" size="icon" status="ready" disabled={disabled || !message.trim()}><Send /></PromptInputSubmit>
-          )}
+          <PromptInputSubmit
+            className={busy ? "stop-button" : "send-button"}
+            variant={busy ? "ghost" : "default"}
+            status={busy ? "streaming" : "ready"}
+            onStop={onAbort}
+            disabled={!busy && (disabled || !message.trim())}
+          />
         </PromptInputTools>
       </PromptInputFooter>
     </PromptInput>
@@ -617,51 +588,12 @@ export function ActivityGroup({ items, startedAt, endedAt, running = false }: { 
   );
 }
 
-function MermaidDiagram({ chart }: { chart: string }) {
-  const [svg, setSvg] = useState<string>();
-  const [error, setError] = useState<string>();
-
-  useEffect(() => {
-    let cancelled = false;
-    setSvg(undefined);
-    setError(undefined);
-
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const { default: mermaid } = await import("mermaid");
-          mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "default" });
-          const { svg: renderedSvg } = await mermaid.render(`mermaid-diagram-${mermaidDiagramId++}`, chart);
-          if (!cancelled) setSvg(renderedSvg);
-        } catch (reason) {
-          if (!cancelled) setError(readableError(reason));
-        }
-      })();
-    }, 250);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [chart]);
-
-  if (error) {
-    return <div className="mermaid-diagram-error"><span>Diagram tidak bisa dirender: {error}</span><pre><code>{chart}</code></pre></div>;
-  }
-
-  if (!svg) return <div className="mermaid-diagram-loading">Merender diagram…</div>;
-
-  return <div className="mermaid-diagram" aria-label="Diagram Mermaid" dangerouslySetInnerHTML={{ __html: svg }} />;
-}
-
-export function MarkdownContent({ body, streaming, onWorkspaceFile }: { body: string; streaming: boolean; onWorkspaceFile?: (path: string) => void }) {
+export function MarkdownContent({ body, streaming }: { body: string; streaming: boolean }) {
   return (
     <div className="markdown-content" data-motion={streaming ? "streaming-caret" : undefined}>
       <MessageResponse
         mode={streaming ? "streaming" : "static"}
         isAnimating={streaming}
-        mermaidRenderer={(chart) => <MermaidDiagram chart={chart} />}
-        onWorkspaceFile={onWorkspaceFile}
       >
         {body}
       </MessageResponse>
@@ -678,13 +610,9 @@ function ChatMessage({ item }: { item: TimelineItem }) {
     <motion.div layout="position" initial={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
       <Message from={isUser ? "user" : "assistant"} className={`chat-message ${isUser ? "user" : "assistant"}`}>
         <MessageContent className="chat-message-main">
-          <div className={`chat-bubble ${isUser ? "muted" : "ghost"}`}>
-            <div className={`chat-body ${isUser ? "user" : "assistant"}`}>
-              <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} onWorkspaceFile={(path) => { void window.piBot.openWorkspaceFile(path); }} />
-            </div>
-          </div>
-          <div className="chat-message-footer"><time>{item.timestamp}</time>{item.status === "failed" && <Badge variant="destructive">Failed</Badge>}{item.body && <MessageActions className="message-actions"><MessageAction label={copyLabel} tooltip={copyLabel} onClick={() => { void navigator.clipboard?.writeText(item.body); }}><Copy /></MessageAction></MessageActions>}</div>
+          {isUser ? <span className="user-message-text">{item.body}</span> : <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} />}
         </MessageContent>
+        <MessageToolbar className="chat-message-footer"><time>{item.timestamp}</time>{item.status === "failed" && <Badge variant="destructive">Failed</Badge>}{item.body && <MessageActions className="message-actions"><MessageAction label={copyLabel} tooltip={copyLabel} onClick={() => { void navigator.clipboard?.writeText(item.body); }}><Copy /></MessageAction></MessageActions>}</MessageToolbar>
       </Message>
     </motion.div>
   );
