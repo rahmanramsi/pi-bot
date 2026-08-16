@@ -177,6 +177,40 @@ describe("AI Elements renderer adapters", () => {
     expect(result.host.textContent).toContain("streaming text");
   });
 
+  it("links only existing workspace files in assistant markdown", () => {
+    const onWorkspaceFile = vi.fn();
+    const workspaceFiles = ["src/App.tsx", "README.md"];
+    const result = render(
+      <MarkdownContent
+        body={'I updated src/App.tsx, checked `README.md`, and linked [src/App.tsx](./src/App.tsx). Missing [missing.ts](missing.ts), `../src/App.tsx`, and /tmp/src/App.tsx stay plain. [docs](https://example.com) stays external.'}
+        streaming={false}
+        workspaceFiles={workspaceFiles}
+        onWorkspaceFile={onWorkspaceFile}
+      />,
+    );
+    roots.push(result.root);
+
+    const links = [...result.host.querySelectorAll("a")];
+    expect(links.map((link) => link.textContent)).toEqual(["src/App.tsx", "README.md", "src/App.tsx", "docs"]);
+    expect(links.slice(0, 3).every((link) => link.getAttribute("href") === "https://pi-bot.invalid/workspace/src%2FApp.tsx" || link.getAttribute("href") === "https://pi-bot.invalid/workspace/README.md")).toBe(true);
+    expect(links.slice(0, 3).every((link) => link.getAttribute("target") === null)).toBe(true);
+    expect(links[3].getAttribute("target")).toBe("_blank");
+    expect(result.host.textContent).toContain("missing.ts");
+    expect(result.host.querySelector('a[href="missing.ts"]')).toBeNull();
+    expect(result.host.textContent).toContain("../src/App.tsx");
+    expect(result.host.querySelector('a[href*="/tmp/src/App.tsx"]')).toBeNull();
+
+    act(() => links[0].click());
+    expect(onWorkspaceFile).toHaveBeenCalledWith("src/App.tsx");
+
+    act(() => result.root.render(<MarkdownContent body="Streaming src/App.tsx" streaming workspaceFiles={workspaceFiles} onWorkspaceFile={onWorkspaceFile} />));
+    expect(result.host.querySelector('a[href="https://pi-bot.invalid/workspace/src%2FApp.tsx"]')).not.toBeNull();
+
+    const tool = render(<ActivityGroup items={[{ ...toolItem("done"), body: "src/App.tsx", input: '{"path":"src/App.tsx"}' }]} />);
+    roots.push(tool.root);
+    expect(tool.host.querySelector("a")).toBeNull();
+  });
+
   it("keeps user messages anchored to the right edge", () => {
     const result = render(<Message from="user"><MessageContent>hello</MessageContent></Message>);
     roots.push(result.root);
