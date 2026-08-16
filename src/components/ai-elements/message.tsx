@@ -1,60 +1,116 @@
-import { Copy } from "lucide-react";
-import { createMathPlugin } from "@streamdown/math";
-import { createElement, isValidElement, memo, type ComponentProps, type ComponentType, type HTMLAttributes, type ReactNode } from "react";
-import { Streamdown, type Components, type StreamdownProps } from "streamdown";
-import remarkGfm from "remark-gfm";
+"use client";
 import { Button } from "@/components/ui/button";
+import {
+  ButtonGroup,
+  ButtonGroupText,
+} from "@/components/ui/button-group";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { CodeBlock } from "./code-block";
+import { cjk } from "@streamdown/cjk";
+import { code } from "@streamdown/code";
+import { createMathPlugin } from "@streamdown/math";
+import { mermaid } from "@streamdown/mermaid";
+import type { UIMessage } from "ai";
+import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import { createElement, isValidElement, type AnchorHTMLAttributes, type ComponentProps, type HTMLAttributes, type MouseEvent, type ReactElement, type ReactNode } from "react";
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import remarkGfm from "remark-gfm";
+import { Streamdown, StreamdownContext, type Components, type StreamdownProps } from "streamdown";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
-  from: "user" | "assistant";
+  from: UIMessage["role"];
 };
 
-export function Message({ className, from, ...props }: MessageProps) {
-  return (
-    <div
-      data-slot="message"
-      data-from={from}
-      className={cn("group flex w-full min-w-0 gap-2", from === "user" ? "is-user ml-auto flex-row-reverse justify-start" : "is-assistant", className)}
-      {...props}
-    />
-  );
-}
+export const Message = ({ className, from, ...props }: MessageProps) => (
+  <div
+    className={cn(
+      "group flex w-full max-w-[95%] flex-col gap-2",
+      from === "user" ? "is-user ml-auto justify-end" : "is-assistant",
+      className
+    )}
+    {...props}
+  />
+);
 
 export type MessageContentProps = HTMLAttributes<HTMLDivElement>;
 
-export function MessageContent({ className, ...props }: MessageContentProps) {
-  return <div data-slot="message-content" className={cn("flex min-w-0 flex-col gap-2.5", className)} {...props} />;
-}
+export const MessageContent = ({
+  children,
+  className,
+  ...props
+}: MessageContentProps) => (
+  <div
+    className={cn(
+      "is-user:dark flex w-fit min-w-0 max-w-full flex-col gap-2 overflow-hidden text-sm",
+      "group-[.is-user]:ml-auto group-[.is-user]:rounded-lg group-[.is-user]:bg-secondary group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-foreground",
+      "group-[.is-assistant]:text-foreground",
+      className
+    )}
+    {...props}
+  >
+    {children}
+  </div>
+);
 
 export type MessageActionsProps = ComponentProps<"div">;
 
-export function MessageActions({ className, ...props }: MessageActionsProps) {
-  return <div data-slot="message-actions" className={cn("flex items-center gap-1", className)} {...props} />;
-}
+export const MessageActions = ({
+  className,
+  children,
+  ...props
+}: MessageActionsProps) => (
+  <div className={cn("flex items-center gap-1", className)} {...props}>
+    {children}
+  </div>
+);
 
 export type MessageActionProps = ComponentProps<typeof Button> & {
   tooltip?: string;
   label?: string;
 };
 
-export function MessageAction({ tooltip, label, children = <Copy />, size = "icon-sm", variant = "ghost", ...props }: MessageActionProps) {
-  return (
-    <Button size={size} type="button" variant={variant} title={tooltip} aria-label={label ?? tooltip} {...props}>
+export const MessageAction = ({
+  tooltip,
+  children,
+  label,
+  variant = "ghost",
+  size = "icon-sm",
+  ...props
+}: MessageActionProps) => {
+  const button = (
+    <Button size={size} type="button" variant={variant} {...props}>
       {children}
+      <span className="sr-only">{label || tooltip}</span>
     </Button>
   );
-}
 
-type CodeRendererProps = { code: string; language: string };
+  if (tooltip) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>{button}</TooltipTrigger>
+          <TooltipContent>
+            <p>{tooltip}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
 
-export type MessageResponseProps = Omit<StreamdownProps, "children" | "components"> & {
-  children?: string;
-  mermaidRenderer?: (chart: string) => ReactNode;
-  codeRenderer?: ComponentType<CodeRendererProps>;
-  onWorkspaceFile?: (path: string) => void;
-  components?: Components;
+  return button;
 };
 
 type MarkdownNode = {
@@ -269,6 +325,30 @@ function normalizeWorkspacePath(href: string) {
   }
 }
 
+interface MessageBranchContextType {
+  currentBranch: number;
+  totalBranches: number;
+  goToPrevious: () => void;
+  goToNext: () => void;
+  branches: ReactElement[];
+  setBranches: (branches: ReactElement[]) => void;
+}
+
+const MessageBranchContext = createContext<MessageBranchContextType | null>(
+  null
+);
+
+const useMessageBranch = () => {
+  const context = useContext(MessageBranchContext);
+
+  if (!context) {
+    throw new Error(
+      "MessageBranch components must be used within MessageBranch"
+    );
+  }
+  return context;
+};
+
 function safeUrlTransform(url: string, key: string) {
   if (key === "href" && !isExternalUrl(url) && !url.startsWith("#") && !normalizeWorkspacePath(url)) return undefined;
   if (key === "src" && !/^https?:/i.test(url)) return undefined;
@@ -303,15 +383,281 @@ function createHeadingRenderer(tagName: "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
   };
 }
 
+type MarkdownLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
+  onWorkspaceFile?: (path: string) => void;
+};
+
+function MarkdownLink({
+  children,
+  href,
+  onClick,
+  onWorkspaceFile,
+  ...anchorProps
+}: MarkdownLinkProps) {
+  const path = href ? normalizeWorkspacePath(href) : undefined;
+  const external = href ? isExternalUrl(href) : false;
+  const resolvedHref = href ? normalizeFragmentHref(href) : href;
+  const { linkSafety } = useContext(StreamdownContext);
+  const [isConfirming, setIsConfirming] = useState(false);
+
+  const openExternal = useCallback(() => {
+    if (href) window.open(href, "_blank", "noreferrer");
+    setIsConfirming(false);
+  }, [href]);
+
+  if (external && href && linkSafety?.enabled) {
+    const handleExternalClick = async () => {
+      if (linkSafety.onLinkCheck && await linkSafety.onLinkCheck(href)) {
+        openExternal();
+        return;
+      }
+      setIsConfirming(true);
+    };
+    const modal = linkSafety.renderModal?.({
+      isOpen: isConfirming,
+      onClose: () => setIsConfirming(false),
+      onConfirm: openExternal,
+      url: href,
+    });
+
+    return (
+      <>
+        <button
+          className={cn(
+            "wrap-anywhere appearance-none text-left font-medium text-primary underline",
+            anchorProps.className,
+          )}
+          data-streamdown="link"
+          onClick={() => void handleExternalClick()}
+          type="button"
+        >
+          {children}
+        </button>
+        {modal ?? (isConfirming ? (
+          <div aria-label="External link confirmation" data-streamdown="link-confirmation" role="dialog">
+            <p>Open this external link?</p>
+            <button onClick={openExternal} type="button">Open link</button>
+            <button onClick={() => setIsConfirming(false)} type="button">Cancel</button>
+          </div>
+        ) : null)}
+      </>
+    );
+  }
+
+  return (
+    <a
+      {...anchorProps}
+      href={resolvedHref}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noreferrer" : undefined}
+      onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+        if (path && onWorkspaceFile) {
+          event.preventDefault();
+          onWorkspaceFile(path);
+        }
+        onClick?.(event);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+export type MessageBranchProps = HTMLAttributes<HTMLDivElement> & {
+  defaultBranch?: number;
+  onBranchChange?: (branchIndex: number) => void;
+};
+
+export const MessageBranch = ({
+  defaultBranch = 0,
+  onBranchChange,
+  className,
+  ...props
+}: MessageBranchProps) => {
+  const [currentBranch, setCurrentBranch] = useState(defaultBranch);
+  const [branches, setBranches] = useState<ReactElement[]>([]);
+
+  const handleBranchChange = useCallback(
+    (newBranch: number) => {
+      setCurrentBranch(newBranch);
+      onBranchChange?.(newBranch);
+    },
+    [onBranchChange]
+  );
+
+  const goToPrevious = useCallback(() => {
+    const newBranch =
+      currentBranch > 0 ? currentBranch - 1 : branches.length - 1;
+    handleBranchChange(newBranch);
+  }, [currentBranch, branches.length, handleBranchChange]);
+
+  const goToNext = useCallback(() => {
+    const newBranch =
+      currentBranch < branches.length - 1 ? currentBranch + 1 : 0;
+    handleBranchChange(newBranch);
+  }, [currentBranch, branches.length, handleBranchChange]);
+
+  const contextValue = useMemo<MessageBranchContextType>(
+    () => ({
+      branches,
+      currentBranch,
+      goToNext,
+      goToPrevious,
+      setBranches,
+      totalBranches: branches.length,
+    }),
+    [branches, currentBranch, goToNext, goToPrevious]
+  );
+
+  return (
+    <MessageBranchContext.Provider value={contextValue}>
+      <div
+        className={cn("grid w-full gap-2 [&>div]:pb-0", className)}
+        {...props}
+      />
+    </MessageBranchContext.Provider>
+  );
+};
+
+export type MessageBranchContentProps = HTMLAttributes<HTMLDivElement>;
+
+export const MessageBranchContent = ({
+  children,
+  ...props
+}: MessageBranchContentProps) => {
+  const { currentBranch, setBranches, branches } = useMessageBranch();
+  const childrenArray = useMemo(
+    () => (Array.isArray(children) ? children : [children]),
+    [children]
+  );
+
+  // Use useEffect to update branches when they change
+  useEffect(() => {
+    if (branches.length !== childrenArray.length) {
+      setBranches(childrenArray);
+    }
+  }, [childrenArray, branches, setBranches]);
+
+  return childrenArray.map((branch, index) => (
+    <div
+      className={cn(
+        "grid gap-2 overflow-hidden [&>div]:pb-0",
+        index === currentBranch ? "block" : "hidden"
+      )}
+      key={branch.key}
+      {...props}
+    >
+      {branch}
+    </div>
+  ));
+};
+
+export type MessageBranchSelectorProps = ComponentProps<typeof ButtonGroup>;
+
+export const MessageBranchSelector = ({
+  className,
+  ...props
+}: MessageBranchSelectorProps) => {
+  const { totalBranches } = useMessageBranch();
+
+  // Don't render if there's only one branch
+  if (totalBranches <= 1) {
+    return null;
+  }
+
+  return (
+    <ButtonGroup
+      className={cn(
+        "[&>*:not(:first-child)]:rounded-l-md [&>*:not(:last-child)]:rounded-r-md",
+        className
+      )}
+      orientation="horizontal"
+      {...props}
+    />
+  );
+};
+
+export type MessageBranchPreviousProps = ComponentProps<typeof Button>;
+
+export const MessageBranchPrevious = ({
+  children,
+  ...props
+}: MessageBranchPreviousProps) => {
+  const { goToPrevious, totalBranches } = useMessageBranch();
+
+  return (
+    <Button
+      aria-label="Previous branch"
+      disabled={totalBranches <= 1}
+      onClick={goToPrevious}
+      size="icon-sm"
+      type="button"
+      variant="ghost"
+      {...props}
+    >
+      {children ?? <ChevronLeftIcon size={14} />}
+    </Button>
+  );
+};
+
+export type MessageBranchNextProps = ComponentProps<typeof Button>;
+
+export const MessageBranchNext = ({
+  children,
+  ...props
+}: MessageBranchNextProps) => {
+  const { goToNext, totalBranches } = useMessageBranch();
+
+  return (
+    <Button
+      aria-label="Next branch"
+      disabled={totalBranches <= 1}
+      onClick={goToNext}
+      size="icon-sm"
+      type="button"
+      variant="ghost"
+      {...props}
+    >
+      {children ?? <ChevronRightIcon size={14} />}
+    </Button>
+  );
+};
+
+export type MessageBranchPageProps = HTMLAttributes<HTMLSpanElement>;
+
+export const MessageBranchPage = ({
+  className,
+  ...props
+}: MessageBranchPageProps) => {
+  const { currentBranch, totalBranches } = useMessageBranch();
+
+  return (
+    <ButtonGroupText
+      className={cn(
+        "border-none bg-transparent text-muted-foreground shadow-none",
+        className
+      )}
+      {...props}
+    >
+      {currentBranch + 1} of {totalBranches}
+    </ButtonGroupText>
+  );
+};
+
+export type MessageResponseProps = Omit<StreamdownProps, "children" | "components"> & {
+  children?: string;
+  onWorkspaceFile?: (path: string) => void;
+  components?: Components;
+};
+
+const streamdownPlugins = { cjk, code, math: mathPlugin, mermaid };
+
 export const MessageResponse = memo(function MessageResponse({
   children,
   className,
-  mermaidRenderer,
-  codeRenderer: CustomCodeRenderer = ({ code, language }) => <CodeBlock code={code} language={language} />,
-  onWorkspaceFile,
   components,
-  mode = "streaming",
-  plugins: streamdownPlugins,
+  onWorkspaceFile,
+  plugins: customPlugins,
   allowedTags: _allowedTags,
   urlTransform: customUrlTransform,
   remarkPlugins = [],
@@ -328,52 +674,20 @@ export const MessageResponse = memo(function MessageResponse({
     h4: createHeadingRenderer("h4", headingIds) as Components["h4"],
     h5: createHeadingRenderer("h5", headingIds) as Components["h5"],
     h6: createHeadingRenderer("h6", headingIds) as Components["h6"],
-    a: (({ href, onClick, ...anchorProps }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
-      const path = href ? normalizeWorkspacePath(href) : undefined;
-      const external = href ? isExternalUrl(href) : false;
-      const resolvedHref = href ? normalizeFragmentHref(href) : href;
-      return (
-        <a
-          {...anchorProps}
-          href={resolvedHref}
-          target={external ? "_blank" : undefined}
-          rel={external ? "noreferrer" : undefined}
-          onClick={(event) => {
-            if (path && onWorkspaceFile) {
-              event.preventDefault();
-              onWorkspaceFile(path);
-            }
-            onClick?.(event);
-          }}
-        />
-      );
-    }) as Components["a"],
-    pre: (({ children: preChildren }) => {
-      const codeElement = Array.isArray(preChildren) ? preChildren[0] : preChildren;
-      if (isValidElement<{ className?: string; children?: ReactNode }>(codeElement) && !/language-[\w-]+/.test(codeElement.props.className ?? "")) {
-        return <CustomCodeRenderer code={String(codeElement.props.children ?? "").replace(/\n$/, "")} language="text" />;
-      }
-      return <>{preChildren}</>;
-    }) as Components["pre"],
-    code: (({ className: codeClassName, children: codeChildren, ...codeProps }: React.HTMLAttributes<HTMLElement>) => {
-      const match = /language-([\w-]+)/.exec(codeClassName ?? "");
-      const code = String(codeChildren ?? "").replace(/\n$/, "");
-      if (!match) return <code className={codeClassName} {...codeProps}>{codeChildren}</code>;
-      const language = match[1];
-      if (language === "mermaid" && mermaidRenderer) return mermaidRenderer(code);
-      return <CustomCodeRenderer code={code} language={language} />;
-    }) as Components["code"],
+    a: ((anchorProps) => <MarkdownLink {...anchorProps} onWorkspaceFile={onWorkspaceFile} />) as Components["a"],
   };
 
   return (
     <Streamdown
-      className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
-      mode={mode}
+      className={cn(
+        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+        className
+      )}
       remarkPlugins={[remarkMarkdownExtensions, remarkGfm, ...remarkPlugins]}
       remarkRehypeOptions={{ ...remarkRehypeOptions, clobberPrefix: "" }}
       components={mergedComponents}
       allowedTags={{ mark: [], u: [], dl: [], dt: [], dd: [] }}
-      plugins={{ ...(streamdownPlugins ?? {}), math: mathPlugin }}
+      plugins={{ ...streamdownPlugins, ...(customPlugins ?? {}), math: mathPlugin }}
       urlTransform={(url, key, node) => {
         const safeUrl = safeUrlTransform(url, key);
         if (safeUrl === undefined) return undefined;
@@ -384,6 +698,24 @@ export const MessageResponse = memo(function MessageResponse({
       {content}
     </Streamdown>
   );
-});
+}, (prevProps, nextProps) => prevProps.children === nextProps.children && nextProps.isAnimating === prevProps.isAnimating);
 
 MessageResponse.displayName = "MessageResponse";
+
+export type MessageToolbarProps = ComponentProps<"div">;
+
+export const MessageToolbar = ({
+  className,
+  children,
+  ...props
+}: MessageToolbarProps) => (
+  <div
+    className={cn(
+      "mt-4 flex w-full items-center justify-between gap-4",
+      className
+    )}
+    {...props}
+  >
+    {children}
+  </div>
+);
