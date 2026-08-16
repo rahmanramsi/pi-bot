@@ -8,6 +8,7 @@ import {
   CalendarClock,
   Check,
   Copy,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   ChevronLeft,
@@ -1285,11 +1286,16 @@ function ChatView({
     <motion.main className="chat-pane" layout="position" data-motion="chat-view">
       <header className="section-topbar chat-section-topbar" aria-label="Conversation toolbar">
         {!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle" title="Show sidebar" aria-label="Show sidebar" data-motion="sidebar-toggle"><PanelLeftOpen data-icon="inline-start" /></SidebarTrigger>}
-        <div className="chat-agent-title" title={agent?.name ?? "No active agent"}>
+        <div className="chat-agent-title">
           {agent && <AgentAvatar agent={agent} />}
           <span><strong>{agent?.name ?? "No active agent"}</strong></span>
+          {agent && onShowHistory && <DropdownMenu>
+            <DropdownMenuTrigger render={<Button className="chat-agent-menu-button" variant="ghost" size="icon-sm" aria-label={`Open menu for ${agent.name}`} />}><ChevronDown /></DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="chat-agent-menu-content"><DropdownMenuGroup>
+              <DropdownMenuItem onClick={() => onShowHistory(agent.id)} data-motion="chat-history"><MessagesSquare /> Chat history</DropdownMenuItem>
+            </DropdownMenuGroup></DropdownMenuContent>
+          </DropdownMenu>}
         </div>
-        {agent && onShowHistory && <Button className="chat-history-button" variant="ghost" size="icon-sm" onClick={() => onShowHistory(agent.id)} title={`Conversation history for ${agent.name}`} aria-label={`Conversation history for ${agent.name}`}><MessagesSquare /></Button>}
         <AnimatePresence initial={false}>{responding && <motion.span className="responding-indicator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.micro}><motion.i animate={reducedMotion ? { opacity: 1 } : { opacity: [0.35, 1, 0.35] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1.2, repeat: Infinity, ease: "easeInOut" }} /> Responding</motion.span>}</AnimatePresence>
         {!workspaceOpen && onShowWorkspace && <Button className="workspace-panel-show" variant="ghost" size="icon-sm" onClick={onShowWorkspace} title="Show workspace" aria-label="Show workspace"><PanelRightOpen /></Button>}
       </header>

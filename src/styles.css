@@ -367,15 +367,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .chat-section-topbar { margin: 0 -28px; width: calc(100% + 56px); padding: 0 44px 0 36px; -webkit-app-region: drag; }
 .chat-section-topbar button { -webkit-app-region: no-drag; }
 .chat-agent-title { display: flex; flex: 1 1 auto; align-items: center; gap: 9px; min-width: 0; margin-right: auto; }
-.chat-agent-title .agent-avatar { width: 30px; height: 30px; }
-.chat-agent-title .agent-avatar [data-slot="avatar-fallback"] { font-size: 24px; }
-.chat-agent-title > span { display: grid; min-width: 0; gap: 1px; }
-.chat-agent-title strong, .chat-agent-title small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-agent-title > .agent-avatar { width: 30px; height: 30px; }
+.chat-agent-title > .agent-avatar [data-slot="avatar-fallback"] { font-size: 24px; }
+.chat-agent-title > span { display: grid; min-width: 0; }
+.chat-agent-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-agent-title strong { color: var(--foreground); font-size: var(--text-body); font-weight: 650; }
-.chat-agent-title small { color: var(--muted-foreground); font-size: var(--text-caption); }
-.chat-history-button { flex: 0 0 auto; color: var(--muted-foreground); }
-.chat-history-button:hover { color: var(--foreground); background: var(--accent); }
-.chat-history-button svg { width: 16px; height: 16px; }
+.chat-agent-menu-button { margin-left: -5px; color: var(--muted-foreground); }
+.chat-agent-menu-content { min-width: 180px; }
 .app-shell.sidebar-closed .chat-agent-title { margin-left: 64px; }
 .responding-indicator { display: inline-flex !important; align-items: center; gap: 8px; color: var(--foreground) !important; }
 .responding-indicator i { width: 6px; height: 6px; border-radius: 999px; background: var(--foreground); }
