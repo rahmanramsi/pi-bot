@@ -19,6 +19,7 @@ import { Task, TaskContent, TaskTrigger } from "@/components/ai-elements/task";
 import { Terminal } from "@/components/ai-elements/terminal";
 import { Tool, ToolContent, ToolHeader, ToolOutput } from "@/components/ai-elements/tool";
 import type { PiConfig, TimelineItem } from "@/types";
+import kitchenSink from "./fixtures/markdown-kitchen-sink.md?raw";
 
 const config: PiConfig = {
   agentId: "agent",
@@ -278,6 +279,63 @@ describe("AI Elements renderer adapters", () => {
     const external = render(<MarkdownContent body="[docs](https://example.com)" streaming={false} />);
     roots.push(external.root);
     expect(external.host.querySelector('button[data-streamdown="link"]')).not.toBeNull();
+
+    const workspaceCallback = vi.fn();
+    const workspace = render(<MarkdownContent body="[file](workspace://src%2FApp.tsx)" streaming={false} onWorkspaceFile={workspaceCallback} />);
+    roots.push(workspace.root);
+    act(() => (workspace.host.querySelector("a") as HTMLAnchorElement).click());
+    expect(workspaceCallback).toHaveBeenCalledWith("src/App.tsx");
+  });
+
+  it("covers the committed Markdown kitchen sink without weakening the renderer boundary", () => {
+    const onWorkspaceFile = vi.fn();
+    const restored = render(<MarkdownContent body={kitchenSink} streaming={false} onWorkspaceFile={onWorkspaceFile} />);
+    roots.push(restored.root);
+    const streaming = render(<MarkdownContent body={kitchenSink} streaming onWorkspaceFile={vi.fn()} />);
+    roots.push(streaming.root);
+
+    for (const host of [restored.host, streaming.host]) {
+      expect(host.querySelector("mark")?.textContent).toBe("highlight");
+      expect(host.querySelector("sub")?.textContent).toBe("2");
+      expect(host.querySelector('[data-streamdown="superscript"]')?.textContent).toBe("2");
+      expect(host.querySelector("del")?.textContent).toBe("strikethrough");
+      expect(host.textContent).toContain("😄");
+      expect(host.textContent).toContain("🚀");
+      expect(host.textContent).toContain(":unknown-shortcode:");
+      expect(host.textContent).toContain("==literal==");
+      expect(host.textContent).toContain("H~2~O");
+      expect(host.textContent).toContain("x^2^");
+      expect(host.textContent).toContain(":smile:");
+
+      expect(host.querySelectorAll("dl > dt")).toHaveLength(2);
+      expect(host.querySelectorAll("dl > dd")).toHaveLength(2);
+      expect(host.querySelector("u")?.textContent).toBe("underlined");
+      expect(host.querySelector("u")?.getAttribute("onclick")).toBeNull();
+      expect(host.querySelector("script, iframe, object, embed")).toBeNull();
+      expect(host.querySelector('a[href^="javascript:"]')).toBeNull();
+
+      expect(host.querySelectorAll(".katex").length).toBeGreaterThanOrEqual(2);
+      expect(host.querySelectorAll('[data-streamdown="code-block"]')).toHaveLength(3);
+      expect(host.querySelectorAll('[data-streamdown="code-block-actions"] button')).toHaveLength(6);
+      expect(host.textContent).toContain("plain text without a language");
+      expect(host.textContent).toContain("indented plain text");
+
+      expect(host.querySelectorAll("#duplicate-heading")).toHaveLength(1);
+      expect(host.querySelectorAll("#duplicate-heading-1")).toHaveLength(1);
+      expect(host.querySelectorAll("#install")).toHaveLength(1);
+      expect(host.querySelector('a[href="#duplicate-heading"]')).not.toBeNull();
+
+      const reference = host.querySelector('a[data-footnote-ref]') as HTMLAnchorElement;
+      const backReference = host.querySelector('a[data-footnote-backref]') as HTMLAnchorElement;
+      expect(host.querySelector(`[id="${reference.getAttribute("href")?.slice(1)}"]`)).not.toBeNull();
+      expect(host.querySelector(`[id="${backReference.getAttribute("href")?.slice(1)}"]`)).not.toBeNull();
+      expect(host.querySelector(`[id="${reference.getAttribute("aria-describedby")}"]`)).not.toBeNull();
+    }
+
+    const workspaceLink = [...restored.host.querySelectorAll("a")].find((anchor) => anchor.textContent === "Open the workspace fixture") as HTMLAnchorElement;
+    expect(workspaceLink).not.toBeNull();
+    act(() => workspaceLink.click());
+    expect(onWorkspaceFile).toHaveBeenCalledWith("KITCHEN_SINK.md");
   });
 
   it("supports the full Message branch and toolbar composition", () => {
