@@ -367,7 +367,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .conversation-scroll { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .conversation-scroll > [data-slot="stick-to-bottom-content"], .conversation-scroll [data-slot="conversation-content"] { min-height: 100%; }
 .conversation-item { min-width: 0; }
-.conversation-blocks { display: grid; gap: 24px; max-width: 900px; margin: 0 auto; padding: 28px 8px 30px; }
+.conversation-blocks { display: grid; align-content: start; gap: 24px; max-width: 900px; margin: 0 auto; padding: 28px 8px 30px; }
 .chat-message { display: flex; align-items: flex-start; gap: 11px; max-width: 92%; }
 .chat-message.user { flex-direction: row-reverse; justify-content: flex-start; max-width: 78%; margin-left: auto; }
 .chat-avatar { display: grid; flex: 0 0 28px; place-items: center; width: 28px; min-width: 28px; height: 28px; margin-top: 2px; border-radius: 999px; color: white; background: var(--surface-raised); font-size: var(--text-caption); font-weight: 750; }
