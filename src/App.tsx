@@ -583,12 +583,14 @@ export function ActivityGroup({ items, startedAt, endedAt, running = false }: { 
   );
 }
 
-export function MarkdownContent({ body, streaming }: { body: string; streaming: boolean }) {
+export function MarkdownContent({ body, streaming, workspaceFiles, onWorkspaceFile }: { body: string; streaming: boolean; workspaceFiles?: readonly string[]; onWorkspaceFile?: (path: string) => void }) {
   return (
     <div className="markdown-content" data-motion={streaming ? "streaming-caret" : undefined}>
       <MessageResponse
         mode={streaming ? "streaming" : "static"}
         isAnimating={streaming}
+        workspaceFiles={workspaceFiles}
+        onWorkspaceFile={onWorkspaceFile}
       >
         {body}
       </MessageResponse>
@@ -596,7 +598,7 @@ export function MarkdownContent({ body, streaming }: { body: string; streaming: 
   );
 }
 
-function ChatMessage({ item }: { item: TimelineItem }) {
+function ChatMessage({ item, workspaceFiles }: { item: TimelineItem; workspaceFiles?: readonly string[] }) {
   const isUser = item.kind === "user";
   const copyLabel = isUser ? "Copy message" : "Copy response";
   const streaming = !isUser && item.status === "running";
@@ -605,7 +607,7 @@ function ChatMessage({ item }: { item: TimelineItem }) {
     <motion.div layout="position" initial={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
       <Message from={isUser ? "user" : "assistant"} className={`chat-message ${isUser ? "user" : "assistant"}`}>
         <MessageContent className="chat-message-main">
-          {isUser ? <span className="user-message-text">{item.body}</span> : <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} />}
+          {isUser ? <span className="user-message-text">{item.body}</span> : <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} workspaceFiles={workspaceFiles} onWorkspaceFile={(path) => { void window.piBot.openWorkspaceFile(path); }} />}
         </MessageContent>
         <MessageToolbar className="chat-message-footer"><time>{item.timestamp}</time>{item.status === "failed" && <Badge variant="destructive">Failed</Badge>}{item.body && <MessageActions className="message-actions"><MessageAction label={copyLabel} tooltip={copyLabel} onClick={() => { void navigator.clipboard?.writeText(item.body); }}><Copy /></MessageAction></MessageActions>}</MessageToolbar>
       </Message>
@@ -648,7 +650,7 @@ export function groupConversationItems(items: TimelineItem[]): ConversationBlock
   return blocks;
 }
 
-function EventRows({ items, responding, sessionId }: { items: TimelineItem[]; responding: boolean; sessionId: string }) {
+function EventRows({ items, responding, sessionId, workspaceFiles }: { items: TimelineItem[]; responding: boolean; sessionId: string; workspaceFiles?: readonly string[] }) {
   const blocks = groupConversationItems(items);
   const lastActivityIndex = blocks.findLastIndex((block) => block.kind === "activity");
 
@@ -662,7 +664,7 @@ function EventRows({ items, responding, sessionId }: { items: TimelineItem[]; re
             <AnimatePresence initial={false}>
               {blocks.map((block, index) => {
                 const messageId = block.kind === "activity" ? `activity-${block.items[0].id}` : block.item.id;
-                if (block.kind === "message") return <div className="conversation-item" key={messageId}><ChatMessage item={block.item} /></div>;
+                if (block.kind === "message") return <div className="conversation-item" key={messageId}><ChatMessage item={block.item} workspaceFiles={workspaceFiles} /></div>;
                 const previous = blocks[index - 1];
                 const next = blocks[index + 1];
                 const startedAt = previous?.kind === "message" && previous.item.kind === "user" ? previous.item.timestampMs : block.items[0]?.timestampMs;
@@ -1081,16 +1083,34 @@ type ChatViewProps = {
   onAbort: () => void;
   onModelChange: (key: string) => void;
   onThinkingChange: (level: ThinkingLevel) => void;
+  workspaceFiles?: readonly string[];
   workspaceOpen?: boolean;
   onShowWorkspace?: () => void;
 };
 
 function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onModelChange, onThinkingChange }: Omit<ChatViewProps, "workspaceOpen" | "onShowWorkspace">) {
   const storageKey = `pi-bot.workspace-panel:${workspacePanelSessionKey(data)}`;
+  const [workspaceFileState, setWorkspaceFileState] = useState<{ workspace: string; paths: string[] }>({ workspace: "", paths: [] });
   const [preferences, setPreferences] = useState<WorkspacePanelPreferences>(defaultWorkspacePanelPreferences);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const loadedStorageKey = useRef<string | undefined>(undefined);
   const resize = useRef<{ x: number; width: number } | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    const workspace = data.config.workspace;
+    if (!workspace) {
+      setWorkspaceFileState({ workspace: "", paths: [] });
+      return () => { cancelled = true; };
+    }
+    window.piBot.listWorkspaceFiles()
+      .then((files) => {
+        if (!cancelled) setWorkspaceFileState({ workspace, paths: files.filter((file) => file.kind === "file").map((file) => file.path) });
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaceFileState({ workspace, paths: [] });
+      });
+    return () => { cancelled = true; };
+  }, [data.config.workspace, busy]);
   useEffect(() => {
     let cancelled = false;
     loadedStorageKey.current = undefined;
@@ -1133,7 +1153,8 @@ function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onMo
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", end);
   };
-  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${preferences.open ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${preferences.width}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} workspaceOpen={preferences.open} onShowWorkspace={() => setPreferences((current) => ({ ...current, open: true }))} />{preferences.open && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<AnimatePresence initial={false} mode="popLayout">{preferences.open && <RightWorkspacePanel key="workspace-panel" data={data} open={preferences.open} storageKey={storageKey} preferences={preferences} onChange={setPreferences} onClose={() => setPreferences((current) => ({ ...current, open: false }))} />}</AnimatePresence></motion.section>;
+  const workspaceFiles = workspaceFileState.workspace && workspaceFileState.workspace === data.config.workspace ? workspaceFileState.paths : undefined;
+  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${preferences.open ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${preferences.width}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} workspaceFiles={workspaceFiles} workspaceOpen={preferences.open} onShowWorkspace={() => setPreferences((current) => ({ ...current, open: true }))} />{preferences.open && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<AnimatePresence initial={false} mode="popLayout">{preferences.open && <RightWorkspacePanel key="workspace-panel" data={data} open={preferences.open} storageKey={storageKey} preferences={preferences} onChange={setPreferences} onClose={() => setPreferences((current) => ({ ...current, open: false }))} />}</AnimatePresence></motion.section>;
 }
 
 function ChatView({
@@ -1145,6 +1166,7 @@ function ChatView({
   onAbort,
   onModelChange,
   onThinkingChange,
+  workspaceFiles,
   workspaceOpen = true,
   onShowWorkspace,
 }: ChatViewProps) {
@@ -1166,7 +1188,7 @@ function ChatView({
       <ErrorBanner message={error} />
       {!data.authenticated && <Alert className="notice-line"><KeyRound /><AlertDescription>Add a provider credential in App Settings to start chatting.</AlertDescription></Alert>}
       {data.authenticated && blocked && agent && <Alert className="notice-line"><CircleAlert /><AlertDescription>This agent’s model is unavailable. Choose another model in App Settings.</AlertDescription></Alert>}
-      <EventRows items={data.transcript} responding={responding} sessionId={data.config.session?.path ?? "new-session"} />
+      <EventRows items={data.transcript} responding={responding} sessionId={data.config.session?.path ?? "new-session"} workspaceFiles={workspaceFiles} />
       <Composer busy={responding} disabled={blocked || responding} config={data.config} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
     </motion.main>
   );
