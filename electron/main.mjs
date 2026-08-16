@@ -30,6 +30,15 @@ const browserPartitionPrefix = "persist:pi-bot-browser-";
 const configuredBrowserPartitions = new Set();
 const maxWorkspaceFiles = 500;
 const defaultAgentId = "assistant";
+const developmentServerUrl = process.env.PI_BOT_DEV_SERVER_URL;
+const developmentUserDataDir = process.env.PI_BOT_USER_DATA_DIR;
+
+if (!app.isPackaged) {
+  if (!developmentServerUrl || !developmentUserDataDir) {
+    throw new Error("Run Pi Bot development through npm run dev.");
+  }
+  app.setPath("userData", developmentUserDataDir);
+}
 
 let window;
 let agentProfiles = {};
@@ -1316,7 +1325,7 @@ function createWindow() {
   }
   const pageLoad = app.isPackaged
     ? window.loadFile(path.join(appRoot, "dist", "index.html"))
-    : window.loadURL("http://127.0.0.1:5173");
+    : window.loadURL(developmentServerUrl);
   pageLoad.catch((error) => {
     if (isSmokeTest) writeFileSync(userDataPath("smoke-test.json"), JSON.stringify({ error: String(error) }, null, 2));
   });

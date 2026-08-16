@@ -39,6 +39,10 @@ Pi Bot opens after the development server starts. On your first launch, connect
 a supported model provider or import existing Pi credentials, choose a model,
 and give your agent a workspace. You are ready to start a conversation.
 
+Each worktree gets its own development server port and `.pi-bot/user-data`
+directory automatically, so you can run `npm run dev` from multiple worktrees
+at the same time.
+
 ## Build and package
 
 ```bash
