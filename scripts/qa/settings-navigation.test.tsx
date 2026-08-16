@@ -41,16 +41,18 @@ async function waitFor(condition: () => void) {
 describe("Settings navigation", () => {
   let host: HTMLDivElement;
   let root: Root;
+  let bridge: PiBotBridge;
 
   beforeEach(() => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-    const bridge = new Proxy({
+    bridge = new Proxy({
       connect: vi.fn(async () => data),
       getTheme: vi.fn(async () => "dark" as const),
       onEvent: vi.fn(() => () => {}),
       getWorkspacePreferences: vi.fn(async () => null),
       listWorkspaceFiles: vi.fn(async () => []),
+      updateAgent: vi.fn(async (profile) => ({ ...data, agents: [profile] })),
     }, {
       get(target, property) {
         return Reflect.get(target, property) ?? vi.fn(async () => data);
@@ -83,5 +85,28 @@ describe("Settings navigation", () => {
     });
 
     await waitFor(() => expect(host.textContent).toContain("App Settings"));
+  });
+
+  it("pins an agent from its context menu", async () => {
+    await act(async () => {
+      root.render(<MotionProvider><App /></MotionProvider>);
+      await wait(30);
+    });
+    const agent = host.querySelector('[aria-label="Assistant"]') as HTMLButtonElement;
+
+    await act(async () => {
+      agent.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 80 }));
+      await wait(30);
+    });
+    const pin = [...document.body.querySelectorAll('[data-slot="context-menu-item"]')]
+      .find((item) => item.textContent?.includes("Pin agent")) as HTMLElement;
+    expect(pin).not.toBeNull();
+
+    await act(async () => {
+      pin.click();
+      await wait(30);
+    });
+    expect(bridge.updateAgent).toHaveBeenCalledWith(expect.objectContaining({ id: "assistant", pinned: true }));
+    await waitFor(() => expect(host.querySelector('[title="Pinned"]')).not.toBeNull());
   });
 });
