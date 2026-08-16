@@ -116,6 +116,7 @@ export const MessageAction = ({
 type MarkdownNode = {
   type: string;
   value?: string;
+  url?: string;
   children?: MarkdownNode[];
   data?: Record<string, unknown>;
   [key: string]: unknown;
@@ -302,8 +303,10 @@ function remarkMarkdownExtensions() {
   };
 }
 
+const workspaceLinkPrefix = "https://pi-bot.invalid/workspace/";
+
 function isExternalUrl(href: string) {
-  return /^(?:https?:|mailto:|tel:)/i.test(href);
+  return !href.startsWith(workspaceLinkPrefix) && /^(?:https?:|mailto:|tel:)/i.test(href);
 }
 
 function isRelativeWorkspaceHref(href: string) {
@@ -315,8 +318,15 @@ function isRelativeWorkspaceHref(href: string) {
 }
 
 function normalizeWorkspacePath(href: string) {
-  const rawPath = href.startsWith("workspace://") ? href.slice("workspace://".length).split(/[?#]/, 1)[0] : href.split(/[?#]/, 1)[0].replace(/^\//, "");
-  if (!href.startsWith("workspace://") && !isRelativeWorkspaceHref(href)) return undefined;
+  const encodedPath = href.startsWith(workspaceLinkPrefix)
+    ? href.slice(workspaceLinkPrefix.length)
+    : href.startsWith("workspace://")
+      ? href.slice("workspace://".length)
+      : undefined;
+  const rawPath = encodedPath === undefined
+    ? href.split(/[?#]/, 1)[0].replace(/^\//, "")
+    : encodedPath.split(/[?#]/, 1)[0].replace(/^\/+/, "");
+  if (encodedPath === undefined && !isRelativeWorkspaceHref(href)) return undefined;
   try {
     const decoded = decodeURIComponent(rawPath);
     return decoded || undefined;
@@ -385,6 +395,8 @@ function createHeadingRenderer(tagName: "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
 
 type MarkdownLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   onWorkspaceFile?: (path: string) => void;
+  workspaceFiles?: readonly string[];
+  workspacePaths?: Map<string, string>;
 };
 
 function MarkdownLink({
@@ -392,10 +404,16 @@ function MarkdownLink({
   href,
   onClick,
   onWorkspaceFile,
+  workspaceFiles,
+  workspacePaths,
   ...anchorProps
 }: MarkdownLinkProps) {
-  const path = href ? normalizeWorkspacePath(href) : undefined;
+  const explicitPath = href ? normalizeWorkspacePath(href) : undefined;
+  const path = explicitPath !== undefined
+    ? resolveWorkspacePath(explicitPath, workspacePaths)
+    : href && workspacePaths ? resolveWorkspacePath(href, workspacePaths) : undefined;
   const external = href ? isExternalUrl(href) : false;
+  const relative = Boolean(href && !href.startsWith("#") && !external && (explicitPath !== undefined || !/^[a-z][a-z\d+.-]*:/i.test(href)));
   const resolvedHref = href ? normalizeFragmentHref(href) : href;
   const { linkSafety } = useContext(StreamdownContext);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -405,7 +423,11 @@ function MarkdownLink({
     setIsConfirming(false);
   }, [href]);
 
-  if (external && href && linkSafety?.enabled) {
+  if (workspaceFiles && relative && !path) {
+    return <span className={anchorProps.className}>{children}</span>;
+  }
+
+  if (workspaceFiles === undefined && external && href && linkSafety?.enabled) {
     const handleExternalClick = async () => {
       if (linkSafety.onLinkCheck && await linkSafety.onLinkCheck(href)) {
         openExternal();
@@ -447,7 +469,7 @@ function MarkdownLink({
   return (
     <a
       {...anchorProps}
-      href={resolvedHref}
+      href={path ? workspaceHref(path) : resolvedHref}
       target={external ? "_blank" : undefined}
       rel={external ? "noreferrer" : undefined}
       onClick={(event: MouseEvent<HTMLAnchorElement>) => {
@@ -647,8 +669,100 @@ export const MessageBranchPage = ({
 export type MessageResponseProps = Omit<StreamdownProps, "children" | "components"> & {
   children?: string;
   onWorkspaceFile?: (path: string) => void;
+  workspaceFiles?: readonly string[];
   components?: Components;
 };
+
+function normalizeRelativeWorkspacePath(value: string) {
+  const candidate = value.trim().replaceAll("\\", "/");
+  if (!candidate || candidate.startsWith("/") || candidate.startsWith("~") || candidate.includes(":") || candidate.includes("?") || candidate.includes("#")) return undefined;
+  const segments = candidate.split("/");
+  if (segments.some((segment) => !segment || segment === "..")) return undefined;
+  const normalized = segments.filter((segment) => segment !== ".").join("/");
+  return normalized || undefined;
+}
+
+function workspacePathLookup(files?: readonly string[]) {
+  if (!files) return undefined;
+  const paths = new Map<string, string>();
+  for (const file of files) {
+    const normalized = normalizeRelativeWorkspacePath(file);
+    if (normalized) paths.set(normalized, normalized);
+  }
+  return paths;
+}
+
+function resolveWorkspacePath(value: string, lookup?: Map<string, string>) {
+  const normalized = normalizeRelativeWorkspacePath(value);
+  if (!normalized) return undefined;
+  return lookup ? lookup.get(normalized) : normalized;
+}
+
+function workspaceHref(path: string) {
+  return `${workspaceLinkPrefix}${encodeURIComponent(path)}`;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isPathBoundary(value: string, index: number, length: number) {
+  const before = value[index - 1];
+  const after = value[index + length];
+  if (before && /[\w./-]/u.test(before)) return false;
+  if (after && /[\w/-]/u.test(after)) return false;
+  if (after === "." && /\w/u.test(value[index + length + 1] ?? "")) return false;
+  return true;
+}
+
+function workspacePathPlugin(lookup: Map<string, string>) {
+  const aliases = Array.from(lookup.keys())
+    .flatMap((path) => [path, `./${path}`])
+    .sort((left, right) => right.length - left.length)
+    .map(escapeRegExp);
+  const pathPattern = aliases.length > 0 ? new RegExp(aliases.join("|"), "g") : undefined;
+
+  function splitTextNode(node: MarkdownNode) {
+    if (!pathPattern || typeof node.value !== "string") return [node];
+    const value = node.value;
+    const result: MarkdownNode[] = [];
+    let cursor = 0;
+    pathPattern.lastIndex = 0;
+    for (const match of value.matchAll(pathPattern)) {
+      const raw = match[0];
+      const index = match.index ?? 0;
+      const path = resolveWorkspacePath(raw, lookup);
+      if (!path || !isPathBoundary(value, index, raw.length)) continue;
+      if (index > cursor) result.push({ type: "text", value: value.slice(cursor, index) });
+      result.push({ type: "link", url: workspaceHref(path), children: [{ type: "text", value: raw }] });
+      cursor = index + raw.length;
+    }
+    if (result.length === 0) return [node];
+    if (cursor < value.length) result.push({ type: "text", value: value.slice(cursor) });
+    return result;
+  }
+
+  function rewrite(node: MarkdownNode): MarkdownNode[] {
+    if (node.type === "text") return splitTextNode(node);
+    if (node.type === "inlineCode") {
+      const path = typeof node.value === "string" ? resolveWorkspacePath(node.value, lookup) : undefined;
+      return path ? [{ type: "link", url: workspaceHref(path), children: [node] }] : [node];
+    }
+    if (node.type === "link") {
+      const explicitPath = typeof node.url === "string" ? normalizeWorkspacePath(node.url) : undefined;
+      const path = explicitPath !== undefined
+        ? resolveWorkspacePath(explicitPath, lookup)
+        : typeof node.url === "string" ? resolveWorkspacePath(node.url, lookup) : undefined;
+      return [path ? { ...node, url: workspaceHref(path) } : node];
+    }
+    if (!node.children) return [node];
+    return [{ ...node, children: node.children.flatMap(rewrite) }];
+  }
+
+  return () => (tree: MarkdownNode) => {
+    if (tree.children) tree.children = tree.children.flatMap(rewrite);
+  };
+}
 
 const streamdownPlugins = { cjk, code, math: mathPlugin, mermaid };
 
@@ -657,6 +771,7 @@ export const MessageResponse = memo(function MessageResponse({
   className,
   components,
   onWorkspaceFile,
+  workspaceFiles,
   plugins: customPlugins,
   allowedTags: _allowedTags,
   urlTransform: customUrlTransform,
@@ -666,6 +781,7 @@ export const MessageResponse = memo(function MessageResponse({
 }: MessageResponseProps) {
   const headingIds = new Map<string, number>();
   const content = protectEscapedInlineSyntax(children ?? "");
+  const workspacePaths = workspacePathLookup(workspaceFiles);
   const mergedComponents: Components = {
     ...components,
     h1: createHeadingRenderer("h1", headingIds) as Components["h1"],
@@ -674,7 +790,14 @@ export const MessageResponse = memo(function MessageResponse({
     h4: createHeadingRenderer("h4", headingIds) as Components["h4"],
     h5: createHeadingRenderer("h5", headingIds) as Components["h5"],
     h6: createHeadingRenderer("h6", headingIds) as Components["h6"],
-    a: ((anchorProps) => <MarkdownLink {...anchorProps} onWorkspaceFile={onWorkspaceFile} />) as Components["a"],
+    a: ((anchorProps) => (
+      <MarkdownLink
+        {...anchorProps}
+        onWorkspaceFile={onWorkspaceFile}
+        workspaceFiles={workspaceFiles}
+        workspacePaths={workspacePaths}
+      />
+    )) as Components["a"],
   };
 
   return (
@@ -683,7 +806,7 @@ export const MessageResponse = memo(function MessageResponse({
         "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
         className
       )}
-      remarkPlugins={[remarkMarkdownExtensions, remarkGfm, ...remarkPlugins]}
+      remarkPlugins={[remarkMarkdownExtensions, remarkGfm, ...remarkPlugins, ...(workspacePaths ? [workspacePathPlugin(workspacePaths)] : [])]}
       remarkRehypeOptions={{ ...remarkRehypeOptions, clobberPrefix: "" }}
       components={mergedComponents}
       allowedTags={{ mark: [], u: [], dl: [], dt: [], dd: [] }}
@@ -698,8 +821,12 @@ export const MessageResponse = memo(function MessageResponse({
       {content}
     </Streamdown>
   );
-}, (prevProps, nextProps) => prevProps.children === nextProps.children && nextProps.isAnimating === prevProps.isAnimating);
-
+}, (prevProps, nextProps) => (
+  prevProps.children === nextProps.children &&
+  nextProps.isAnimating === prevProps.isAnimating &&
+  prevProps.workspaceFiles === nextProps.workspaceFiles &&
+  prevProps.onWorkspaceFile === nextProps.onWorkspaceFile
+));
 MessageResponse.displayName = "MessageResponse";
 
 export type MessageToolbarProps = ComponentProps<"div">;
