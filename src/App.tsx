@@ -181,12 +181,6 @@ function agentColor(id: string) {
   return palette[index];
 }
 
-function compactWorkspace(workspace: string) {
-  if (!workspace) return "No workspace";
-  const parts = workspace.split("/").filter(Boolean);
-  return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : workspace;
-}
-
 function timeNow() {
   return new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 }
@@ -411,7 +405,7 @@ export function Composer({
           event.preventDefault();
           event.currentTarget.form?.requestSubmit();
         }}
-        placeholder="Ask Pi Bot anything…"
+        placeholder="Do anything"
         disabled={disabled}
         rows={1}
       />
@@ -675,27 +669,21 @@ export function MarkdownContent({ body, streaming, onWorkspaceFile }: { body: st
   );
 }
 
-function ChatMessage({ item, agent }: { item: TimelineItem; agent?: AgentProfile }) {
+function ChatMessage({ item }: { item: TimelineItem }) {
   const isUser = item.kind === "user";
+  const copyLabel = isUser ? "Copy message" : "Copy response";
   const streaming = !isUser && item.status === "running";
   const reducedMotion = useReducedMotion();
   return (
     <motion.div layout="position" initial={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
       <Message from={isUser ? "user" : "assistant"} className={`chat-message ${isUser ? "user" : "assistant"}`}>
-        <div className="chat-avatar">
-          {isUser ? <Avatar className="chat-avatar-inner"><AvatarFallback>YO</AvatarFallback></Avatar> : agent ? <AgentAvatar agent={agent} /> : <Avatar className="chat-avatar-inner"><AvatarFallback>AS</AvatarFallback></Avatar>}
-        </div>
         <MessageContent className="chat-message-main">
-          <div className="chat-message-meta">
-            <strong>{isUser ? "You" : agent?.name ?? "Assistant"}</strong>
-            {item.status === "failed" && <Badge variant="destructive">Failed</Badge>}
-          </div>
           <div className={`chat-bubble ${isUser ? "muted" : "ghost"}`}>
             <div className={`chat-body ${isUser ? "user" : "assistant"}`}>
               <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} onWorkspaceFile={(path) => { void window.piBot.openWorkspaceFile(path); }} />
             </div>
           </div>
-          <div className="chat-message-footer"><time>{item.timestamp}</time>{!isUser && item.body && <MessageActions className="message-actions"><MessageAction label="Copy response" tooltip="Copy response" onClick={() => { void navigator.clipboard?.writeText(item.body); }}><Copy /></MessageAction></MessageActions>}</div>
+          <div className="chat-message-footer"><time>{item.timestamp}</time>{item.status === "failed" && <Badge variant="destructive">Failed</Badge>}{item.body && <MessageActions className="message-actions"><MessageAction label={copyLabel} tooltip={copyLabel} onClick={() => { void navigator.clipboard?.writeText(item.body); }}><Copy /></MessageAction></MessageActions>}</div>
         </MessageContent>
       </Message>
     </motion.div>
@@ -737,21 +725,21 @@ export function groupConversationItems(items: TimelineItem[]): ConversationBlock
   return blocks;
 }
 
-function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?: AgentProfile; responding: boolean }) {
+function EventRows({ items, responding }: { items: TimelineItem[]; responding: boolean }) {
   const blocks = groupConversationItems(items);
   const lastActivityIndex = blocks.findLastIndex((block) => block.kind === "activity");
 
   return (
     <div className="conversation-feed">
       {items.length === 0 ? (
-        <ConversationEmptyState className="empty-conversation" icon={<Bot className="empty-orbit" />} title={`Start a conversation with ${agent?.name ?? "Assistant"}`} description="Ask a question or describe what you want to work on." />
+        <ConversationEmptyState className="empty-conversation" title="Start a conversation" description="Ask a question or describe what you want to work on." />
       ) : (
         <Conversation className="conversation-scroll" aria-label="Conversation">
           <ConversationContent className="conversation-blocks">
             <AnimatePresence initial={false}>
               {blocks.map((block, index) => {
                 const messageId = block.kind === "activity" ? `activity-${block.items[0].id}` : block.item.id;
-                if (block.kind === "message") return <div className="conversation-item" key={messageId}><ChatMessage item={block.item} agent={agent} /></div>;
+                if (block.kind === "message") return <div className="conversation-item" key={messageId}><ChatMessage item={block.item} /></div>;
                 const previous = blocks[index - 1];
                 const next = blocks[index + 1];
                 const startedAt = previous?.kind === "message" && previous.item.kind === "user" ? previous.item.timestampMs : block.items[0]?.timestampMs;
@@ -768,7 +756,7 @@ function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?
 }
 
 function AgentAvatar({ agent, active = false, className = "" }: { agent: AgentProfile; active?: boolean; className?: string }) {
-  return <Avatar className={`agent-avatar ${active ? "active" : ""} ${className}`} aria-hidden="true"><AvatarFallback className="agent-avatar-fallback" style={{ backgroundColor: agentColor(agent.id) }}>{agent.initials}</AvatarFallback></Avatar>;
+  return <Avatar className={`agent-avatar ${active ? "active" : ""} ${className}`} aria-hidden="true"><AvatarFallback style={{ backgroundColor: agentColor(agent.id), color: "#fff", display: "grid", placeItems: "center", width: "100%", height: "100%", lineHeight: 1, textAlign: "center" }}>{agent.initials}</AvatarFallback></Avatar>;
 }
 
 function AgentSidebarSection({
@@ -852,6 +840,8 @@ const SessionSidebar = forwardRef<HTMLElement, SessionSidebarProps>(function Ses
         </div>
       </header>
       <Button className="new-chat-button" onClick={onNewChat} disabled={!data.activeAgentId}><MessageSquarePlus /> New session <Plus /></Button>
+      {agent && sessions.length === 0 && <Empty className="session-empty"><EmptyMedia variant="icon"><MessagesSquare /></EmptyMedia><EmptyHeader><EmptyTitle>No sessions yet</EmptyTitle><EmptyDescription>Start a new session with {agent.name}.</EmptyDescription></EmptyHeader></Empty>}
+      {!agent && <Empty className="session-empty"><EmptyMedia variant="icon"><Bot /></EmptyMedia><EmptyHeader><EmptyTitle>No active agents</EmptyTitle><EmptyDescription>Create an agent from the Agents section to begin.</EmptyDescription></EmptyHeader></Empty>}
       <div className="session-groups">
         {groups.map(([label, items]) => (
           <section className="session-group" key={label}>
@@ -868,8 +858,6 @@ const SessionSidebar = forwardRef<HTMLElement, SessionSidebarProps>(function Ses
           </section>
         ))}
       </div>
-      {agent && sessions.length === 0 && <Empty className="session-empty"><EmptyMedia variant="icon"><MessagesSquare /></EmptyMedia><EmptyTitle>No sessions yet</EmptyTitle><EmptyDescription>Start a session with {agent.name}.</EmptyDescription></Empty>}
-      {!agent && <Empty className="session-empty"><EmptyMedia variant="icon"><Bot /></EmptyMedia><EmptyTitle>No active agents</EmptyTitle><EmptyDescription>Create an agent from the Agents section to begin.</EmptyDescription></Empty>}
     </section>
   );
 });
@@ -1244,13 +1232,14 @@ function ChatView({
       </header>
       <header className="chat-header">
         <div className="chat-header-leading">
-          <div><h1>{data.config.session?.name ?? "New session"}</h1><span>{agent?.name ?? "No active agent"} · {compactWorkspace(data.config.workspace)}</span></div>
+          {agent && <AgentAvatar agent={agent} />}
+          <div><h1>{agent?.name ?? "No active agent"}</h1><span>{data.config.session?.name ?? "New session"}</span></div>
         </div>
       </header>
       <ErrorBanner message={error} />
       {!data.authenticated && <Alert className="notice-line"><KeyRound /><AlertDescription>Add a provider credential in App Settings to start chatting.</AlertDescription></Alert>}
       {data.authenticated && blocked && agent && <Alert className="notice-line"><CircleAlert /><AlertDescription>This agent’s model is unavailable. Choose another model in App Settings.</AlertDescription></Alert>}
-      <EventRows items={data.transcript} agent={agent} responding={responding} />
+      <EventRows items={data.transcript} responding={responding} />
       <Composer busy={responding} disabled={blocked || responding} agentName={agent?.name ?? "Assistant"} config={data.config} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
     </motion.main>
   );

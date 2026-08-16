@@ -87,6 +87,22 @@ test("combined sidebar owns one titlebar above both columns", async () => {
   assert.match(sessions, /height:\s*58px/);
 });
 
+test("session empty state stays compact and groups its copy", async () => {
+  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+
+  const sidebar = app.match(/function SessionSidebar[\s\S]*?function AppSidebar/)?.[0] ?? "";
+  const empty = styles.match(/\.session-empty\s*\{([^}]*)\}/)?.[1] ?? "";
+  const header = styles.match(/\.session-empty \[data-slot="empty-header"\]\s*\{([^}]*)\}/)?.[1] ?? "";
+
+  assert.match(sidebar, /<Empty className="session-empty"><EmptyMedia[\s\S]*?<EmptyHeader>[\s\S]*?<EmptyTitle>/);
+  assert.match(empty, /grid-template-columns:\s*28px\s+minmax\(0,\s*1fr\)/);
+  assert.match(empty, /align-content:\s*start/);
+  assert.match(empty, /flex:\s*0 0 auto/);
+  assert.match(header, /display:\s*grid/);
+  assert.match(header, /min-width:\s*0/);
+});
+
 test("right workspace owns one complete topbar", async () => {
   const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
