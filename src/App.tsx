@@ -8,7 +8,6 @@ import {
   CalendarClock,
   Check,
   Copy,
-  ChevronDown,
   ChevronRight,
   CircleAlert,
   ChevronLeft,
@@ -1290,7 +1289,7 @@ function ChatView({
           {agent && <AgentAvatar agent={agent} />}
           <span><strong>{agent?.name ?? "No active agent"}</strong></span>
           {agent && onShowHistory && <DropdownMenu>
-            <DropdownMenuTrigger render={<Button className="chat-agent-menu-button" variant="ghost" size="icon-sm" aria-label={`Open menu for ${agent.name}`} />}><ChevronDown /></DropdownMenuTrigger>
+            <DropdownMenuTrigger render={<Button className="chat-agent-menu-button" variant="ghost" size="icon-sm" aria-label={`Open menu for ${agent.name}`} />}><MoreHorizontal data-icon="inline-start" /></DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="chat-agent-menu-content"><DropdownMenuGroup>
               <DropdownMenuItem onClick={() => onShowHistory(agent.id)} data-motion="chat-history"><MessagesSquare /> Chat history</DropdownMenuItem>
             </DropdownMenuGroup></DropdownMenuContent>

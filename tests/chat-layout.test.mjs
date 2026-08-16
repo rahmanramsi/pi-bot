@@ -10,7 +10,9 @@ test("chat topbar identifies the active agent instead of the session title", asy
   assert.match(chatView, /AgentAvatar[\s\S]*?agent|agent[\s\S]*?AgentAvatar/);
   assert.match(chatView, /agent\?\.name|agent\.name/);
   assert.match(chatView, /<AgentAvatar[\s\S]*?<strong>[\s\S]*?<DropdownMenu>[\s\S]*?<DropdownMenuTrigger[\s\S]*?chat-agent-menu-button[\s\S]*?<DropdownMenuContent/);
+  assert.match(chatView, /chat-agent-menu-button[\s\S]*?<MoreHorizontal/);
   assert.match(chatView, /<DropdownMenuItem[\s\S]*?Chat history<\/DropdownMenuItem>/);
+  assert.doesNotMatch(chatView, /<ChevronDown/);
   assert.doesNotMatch(chatView, /chat-history-button/);
   assert.doesNotMatch(chatView, /chat-session-title/);
   assert.doesNotMatch(chatView, /data\.config\.session\?\.name/);
