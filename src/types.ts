@@ -41,6 +41,34 @@ export type SessionSummary = {
   messageCount?: number;
 };
 
+export type ScheduledJobRecurrence = "once" | "daily" | "weekly" | "monthly";
+export type ScheduledJobStatus = "active" | "paused";
+export type ScheduledJobRunStatus = "running" | "succeeded" | "failed" | "missed";
+
+export type ScheduledJob = {
+  id: string;
+  name: string;
+  agentId: AgentId;
+  workspace: string;
+  workspaceTrusted: boolean;
+  modelKey: string;
+  thinkingLevel: ThinkingLevel;
+  prompt: string;
+  recurrence: ScheduledJobRecurrence;
+  startAt: string;
+  timeZone: string;
+  status: ScheduledJobStatus;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastStatus: ScheduledJobRunStatus | null;
+  lastError: string | null;
+  lastSessionPath: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ScheduledJobDraft = Pick<ScheduledJob, "name" | "agentId" | "modelKey" | "thinkingLevel" | "prompt" | "recurrence" | "startAt" | "timeZone">;
+
 export type ProviderAuthMethod = "api_key" | "oauth";
 
 export type ProviderInfo = {
@@ -130,6 +158,7 @@ export type PiBootstrap = {
   setup: PiSetup;
   authenticated: boolean;
   activeAgentId: AgentId | null;
+  scheduledJobs: ScheduledJob[];
   profile?: AgentProfile;
 };
 
@@ -148,7 +177,8 @@ export type PiEvent =
   | { type: "error"; message: string }
   | { type: "auth-prompt"; id: string; prompt: AuthPrompt }
   | { type: "auth-notify"; event: { type: string; message?: string; url?: string; instructions?: string; userCode?: string; verificationUri?: string } }
-  | { type: "session-sync"; transcript: TimelineItem[]; sessions: SessionSummary[]; sessionsByAgent: Record<AgentId, SessionSummary[]>; config: PiConfig; agents: AgentProfile[]; setup: PiSetup; authenticated: boolean; activeAgentId: AgentId | null };
+  | { type: "session-sync"; transcript: TimelineItem[]; sessions: SessionSummary[]; sessionsByAgent: Record<AgentId, SessionSummary[]>; config: PiConfig; agents: AgentProfile[]; setup: PiSetup; authenticated: boolean; activeAgentId: AgentId | null; scheduledJobs: ScheduledJob[] }
+  | { type: "scheduled-jobs-sync"; scheduledJobs: ScheduledJob[] };
 
 export type PiBotBridge = {
   reportRendererStage: (stage: string) => void;
@@ -162,8 +192,15 @@ export type PiBotBridge = {
   trustWorkspace: (agentId: AgentId) => Promise<PiBootstrap>;
   newSession: () => Promise<PiBootstrap>;
   openSession: (sessionPath: string, agentId: AgentId) => Promise<PiBootstrap>;
+  openScheduledSession: (jobId: string) => Promise<PiBootstrap>;
   deleteSession: (sessionPath: string) => Promise<PiBootstrap>;
   getSessions: (agentId?: AgentId | null) => Promise<SessionSummary[]>;
+  getScheduledJobs: () => Promise<ScheduledJob[]>;
+  createScheduledJob: (draft: ScheduledJobDraft) => Promise<PiBootstrap>;
+  updateScheduledJob: (id: string, draft: ScheduledJobDraft) => Promise<PiBootstrap>;
+  setScheduledJobPaused: (id: string, paused: boolean) => Promise<PiBootstrap>;
+  runScheduledJob: (id: string) => Promise<PiBootstrap>;
+  deleteScheduledJob: (id: string) => Promise<PiBootstrap>;
   prompt: (message: string) => Promise<void>;
   abort: () => Promise<void>;
   completeSetup: (accepted: boolean) => Promise<PiBootstrap>;

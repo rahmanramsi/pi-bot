@@ -600,6 +600,34 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .import-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 760px; margin-top: 18px; padding: 14px; }
 .import-card strong { font-size: var(--text-body); }.import-card p { margin: 4px 0 0; color: var(--muted-foreground); font-size: var(--text-caption); line-height: var(--leading-body); }
 .settings-footnote { max-width: 700px; margin: 18px 0 0; color: var(--muted-foreground); font-size: var(--text-caption); line-height: var(--leading-body); }
+.scheduled-settings { padding-bottom: 30px; }
+.scheduled-toolbar { display: flex; align-items: center; gap: 12px; max-width: 800px; margin: 20px 0 14px; }
+.scheduled-lifecycle-note { display: flex; align-items: flex-start; gap: 10px; max-width: 800px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-raised); }
+.scheduled-lifecycle-note > svg { flex: 0 0 auto; width: 17px; height: 17px; margin-top: 1px; color: var(--muted-foreground); }
+.scheduled-lifecycle-note span { display: grid; gap: 3px; }
+.scheduled-lifecycle-note strong { font-size: var(--text-body); }
+.scheduled-lifecycle-note small, .field-help { color: var(--muted-foreground); font-size: var(--text-caption); line-height: var(--leading-body); }
+.scheduled-job-list { display: grid; gap: 10px; max-width: 800px; margin-top: 16px; }
+.scheduled-job-row { display: grid; gap: 12px; padding: 15px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.scheduled-job-row.paused { opacity: .78; }
+.scheduled-job-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.scheduled-job-header > div { display: grid; min-width: 0; gap: 4px; }
+.scheduled-job-header strong { font-size: var(--text-body); }
+.scheduled-job-header span { overflow: hidden; color: var(--muted-foreground); font-size: var(--text-caption); text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-status { flex: 0 0 auto; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: var(--text-caption); }
+.scheduled-status.active { color: var(--foreground); }
+.scheduled-job-prompt { display: -webkit-box; max-width: 74ch; margin: 0; overflow: hidden; color: var(--foreground); font-size: var(--text-body); line-height: var(--leading-body); -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.scheduled-job-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 11px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.scheduled-job-meta span { display: grid; min-width: 0; gap: 4px; color: var(--muted-foreground); font-size: var(--text-caption); line-height: var(--leading-body); }
+.scheduled-job-meta b { color: var(--foreground); font-size: var(--text-label); font-weight: 650; }
+.scheduled-job-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.scheduled-empty { min-height: 180px; max-width: 800px; margin-top: 18px; border: 1px dashed var(--border); border-radius: 10px; }
+.scheduled-job-editor { max-width: 800px; margin-top: 24px; padding: 20px 0 0; border-top: 1px solid var(--border); }
+.scheduled-job-editor .detail-heading { padding-bottom: 14px; border-bottom: 0; }
+.scheduled-job-editor h3 { margin: 5px 0 0; font-size: var(--text-heading); font-weight: 670; letter-spacing: -.02em; }
+.scheduled-form { display: grid; gap: 16px; }
+.scheduled-form .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.scheduled-prompt-field { min-height: 130px; resize: vertical; line-height: 1.5; }
 
 .setup-card { width: min(520px, calc(100% - 48px)); padding: 38px; border: 1px solid var(--border); border-radius: 18px; background: var(--card); box-shadow: 0 25px 70px rgb(0 0 0 / 34%); }
 .setup-mark { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-raised); }
@@ -657,6 +685,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .provider-row { align-items: flex-start; flex-direction: column; gap: 10px; }
   .provider-actions { justify-content: flex-start; }
   .form-grid { grid-template-columns: 1fr; }
+  .scheduled-form .form-grid, .scheduled-job-meta { grid-template-columns: 1fr; }
   .compact-field { max-width: none; }
 }
 
