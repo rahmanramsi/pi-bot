@@ -5,6 +5,7 @@ export type AgentProfile = {
   id: AgentId;
   name: string;
   initials: string;
+  description: string;
   instructions: string;
   workspace: string;
   workspaceKind: "app" | "external" | string;
@@ -17,6 +18,7 @@ export type AgentProfile = {
 export type AgentDraft = {
   name: string;
   initials?: string;
+  description?: string;
 };
 
 export type PiModelOption = {

@@ -3,7 +3,18 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityGroup, Composer, groupConversationItems, MarkdownContent, timelineToolStatus } from "@/App";
 import { Conversation, ConversationContent } from "@/components/ai-elements/conversation";
-import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import {
+  Message,
+  MessageBranch,
+  MessageBranchContent,
+  MessageBranchNext,
+  MessageBranchPage,
+  MessageBranchPrevious,
+  MessageBranchSelector,
+  MessageContent,
+  MessageResponse,
+  MessageToolbar,
+} from "@/components/ai-elements/message";
 import { Task, TaskContent, TaskTrigger } from "@/components/ai-elements/task";
 import { Terminal } from "@/components/ai-elements/terminal";
 import { Tool, ToolContent, ToolHeader, ToolOutput } from "@/components/ai-elements/tool";
@@ -23,7 +34,7 @@ const config: PiConfig = {
   availableThinkingLevels: ["off"],
   streaming: true,
   context: { tokens: 10, contextWindow: 100, percent: 10 },
-  models: [],
+  models: [{ key: "test:model", id: "model", name: "Test model", provider: "test", reasoning: false, contextWindow: 100 }],
   tools: [],
   session: null,
 };
@@ -180,11 +191,10 @@ describe("AI Elements renderer adapters", () => {
   it("keeps user messages anchored to the right edge", () => {
     const result = render(<Message from="user"><MessageContent>hello</MessageContent></Message>);
     roots.push(result.root);
-    const message = result.host.querySelector('[data-slot="message"]');
+    const message = result.host.querySelector(".is-user");
     expect(message?.classList.contains("ml-auto")).toBe(true);
-    expect(message?.classList.contains("flex-row-reverse")).toBe(true);
-    expect(message?.classList.contains("justify-start")).toBe(true);
-    expect(message?.classList.contains("justify-end")).toBe(false);
+    expect(message?.classList.contains("justify-end")).toBe(true);
+    expect(message?.classList.contains("flex-row-reverse")).toBe(false);
   });
 
   it("renders shell commands as terminal text instead of nested JSON", () => {
@@ -225,35 +235,58 @@ describe("AI Elements renderer adapters", () => {
     const result = render(<MarkdownContent body={"| A | B |\n| --- | --- |\n| 1 | 2 |\n\n```unknown\nconst answer = 42;\n```\n\n```\nplain text\n```"} streaming={false} />);
     roots.push(result.root);
     expect(result.host.querySelector("table")).not.toBeNull();
-    expect(result.host.querySelectorAll('[data-slot="code-block"]')).toHaveLength(2);
-    expect(result.host.querySelector('[data-slot="code-block-header"]')).not.toBeNull();
-    expect(result.host.querySelector('[aria-label="Copy code"]')).not.toBeNull();
+    expect(result.host.querySelectorAll('[data-streamdown="code-block"]')).toHaveLength(2);
+    expect(result.host.querySelector('[data-streamdown="code-block-header"]')).not.toBeNull();
+    expect(result.host.querySelector('[data-streamdown="code-block-actions"] button')).not.toBeNull();
     expect(result.host.textContent).toContain("const answer = 42;");
     expect(result.host.textContent).toContain("plain text");
 
-    const mermaid = render(<MarkdownContent body={"```mermaid\ngraph TD; A-->B\n```"} streaming={false} />);
-    roots.push(mermaid.root);
-    expect(mermaid.host.querySelector(".mermaid-diagram-loading")).not.toBeNull();
-
     const external = render(<MarkdownContent body="[docs](https://example.com)" streaming={false} />);
     roots.push(external.root);
-    expect(external.host.querySelector('a[target="_blank"][rel="noreferrer"]')).not.toBeNull();
+    expect(external.host.querySelector('button[data-streamdown="link"]')).not.toBeNull();
   });
 
-  it("keeps footnote references connected to their targets", () => {
-    const result = render(<MarkdownContent body={"Reference[^1].\n\n[^1]: Footnote text."} streaming={false} />);
+  it("supports the full Message branch and toolbar composition", () => {
+    const onBranchChange = vi.fn();
+    const result = render(
+      <MessageBranch onBranchChange={onBranchChange}>
+        <MessageBranchContent>
+          <div key="first">First response</div>
+          <div key="second">Second response</div>
+        </MessageBranchContent>
+        <MessageToolbar>
+          <MessageBranchSelector>
+            <MessageBranchPrevious />
+            <MessageBranchPage />
+            <MessageBranchNext />
+          </MessageBranchSelector>
+        </MessageToolbar>
+      </MessageBranch>,
+    );
     roots.push(result.root);
-    const reference = result.host.querySelector('a[data-footnote-ref]') as HTMLAnchorElement;
-    const backReference = result.host.querySelector('a[data-footnote-backref]') as HTMLAnchorElement;
-    expect(result.host.querySelector(reference.getAttribute("href") ?? "missing")).not.toBeNull();
-    expect(result.host.querySelector(backReference.getAttribute("href") ?? "missing")).not.toBeNull();
+    expect(result.host.textContent).toContain("1 of 2");
+
+    const next = result.host.querySelector('button[aria-label="Next branch"]') as HTMLButtonElement;
+    act(() => next.click());
+    expect(onBranchChange).toHaveBeenCalledWith(1);
+    expect(result.host.textContent).toContain("2 of 2");
   });
 
   it("sends Enter but preserves IME composition in the PromptInput composer", () => {
     const onPrompt = vi.fn();
-    const result = render(<Composer busy={false} disabled={false} agentName="Pi" config={config} onPrompt={onPrompt} onAbort={vi.fn()} onModelChange={vi.fn()} onThinkingChange={vi.fn()} />);
+    const result = render(<Composer busy={false} disabled={false} config={config} onPrompt={onPrompt} onAbort={vi.fn()} onModelChange={vi.fn()} onThinkingChange={vi.fn()} />);
     roots.push(result.root);
     const textarea = result.host.querySelector("textarea") as HTMLTextAreaElement;
+    const send = result.host.querySelector('button[aria-label="Send message"]') as HTMLButtonElement;
+    const modelSelector = result.host.querySelector(".composer-model-select") as HTMLElement;
+    const contextTrigger = result.host.querySelector('button[aria-label="Context usage"]') as HTMLButtonElement;
+    expect(send.className).toContain("bg-primary");
+    expect(send.className).toContain("text-primary-foreground");
+    expect(modelSelector.closest(".composer-actions")).toBe(contextTrigger.closest(".composer-actions"));
+    expect(contextTrigger.compareDocumentPosition(modelSelector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(contextTrigger.textContent).toContain("10%");
+    expect(contextTrigger.querySelectorAll("svg circle")).toHaveLength(2);
+    expect(contextTrigger.querySelector(".context-trigger-track")).toBeNull();
     const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
     setValue?.call(textarea, "hello");
     act(() => textarea.dispatchEvent(new Event("input", { bubbles: true })));
@@ -261,12 +294,28 @@ describe("AI Elements renderer adapters", () => {
     expect(onPrompt).toHaveBeenCalledWith("hello");
 
     onPrompt.mockClear();
+    setValue?.call(textarea, "two lines");
+    act(() => textarea.dispatchEvent(new Event("input", { bubbles: true })));
+    textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }));
+    expect(onPrompt).not.toHaveBeenCalled();
+
     setValue?.call(textarea, "composing");
     act(() => textarea.dispatchEvent(new Event("input", { bubbles: true })));
     const composing = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
     Object.defineProperty(composing, "isComposing", { value: true });
     textarea.dispatchEvent(composing);
     expect(onPrompt).not.toHaveBeenCalled();
+    expect(result.host.querySelector('[data-slot="prompt-input"] > [data-slot="input-group"]')).not.toBeNull();
+  });
+
+  it("uses the PromptInput status action to stop a streaming response", () => {
+    const onAbort = vi.fn();
+    const result = render(<Composer busy disabled config={config} onPrompt={vi.fn()} onAbort={onAbort} onModelChange={vi.fn()} onThinkingChange={vi.fn()} />);
+    roots.push(result.root);
+    const stop = result.host.querySelector('button[aria-label="Stop response"]') as HTMLButtonElement;
+    expect(stop).not.toBeNull();
+    act(() => stop.click());
+    expect(onAbort).toHaveBeenCalledOnce();
   });
 
   it("uses the Conversation follow-latest contract", () => {

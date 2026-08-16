@@ -165,6 +165,7 @@ function createApplicationTables(database) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       initials TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
       instructions TEXT NOT NULL DEFAULT '',
       workspace TEXT NOT NULL,
       workspace_kind TEXT NOT NULL,
@@ -235,6 +236,8 @@ function migrateSchemaV3(database) {
     );
     CREATE INDEX IF NOT EXISTS scheduled_jobs_due_idx ON scheduled_jobs (status, next_run_at);
   `);
+  const columns = readRows(database.prepare("PRAGMA table_info(agents)"));
+  if (!columns.some((column) => column.name === "description")) database.exec("ALTER TABLE agents ADD COLUMN description TEXT NOT NULL DEFAULT ''");
 }
 
 function normalizeWorkspacePreferences(value) {
@@ -513,7 +516,7 @@ export class AppDatabase {
   getState() {
     const appState = this.db.prepare("SELECT setup_complete, execution_risk_accepted, active_agent_id, thinking_level FROM app_state WHERE id = 1").get();
     const agents = readRows(this.db.prepare(`
-      SELECT id, name, initials, instructions, workspace, workspace_kind, workspace_trusted,
+      SELECT id, name, initials, description, instructions, workspace, workspace_kind, workspace_trusted,
         default_model_key, thinking_level, archived
       FROM agents ORDER BY id
     `));
@@ -528,6 +531,7 @@ export class AppDatabase {
         id: agent.id,
         name: agent.name,
         initials: agent.initials,
+        description: agent.description,
         instructions: agent.instructions,
         workspace: agent.workspace,
         workspaceKind: agent.workspace_kind,
@@ -552,10 +556,10 @@ export class AppDatabase {
       );
       const keep = new Set();
       const upsert = this.db.prepare(`
-        INSERT INTO agents (id, name, initials, instructions, workspace, workspace_kind, workspace_trusted, default_model_key, thinking_level, archived)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO agents (id, name, initials, description, instructions, workspace, workspace_kind, workspace_trusted, default_model_key, thinking_level, archived)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name, initials = excluded.initials, instructions = excluded.instructions,
+          name = excluded.name, initials = excluded.initials, description = excluded.description, instructions = excluded.instructions,
           workspace = excluded.workspace, workspace_kind = excluded.workspace_kind,
           workspace_trusted = excluded.workspace_trusted, default_model_key = excluded.default_model_key,
           thinking_level = excluded.thinking_level, archived = excluded.archived
@@ -567,6 +571,7 @@ export class AppDatabase {
           agent.id,
           typeof agent.name === "string" ? agent.name : "Untitled agent",
           typeof agent.initials === "string" ? agent.initials : "AS",
+          typeof agent.description === "string" ? agent.description : "",
           typeof agent.instructions === "string" ? agent.instructions : "",
           typeof agent.workspace === "string" ? agent.workspace : "",
           typeof agent.workspaceKind === "string" ? agent.workspaceKind : "app",
