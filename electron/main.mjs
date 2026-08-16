@@ -1241,6 +1241,8 @@ ipcMain.handle("pi:import-pi-auth", async (_event, accepted) => {
 
 ipcMain.handle("pi:auth-respond", (_event, promptId, value) => respondToAuthPrompt(promptId, value));
 ipcMain.handle("pi:auth-cancel", (_event, promptId) => cancelAuthPrompt(promptId));
+ipcMain.handle("pi:get-theme", () => appDatabase.getTheme());
+ipcMain.handle("pi:save-theme", (_event, theme) => appDatabase.saveTheme(theme));
 ipcMain.handle("pi:get-workspace-preferences", (_event, key) => appDatabase.getWorkspacePreferences(key));
 ipcMain.handle("pi:save-workspace-preferences", (_event, key, preferences) => appDatabase.saveWorkspacePreferences(key, preferences));
 ipcMain.handle("pi:list-workspace-files", () => listWorkspaceFiles());

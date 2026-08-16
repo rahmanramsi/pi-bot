@@ -1467,7 +1467,7 @@ export function App() {
         else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId } : previous);
       }
     });
-    window.piBot.connect().then((result) => { setData(result); setConnecting(false); }).catch((reason) => { setError(readableError(reason)); setConnecting(false); });
+    Promise.all([window.piBot.connect(), window.piBot.getTheme()]).then(([result, savedTheme]) => { setData(result); setTheme(savedTheme); setConnecting(false); }).catch((reason) => { setError(readableError(reason)); setConnecting(false); });
     return () => {
       streamBatcherRef.current?.cancel();
       unsubscribe();
@@ -1546,10 +1546,18 @@ export function App() {
     if (profile.workspaceKind !== "app" && !window.confirm(`Delete ${profile.name} and all of its sessions permanently? The external workspace folder will stay.`)) return;
     updateWith(() => window.piBot.deleteAgent(profile.id, deletesWorkspace));
   }
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    void window.piBot.saveTheme(next).catch((reason) => {
+      setTheme(theme);
+      setError(readableError(reason));
+    });
+  }
 
       return <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen} className="app-sidebar-provider">
         <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
-          <AppSidebar data={data} theme={theme} busy={busy} onSelectAgent={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onCreateAgent={() => { setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={() => setTheme((current) => current === "dark" ? "light" : "dark")} onSettings={() => { setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId))} onDeleteSession={deleteSession} />
+          <AppSidebar data={data} theme={theme} busy={busy} onSelectAgent={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onCreateAgent={() => { setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId))} onDeleteSession={deleteSession} />
           <AnimatePresence initial={false} mode="wait">
             {view === "chat" ? <motion.div className="app-view" key={`chat-${workspacePanelSessionKey(data)}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} /></motion.div>}
       </AnimatePresence>
