@@ -37,11 +37,6 @@ export function browserGuestMatchesHost(contents, hostWebContents) {
   return Boolean(contents?.hostWebContents && hostWebContents && contents.hostWebContents.id === hostWebContents.id);
 }
 
-export function browserPartitionForSession(sessionKey) {
-  const digest = createHash("sha256").update(`pi-bot.workspace-panel:${sessionKey}`).digest("hex");
-  return `persist:pi-bot-browser-${digest.slice(0, 32)}`;
-}
-
 export function browserPartitionForTab(sessionKey, tabId) {
   const digest = createHash("sha256").update(`pi-bot.workspace-panel:${sessionKey}:tab:${tabId}`).digest("hex");
   return `persist:pi-bot-browser-${digest.slice(0, 32)}`;
@@ -55,15 +50,15 @@ function scopeKey(scope, tabId) {
   return `${scope.agentId}\u0000${scope.sessionKey}\u0000${tabId}`;
 }
 
-function safeTarget(params) {
+function redactedToolTarget(params) {
   if (params.action === "tabs") return "registered tabs";
   if (params.action === "navigate") {
-    return safeBrowserUrl(params.url);
+    return redactedBrowserOrigin(params.url);
   }
   return safeSelector(params.selector || params.tabId);
 }
 
-function safeBrowserUrl(value) {
+function redactedBrowserOrigin(value) {
   try {
     return new URL(value).origin;
   } catch {
@@ -81,7 +76,7 @@ function safeSelector(value) {
 export function summarizeBrowserToolCall(params = {}) {
   if (!params || typeof params !== "object") params = {};
   const action = browserActions.includes(params.action) ? params.action : "action";
-  return `Browser · ${action} · tab ${String(params.tabId || "unknown").slice(0, 80)} · ${safeTarget({ ...params, action })}`;
+  return `Browser · ${action} · tab ${String(params.tabId || "unknown").slice(0, 80)} · ${redactedToolTarget({ ...params, action })}`;
 }
 
 function normalizeAction(params) {
@@ -102,16 +97,176 @@ function abortMessage(signal) {
   return "Browser work was stopped.";
 }
 
-function isolatedPageScript(action, selector, text, expectedSignature, pageTarget) {
+function buildBrowserSharedScript(action, selector, expectedSignature, pageTarget) {
   const selectorLiteral = JSON.stringify(selector);
-  const textLiteral = JSON.stringify(text);
   const expectedLiteral = JSON.stringify(expectedSignature || null);
   const pageTargetLiteral = JSON.stringify(pageTarget || null);
-  const shared = String.raw`const formOwner = (node) => node instanceof HTMLFormElement ? node : node?.form || node?.closest?.("form"); const formHasPassword = (form) => Boolean(form && [...form.elements].some((control) => control instanceof HTMLInputElement && control.type === "password")); const passwordBearing = (node) => { const form = formOwner(node); return Boolean(node instanceof HTMLInputElement && node.type === "password" || formHasPassword(form)); }; const authPattern = /\b(?:sign[\s-]*in|log[\s-]*in|log[\s-]*on|oauth|sso|single[\s-]*sign[\s-]*on|passkey|passwordless|webauthn|magic[\s-]*link|one[\s-]*time[\s-]*code|otp|continue\s+with|use\s+(?:a\s+)?(?:passkey|google|apple|github|microsoft))\b/i; const authAttributePattern = /\b(?:username|current-password|new-password|one-time-code|webauthn)\b/i; const authenticationControl = (node) => { const form = formOwner(node); const values = [node.getAttribute("aria-label"), node.getAttribute("autocomplete"), node.getAttribute("name"), node.getAttribute("id"), node.getAttribute("title"), node.getAttribute("href"), node.getAttribute("value"), node.textContent, form?.getAttribute("autocomplete"), form?.getAttribute("action"), form?.getAttribute("name"), form?.getAttribute("id"), form?.textContent]; const attributes = values.filter((value) => typeof value === "string").join(" "); return authPattern.test(attributes) || authAttributePattern.test(attributes); }; const visible = (node) => { if (!(node instanceof HTMLElement)) return false; if (node instanceof HTMLInputElement && node.type === "hidden") return false; for (let current = node; current; current = current.parentElement) { if (current.hasAttribute("hidden") || current.getAttribute("aria-hidden") === "true") return false; const style = getComputedStyle(current); if (style.visibility === "hidden" || style.display === "none" || Number.parseFloat(style.opacity || "1") <= 0) return false; } const rect = node.getBoundingClientRect(); const hasViewportRect = [rect.top, rect.left, rect.right, rect.bottom].every(Number.isFinite); const inViewport = !hasViewportRect || rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth; return rect.width > 0 && rect.height > 0 && inViewport; }; const unobscured = (node) => { const rect = node.getBoundingClientRect(); const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2); return Boolean(hit && (hit === node || node.contains(hit))); }; const disabled = (node) => Boolean(node.hasAttribute("disabled") || node.matches(":disabled") || node.getAttribute("aria-disabled") === "true" || node.closest("fieldset:disabled, fieldset[disabled], form[disabled], form[aria-disabled='true']")); const signature = (node) => ({ tag: node.tagName.toLowerCase(), role: node.getAttribute("role") || "", type: node.getAttribute("type") || "", name: node.getAttribute("name") || "", label: node.getAttribute("aria-label") || node.textContent?.trim().slice(0, 160) || "", placeholder: node.getAttribute("placeholder") || "", href: node instanceof HTMLAnchorElement ? (() => { try { return new URL(node.href).origin; } catch { return ""; } })() : "" }); const matchesSignature = (node, expected) => !expected || Object.entries(expected).every(([key, value]) => signature(node)[key] === value); const resolveTarget = () => ${pageTarget ? `window.__piBotBrowserTargets?.get(${pageTargetLiteral})` : `document.querySelector(${selectorLiteral})`}; const ensure = (node) => { if (!(node instanceof HTMLElement) || !node.isConnected || !visible(node) || disabled(node) || passwordBearing(node) || authenticationControl(node) || !unobscured(node)) throw new Error("The ${action} target is not visible or enabled."); if (!matchesSignature(node, ${expectedLiteral})) throw new Error("The ${action} target changed."); return node; };`;
-  if (action === "read") return `(() => { ${shared} window.__piBotBrowserTargets = new Map(); window.__piBotBrowserTargetSequence = 0; const targetFor = (node) => { const parts = []; for (let current = node; current && current !== document.body && parts.length < 8; current = current.parentElement) { const siblings = [...(current.parentElement?.children || [])].filter((peer) => peer.tagName === current.tagName); parts.unshift(current.tagName.toLowerCase() + ":nth-of-type(" + Math.max(1, siblings.indexOf(current) + 1) + ")"); } const selector = parts.join(" > ").slice(0, 240); const sequence = window.__piBotBrowserTargetSequence + 1; window.__piBotBrowserTargetSequence = sequence; const pageTarget = "pi-target-" + sequence; window.__piBotBrowserTargets.set(pageTarget, node); return { selector, pageTarget }; }; const describe = (node) => { const target = targetFor(node); return { target: target.selector, pageTarget: target.pageTarget, ...signature(node), disabled: disabled(node) }; }; const pageUrl = (() => { try { return new URL(location.href).origin; } catch { return "Browser page"; } })(); return { url: pageUrl, title: document.title, text: (document.body?.innerText || "").slice(0, 20000), elements: [...document.querySelectorAll("a,button,input,textarea,select,form,[role=button],[role=link]")].filter((node) => visible(node) && !passwordBearing(node) && !authenticationControl(node)).slice(0, 200).map(describe) }; })()`;
-  if (action === "click") return `(() => { ${shared} const node = resolveTarget(); const control = node?.closest("a,button,input,select,textarea,[role=button],[role=link]"); if (!control) throw new Error("The click target is not a normal control."); ensure(control); control.focus(); control.click(); return true; })()`;
-  if (action === "type") return `(() => { ${shared} const node = resolveTarget(); ensure(node); if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement || node instanceof HTMLElement && (node.isContentEditable || node.getAttribute("contenteditable") === "true"))) throw new Error("The type target is not editable."); if (node instanceof HTMLElement && !(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement)) node.textContent = ${textLiteral}; else { const prototype = node instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : node instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype; const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set; if (!setter) throw new Error("The type target is not editable."); setter.call(node, ${textLiteral}); } node.dispatchEvent(new Event("input", { bubbles: true, composed: true })); node.dispatchEvent(new Event("change", { bubbles: true, composed: true })); return true; })()`;
-  return `(() => { ${shared} const control = ensure(resolveTarget()); if (control instanceof HTMLFormElement) { control.requestSubmit(); return true; } if (control instanceof HTMLButtonElement || control instanceof HTMLInputElement && ["submit", "image"].includes(control.type)) { control.click(); return true; } throw new Error("The submit target is not a form or submit control."); })()`;
+  const targetExpression = pageTarget
+    ? `window.__piBotBrowserTargets?.get(${pageTargetLiteral})`
+    : `document.querySelector(${selectorLiteral})`;
+  return String.raw`
+const formOwner = (node) => node instanceof HTMLFormElement ? node : node?.form || node?.closest?.("form");
+const formHasPassword = (form) => Boolean(form && [...form.elements].some((control) => control instanceof HTMLInputElement && control.type === "password"));
+const passwordBearing = (node) => {
+  const form = formOwner(node);
+  return Boolean(node instanceof HTMLInputElement && node.type === "password" || formHasPassword(form));
+};
+const authPattern = /\b(?:sign[\s-]*in|log[\s-]*in|log[\s-]*on|oauth|sso|single[\s-]*sign[\s-]*on|passkey|passwordless|webauthn|magic[\s-]*link|one[\s-]*time[\s-]*code|otp|continue\s+with|use\s+(?:a\s+)?(?:passkey|google|apple|github|microsoft))\b/i;
+const authAttributePattern = /\b(?:username|current-password|new-password|one-time-code|webauthn)\b/i;
+const authenticationControl = (node) => {
+  const form = formOwner(node);
+  const values = [
+    node.getAttribute("aria-label"),
+    node.getAttribute("autocomplete"),
+    node.getAttribute("name"),
+    node.getAttribute("id"),
+    node.getAttribute("title"),
+    node.getAttribute("href"),
+    node.getAttribute("value"),
+    node.textContent,
+    form?.getAttribute("autocomplete"),
+    form?.getAttribute("action"),
+    form?.getAttribute("name"),
+    form?.getAttribute("id"),
+    form?.textContent,
+  ];
+  const attributes = values.filter((value) => typeof value === "string").join(" ");
+  return authPattern.test(attributes) || authAttributePattern.test(attributes);
+};
+const visible = (node) => {
+  if (!(node instanceof HTMLElement)) return false;
+  if (node instanceof HTMLInputElement && node.type === "hidden") return false;
+  for (let current = node; current; current = current.parentElement) {
+    if (current.hasAttribute("hidden") || current.getAttribute("aria-hidden") === "true") return false;
+    const style = getComputedStyle(current);
+    if (style.visibility === "hidden" || style.display === "none" || Number.parseFloat(style.opacity || "1") <= 0) return false;
+  }
+  const rect = node.getBoundingClientRect();
+  const hasViewportRect = [rect.top, rect.left, rect.right, rect.bottom].every(Number.isFinite);
+  const inViewport = !hasViewportRect || rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+  return rect.width > 0 && rect.height > 0 && inViewport;
+};
+const unobscured = (node) => {
+  const rect = node.getBoundingClientRect();
+  const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  return Boolean(hit && (hit === node || node.contains(hit)));
+};
+const disabled = (node) => Boolean(
+  node.hasAttribute("disabled")
+    || node.matches(":disabled")
+    || node.getAttribute("aria-disabled") === "true"
+    || node.closest("fieldset:disabled, fieldset[disabled], form[disabled], form[aria-disabled='true']")
+);
+const signature = (node) => ({
+  tag: node.tagName.toLowerCase(),
+  role: node.getAttribute("role") || "",
+  type: node.getAttribute("type") || "",
+  name: node.getAttribute("name") || "",
+  label: node.getAttribute("aria-label") || node.textContent?.trim().slice(0, 160) || "",
+  placeholder: node.getAttribute("placeholder") || "",
+  href: node instanceof HTMLAnchorElement ? (() => { try { return new URL(node.href).origin; } catch { return ""; } })() : "",
+});
+const matchesSignature = (node, expected) => !expected || Object.entries(expected).every(([key, value]) => signature(node)[key] === value);
+const resolveTarget = () => ${targetExpression};
+const ensure = (node) => {
+  if (!(node instanceof HTMLElement) || !node.isConnected || !visible(node) || disabled(node) || passwordBearing(node) || authenticationControl(node) || !unobscured(node)) throw new Error("The ${action} target is not visible or enabled.");
+  if (!matchesSignature(node, ${expectedLiteral})) throw new Error("The ${action} target changed.");
+  return node;
+};`;
+}
+
+function buildBrowserReadScript(shared) {
+  return `(() => {
+${shared}
+window.__piBotBrowserTargets = new Map();
+window.__piBotBrowserTargetSequence = 0;
+const targetFor = (node) => {
+  const parts = [];
+  for (let current = node; current && current !== document.body && parts.length < 8; current = current.parentElement) {
+    const siblings = [...(current.parentElement?.children || [])].filter((peer) => peer.tagName === current.tagName);
+    parts.unshift(current.tagName.toLowerCase() + ":nth-of-type(" + Math.max(1, siblings.indexOf(current) + 1) + ")");
+  }
+  const selector = parts.join(" > ").slice(0, 240);
+  const sequence = window.__piBotBrowserTargetSequence + 1;
+  window.__piBotBrowserTargetSequence = sequence;
+  const pageTarget = "pi-target-" + sequence;
+  window.__piBotBrowserTargets.set(pageTarget, node);
+  return { selector, pageTarget };
+};
+const describe = (node) => {
+  const target = targetFor(node);
+  return { target: target.selector, pageTarget: target.pageTarget, ...signature(node), disabled: disabled(node) };
+};
+const pageUrl = (() => { try { return new URL(location.href).origin; } catch { return "Browser page"; } })();
+return {
+  url: pageUrl,
+  title: document.title,
+  text: (document.body?.innerText || "").slice(0, 20000),
+  elements: [...document.querySelectorAll("a,button,input,textarea,select,form,[role=button],[role=link]")].filter((node) => visible(node) && !passwordBearing(node) && !authenticationControl(node)).slice(0, 200).map(describe),
+};
+})()`;
+}
+
+function buildBrowserClickScript(shared) {
+  return `(() => {
+${shared}
+const node = resolveTarget();
+const control = node?.closest("a,button,input,select,textarea,[role=button],[role=link]");
+if (!control) throw new Error("The click target is not a normal control.");
+ensure(control);
+control.focus();
+control.click();
+return true;
+})()`;
+}
+
+function buildBrowserTypeScript(shared, text) {
+  const textLiteral = JSON.stringify(text);
+  return `(() => {
+${shared}
+const node = resolveTarget();
+ensure(node);
+if (!(
+  node instanceof HTMLInputElement
+  || node instanceof HTMLTextAreaElement
+  || node instanceof HTMLSelectElement
+  || node instanceof HTMLElement && (node.isContentEditable || node.getAttribute("contenteditable") === "true")
+)) throw new Error("The type target is not editable.");
+if (node instanceof HTMLElement && !(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement)) node.textContent = ${textLiteral};
+else {
+  const prototype = node instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : node instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+  if (!setter) throw new Error("The type target is not editable.");
+  setter.call(node, ${textLiteral});
+}
+node.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+node.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+return true;
+})()`;
+}
+
+function buildBrowserSubmitScript(shared) {
+  return `(() => {
+${shared}
+const control = ensure(resolveTarget());
+if (control instanceof HTMLFormElement) {
+  control.requestSubmit();
+  return true;
+}
+if (control instanceof HTMLButtonElement || control instanceof HTMLInputElement && ["submit", "image"].includes(control.type)) {
+  control.click();
+  return true;
+}
+throw new Error("The submit target is not a form or submit control.");
+})()`;
+}
+
+function isolatedPageScript(action, selector, text, expectedSignature, pageTarget) {
+  const shared = buildBrowserSharedScript(action, selector, expectedSignature, pageTarget);
+  if (action === "read") return buildBrowserReadScript(shared);
+  if (action === "click") return buildBrowserClickScript(shared);
+  if (action === "type") return buildBrowserTypeScript(shared, text);
+  return buildBrowserSubmitScript(shared);
 }
 
 function friendlyError(error, action) {
@@ -335,7 +490,7 @@ export function createBrowserAutomationService({ timeoutMs = operationTimeoutMs 
           check();
           checkTargetGeneration();
           return action.action === "navigate"
-            ? Promise.resolve(tab.contents.loadURL(action.url)).then(() => ({ url: safeBrowserUrl(action.url) }))
+            ? Promise.resolve(tab.contents.loadURL(action.url)).then(() => ({ url: redactedBrowserOrigin(action.url) }))
             : (() => {
               if (typeof tab.contents.executeJavaScriptInIsolatedWorld !== "function") throw new BrowserAutomationError("action-failed", "Browser automation is unavailable for this tab.");
               return tab.contents.executeJavaScriptInIsolatedWorld(browserIsolatedWorldId, [{ code: isolatedPageScript(action.action, selector, action.text, expectedSignature, pageTarget) }], true);
@@ -378,7 +533,7 @@ export function createBrowserAutomationService({ timeoutMs = operationTimeoutMs 
 function resultText(params, result) {
   if (params.action === "tabs") return `Browser tabs: ${result.tabs.map((tab) => tab.tabId).join(", ") || "none"}.`;
   if (params.action === "read") return JSON.stringify(result) ?? "Browser page read.";
-  if (params.action === "navigate") return `Navigated browser tab ${params.tabId} to ${safeTarget(params)}.`;
+  if (params.action === "navigate") return `Navigated browser tab ${params.tabId} to ${redactedToolTarget(params)}.`;
   if (params.action === "click") return `Clicked ${safeSelector(params.selector)} in browser tab ${params.tabId}.`;
   if (params.action === "type") return `Typed text into ${safeSelector(params.selector)} in browser tab ${params.tabId}.`;
   return `Submitted ${safeSelector(params.selector)} in browser tab ${params.tabId}.`;

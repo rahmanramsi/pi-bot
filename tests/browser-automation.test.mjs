@@ -130,13 +130,6 @@ test("accepts credential-free HTTP(S) URLs and rejects unsafe navigation", () =>
   assert.equal(isAllowedBrowserUrl("mailto:test@example.com"), false);
 });
 
-test("uses a stable collision-resistant partition identity for each chat session", () => {
-  const first = browserPartitionForSession("session-a");
-  assert.equal(first, browserPartitionForSession("session-a"));
-  assert.match(first, /^persist:pi-bot-browser-[0-9a-f]{32}$/);
-  assert.notEqual(first, browserPartitionForSession("session-b"));
-});
-
 test("issues stable distinct per-tab partitions without FIFO attachment state", () => {
   const first = browserPartitionForTab("session-a", "browser-a");
   const second = browserPartitionForTab("session-a", "browser-b");
