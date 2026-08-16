@@ -33,6 +33,18 @@ test("chat topbar identifies the active agent instead of the session title", asy
   assert.doesNotMatch(styles, /\.agent-avatar\.active/);
 });
 
+test("opening a chat focuses its message input", async () => {
+  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const composer = app.match(/export function Composer[\s\S]*?function activityLabel/)?.[0] ?? "";
+  const chatView = app.match(/function ChatView[\s\S]*?function AgentEditor/)?.[0] ?? "";
+
+  assert.match(composer, /const inputRef = useRef<HTMLTextAreaElement>\(null\)/);
+  assert.match(composer, /if \(!disabled\) inputRef\.current\?\.focus\(\)/);
+  assert.match(composer, /\[disabled, focusKey\]/);
+  assert.match(composer, /<PromptInputTextarea[\s\S]*?ref=\{inputRef\}/);
+  assert.match(chatView, /<Composer[\s\S]*?focusKey=\{workspacePanelSessionKey\(data\)\}/);
+});
+
 test("individual chat messages do not repeat avatars or names", async () => {
   const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");

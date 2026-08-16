@@ -405,6 +405,7 @@ export function Composer({
   busy,
   disabled,
   config,
+  focusKey = "composer",
   placeholder = "Message your agent",
   onPrompt,
   onAbort,
@@ -414,6 +415,7 @@ export function Composer({
   busy: boolean;
   disabled: boolean;
   config: PiConfig;
+  focusKey?: string;
   placeholder?: string;
   onPrompt: (message: string) => void;
   onAbort: () => void;
@@ -421,7 +423,12 @@ export function Composer({
   onThinkingChange: (level: ThinkingLevel) => void;
 }) {
   const [message, setMessage] = useState("");
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const reasoningLevels = config.availableThinkingLevels.length > 0 ? config.availableThinkingLevels : ["off"] as ThinkingLevel[];
+
+  useEffect(() => {
+    if (!disabled) inputRef.current?.focus();
+  }, [disabled, focusKey]);
 
   function submit(prompt: PromptInputMessage) {
     const value = prompt.text.trim();
@@ -434,6 +441,7 @@ export function Composer({
     <PromptInput className="composer" onSubmit={submit}>
       <PromptInputBody>
         <PromptInputTextarea
+          ref={inputRef}
           className="composer-input"
           aria-label="Message"
           value={message}
@@ -1302,7 +1310,7 @@ function ChatView({
       {!data.authenticated && <Alert className="notice-line"><KeyRound /><AlertDescription>Add a provider credential in App Settings to start chatting.</AlertDescription></Alert>}
       {data.authenticated && blocked && agent && <Alert className="notice-line"><CircleAlert /><AlertDescription>This agent’s model is unavailable. Choose another model in App Settings.</AlertDescription></Alert>}
       <EventRows items={data.transcript} responding={responding} sessionId={data.config.session?.path ?? "new-session"} workspaceFiles={workspaceFiles} />
-      <Composer busy={responding} disabled={blocked || responding} config={data.config} placeholder={agent ? `Message ${agent.name}` : "Message your agent"} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
+      <Composer busy={responding} disabled={blocked || responding} config={data.config} focusKey={workspacePanelSessionKey(data)} placeholder={agent ? `Message ${agent.name}` : "Message your agent"} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
     </motion.main>
   );
 }
