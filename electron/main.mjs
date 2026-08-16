@@ -97,6 +97,14 @@ function cleanText(value, fallback, maxLength = 4000) {
   return value.trim().slice(0, maxLength);
 }
 
+function cleanAvatar(value, fallback) {
+  if (typeof value !== "string") return fallback;
+  return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value.trim()))
+    .slice(0, 4)
+    .map(({ segment }) => segment)
+    .join("") || fallback;
+}
+
 function isAllowedBrowserUrl(value) {
   try {
     const url = new URL(value);
@@ -171,7 +179,7 @@ function initialsFor(name) {
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
-    .map((part) => part[0])
+    .map((part) => Array.from(part)[0])
     .join("")
     .toUpperCase();
   return initials || "AS";
@@ -181,7 +189,8 @@ function defaultAgentProfile() {
   return {
     id: defaultAgentId,
     name: "Assistant",
-    initials: "AS",
+    initials: "🤖",
+    description: "",
     instructions: "",
     workspace: defaultWorkspace(defaultAgentId),
     workspaceKind: "app",
@@ -208,7 +217,8 @@ function normalizeProfile(id, value = {}, fallback = {}) {
   return {
     id,
     name,
-    initials: (cleanText(value.initials, fallback.initials || initialsFor(name), 4) || initialsFor(name)).toUpperCase(),
+    initials: cleanAvatar(value.initials, fallback.initials || "🤖").toUpperCase(),
+    description: cleanText(value.description, fallback.description || "", 160),
     instructions: typeof value.instructions === "string" ? value.instructions.slice(0, 20000) : readInstructions(workspace),
     workspace,
     workspaceKind,
@@ -998,6 +1008,7 @@ ipcMain.handle("pi:create-agent", async (_event, draft) => {
   const profile = normalizeProfile(id, {
     name,
     initials: draft.initials,
+    description: draft.description,
     instructions: "",
     defaultModelKey: assistant?.defaultModelKey || "",
     workspace: defaultWorkspace(id),
