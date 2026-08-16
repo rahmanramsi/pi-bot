@@ -1,88 +1,103 @@
 # Pi Bot
 
-Pi Bot is a local-first desktop workspace for chatting with configurable AI coding agents powered by `@earendil-works/pi-coding-agent`.
+## Give your coding agents a place to work
 
-## Public Alpha
+Pi Bot is a native desktop workspace for Pi coding agents. Instead of juggling
+terminal tabs, folders, and scattered chat histories, you get one focused place
+to direct agents, see what they are doing, and return to work without losing
+context.
 
-`v0.1.5` is a macOS Apple Silicon (`arm64`) and Windows x64 Public Alpha. It has no auto-update mechanism and no per-action approval policy. Use it only with a workspace you intentionally selected and can recover.
+![Pi Bot](public/branding/pi-bot-logo.png)
 
-## Install
+Pi Bot makes agent-assisted coding feel less like babysitting a terminal and
+more like working with a capable teammate.
 
-1. Download `PiBot-0.1.5-arm64.dmg` and its SHA-256 checksum from the [v0.1.5 release](https://github.com/rahmanramsi/pi-bot/releases/tag/v0.1.5).
-2. Optionally verify the download with `shasum -a 256 PiBot-0.1.5-arm64.dmg`.
-3. Open the DMG and drag Pi Bot to Applications.
-4. If macOS blocks the first launch, open **System Settings → Privacy & Security**, then click **Open Anyway** for Pi Bot.
-5. On first setup, acknowledge the execution warning, connect a supported provider, and choose a workspace.
+## Why Pi Bot
 
-On Windows, download and run `PiBot-0.1.5-x64-setup.exe` from the same release. The installer is unsigned, so Windows may require you to approve the first launch.
+- **Keep every agent in its lane.** Give each agent its own instructions,
+  workspace, model, and conversation history. Switch projects without asking an
+  agent to rediscover everything.
+- **Know what is happening while work gets done.** Follow streamed responses,
+  tool activity, and reasoning details in a calm, readable timeline.
+- **Pick up where you left off.** Pi Bot keeps sessions and app state locally in
+  SQLite, so your previous work is there when you come back.
+- **Bring your preferred provider.** Connect with an API key or OAuth, or
+  optionally import credentials from an existing local Pi installation.
+- **Keep the workspace in view.** Browse project files and open web pages from
+  the workspace panel without leaving the conversation.
+- **Prepare work for later.** Create one-time or recurring scheduled jobs that
+  keep their agent, workspace, model, reasoning level, and prompt.
 
-## What it does
+## Start in minutes
 
-- Create, edit, archive, restore, and delete agent profiles.
-- Assign one app-owned or external workspace to each agent.
-- Store agent instructions in the workspace `AGENTS.md` file.
-- Load optional workspace skills from `.agents/skills` after the workspace is trusted.
-- Keep persistent agent-scoped chat sessions with first-prompt titles.
-- Stream Markdown responses while model reasoning, progress updates, and tool activity stay grouped under one flat `Working for …` disclosure.
-- Use a titleless, resizable right sidebar where users add filterable Files or private Browser tabs that the active chat agent can operate through normal page UI.
-- Connect providers through API keys, supported sign-in flows, or a one-time Pi credential import.
-- Store provider credentials in a permission-restricted local app file.
-
-## Execution warning
-
-Pi Bot gives the agent `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`, and a Browser tool for the active chat session. The agent can run commands, modify or delete files in the selected workspace, and operate visible Browser UI without asking for approval for each action. Pi Bot has no sandbox yet.
-
-The initial setup requires a one-time acknowledgement of this risk. It is a disclosure, not an approval system. Do not use Pi Bot with a workspace whose contents you cannot safely change.
-
-## Privacy
-
-Pi Bot stores settings, session mappings, agent/workspace-scoped sessions, app-owned workspaces, and model-provided reasoning in `pi-bot.sqlite` under Electron's app-data directory. Provider credentials remain in the separate permission-restricted `credentials.json`; they are not part of the database migration. New installs do not create settings or session JSONL. Existing installs migrate validated legacy files without deleting them automatically. See [storage, migration, and recovery](docs/storage-and-migration.md) for the layout and cleanup procedure. The app has no built-in telemetry, analytics, crash reporting, or cloud sync.
-
-Prompts, workspace context, and tool results needed by an agent are sent to the model provider you connect. That provider's privacy policy applies to its handling of that data.
-
-Each Browser tab uses its own persistent local profile within its owning chat session; profiles are not shared between tabs or chats. It blocks downloads, popups, site permissions, and non-HTTP(S) navigation. Agents can read visible page content and use normal controls in tabs owned by the active chat session, but never receive cookies, local storage, passwords, or credential APIs. Manual sign-in remains user-controlled and must be repeated in another tab.
-
-The Browser tool starts with `tabs` to discover the active chat's opaque tab IDs. Use `read` for visible page content and stable control targets, then `navigate`, `click`, `type`, or `submit`; hidden/disabled controls and page failures return stable redacted errors, and typed values never appear in activity summaries.
-
-## Run from source
-
-Requirements: Node.js 22.19 or newer and a supported provider credential (or importable local Pi credentials). The published Public Alpha currently targets macOS on Apple Silicon. Validate the Windows installer on Windows before publishing it.
+Install a current Node.js LTS release, then run:
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-Validation and release build:
+Pi Bot opens after the development server starts. On your first launch, connect
+a supported model provider or import existing Pi credentials, choose a model,
+and give your agent a workspace. You are ready to start a conversation.
+
+Each worktree gets its own development server port and `.pi-bot/user-data`
+directory automatically, so you can run `npm run dev` from multiple worktrees
+at the same time.
+
+## Build and package
+
+```bash
+npm run build       # type-check and build the renderer
+npm run dist        # macOS Apple Silicon DMG
+npm run dist:win    # Windows x64 installer
+```
+
+Build artifacts are written to `release/`.
+
+## Development checks
 
 ```bash
 npm test
+npm run test:motion
 npm run typecheck
 npm run build
-npm run dist
+npm run verify:renderer
 ```
 
-`npm run dist` creates `release/PiBot-0.1.5-arm64.dmg`.
+After creating a package, use `npm run smoke:packaged` to open the packaged app
+and check that its renderer reaches the setup screen.
 
-To create a Windows x64 installer:
+## Project structure
 
-```bash
-npm install
-npm run dist:win
-npm run smoke:packaged
+```text
+src/                 React renderer and UI components
+electron/            Electron main process, preload bridge, and local storage
+tests/               Node-based regression tests
+scripts/qa/          Renderer and interaction checks
+build/               Application icons
 ```
 
-This creates `release/PiBot-0.1.5-x64-setup.exe`.
+The renderer talks to Electron through the `window.piBot` preload bridge. The
+main process owns agent runtimes, provider authentication, workspace access,
+and session persistence.
 
-Before publishing a Windows build, run `npm run smoke:packaged` from Windows.
+## Scheduled jobs
 
-## Report a bug
+Scheduled jobs run only while Pi Bot is open. They do not start a background
+process after the app closes. On the next launch, missed occurrences are
+skipped rather than caught up; overlapping runs are not started. Each completed
+run is saved as a normal local session and the job keeps its outcome and session
+path for inspection.
 
-Open an issue at [github.com/rahmanramsi/pi-bot/issues](https://github.com/rahmanramsi/pi-bot/issues). Include your Pi Bot version, operating-system version, whether the app is running from an installer, steps to reproduce, and any non-secret error text.
+## Your data stays local
 
-## Development notes
+Pi Bot stores its app database, settings, agent workspaces, and credentials in
+Electron's local app-data directory. Provider credentials are kept in a local
+owner-only `credentials.json` file; they are not stored in macOS Keychain.
 
-The release gate runs the Node test suite (`npm test`), TypeScript validation, a production build, an asset-path check, and `npm run smoke:packaged`, which opens the packaged app through first setup. A provider connection, agent creation, workspace selection, one prompt/tool run, and restart/session persistence still require a credentialed manual test.
+Deleting an agent can remove its Pi Bot sessions and app-owned workspace.
+External workspace folders are never deleted by Pi Bot.
 
 ## License
 

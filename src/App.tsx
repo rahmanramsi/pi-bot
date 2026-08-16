@@ -1,9 +1,11 @@
 import { createElement, forwardRef, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { EmojiPicker } from "frimousse";
 import {
   Archive,
   ArrowDown,
   ArrowLeft,
   Bot,
+  CalendarClock,
   Check,
   Copy,
   ChevronRight,
@@ -26,15 +28,17 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Pause,
   Pencil,
+  Pin,
+  PinOff,
+  Play,
   Plus,
   RotateCcw,
   RefreshCw,
   Search,
-  Send,
   Settings2,
   ShieldCheck,
-  Square,
   Sun,
   Trash2,
   X,
@@ -43,18 +47,20 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ContextMenu, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
-import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from "@/components/ai-elements/message";
-import { PromptInput, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from "@/components/ai-elements/prompt-input";
+import { Context, ContextContent, ContextContentHeader, ContextTrigger } from "@/components/ai-elements/context";
+import { Message, MessageAction, MessageActions, MessageContent, MessageResponse, MessageToolbar } from "@/components/ai-elements/message";
+import { PromptInput, PromptInputBody, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, PromptInputTools, type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent } from "@/components/ai-elements/reasoning";
 import { Task, TaskContent, TaskTrigger } from "@/components/ai-elements/task";
 import { Terminal } from "@/components/ai-elements/terminal";
 import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput, type ToolStatus } from "@/components/ai-elements/tool";
-import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -62,6 +68,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AnimatePresence, motion, motionSprings, motionTimings, motionTransitions, useReducedMotion } from "./lib/motion";
 import { createStreamDeltaBatcher, type StreamDeltaBatcher } from "./lib/streaming";
+import { scheduledDateFromWallClock } from "./scheduled-time";
 import type {
   AgentId,
   AgentProfile,
@@ -71,6 +78,9 @@ import type {
   PiEvent,
   PiModelOption,
   ProviderInfo,
+  ScheduledJob,
+  ScheduledJobDraft,
+  ScheduledJobRecurrence,
   SessionSummary,
   ThinkingLevel,
   TimelineItem,
@@ -80,12 +90,13 @@ import type {
 } from "./types";
 
 type View = "chat" | "settings";
-type SettingsSection = "agents" | "models";
+type SettingsSection = "agents" | "models" | "schedules";
 type Theme = "dark" | "light";
 type WorkspaceTabKind = WorkspacePanelTab["kind"];
 type WorkspaceTab = WorkspacePanelTab;
 
 const defaultBrowserUrl = "https://www.google.com/";
+const defaultAvatarEmoji = "🤖";
 
 function defaultWorkspacePanelPreferences(): WorkspacePanelPreferences {
   return {
@@ -148,6 +159,12 @@ function newWorkspaceTabId(kind: WorkspaceTabKind) {
 
 let mermaidDiagramId = 0;
 
+function compactWorkspace(workspace: string) {
+  if (!workspace) return "No workspace";
+  const parts = workspace.split("/").filter(Boolean);
+  return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : workspace;
+}
+
 function readableError(reason: unknown) {
   if (reason instanceof Error) return reason.message;
   if (typeof reason === "string") return reason.replace(/^Error:\s*/, "");
@@ -165,6 +182,59 @@ function shortDate(value?: string) {
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(date);
 }
 
+function localDateTimeInputValue(date: Date, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
+}
+
+function formatScheduledDate(value: string | null, timeZone: string) {
+  if (!value) return "Not scheduled";
+  try {
+    return `${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", timeZone }).format(new Date(value))} · ${timeZone}`;
+  } catch {
+    return "Invalid date";
+  }
+}
+
+function recurrenceLabel(recurrence: ScheduledJobRecurrence) {
+  return recurrence === "once" ? "One time" : recurrence === "daily" ? "Every day" : recurrence === "weekly" ? "Every week" : "Every month";
+}
+
+function scheduledRunLabel(job: ScheduledJob) {
+  if (!job.lastStatus) return "No runs yet";
+  if (job.lastStatus === "failed") return `Failed${job.lastError ? ` · ${job.lastError}` : ""}`;
+  if (job.lastStatus === "missed") return "Missed while Pi Bot was closed";
+  if (job.lastStatus === "running") return "Running now";
+  return "Succeeded";
+}
+
+type ScheduledJobForm = Omit<ScheduledJobDraft, "startAt"> & { startAt: string };
+
+function scheduledJobDraftFromData(data: PiBootstrap): ScheduledJobForm {
+  const agent = findAgent(data.agents, data.activeAgentId) ?? data.agents.find((item) => !item.archived);
+  const modelKey = agent?.defaultModelKey || data.config.modelKey || data.config.models[0]?.key || "";
+  const model = data.config.models.find((item) => item.key === modelKey);
+  return {
+    name: "",
+    agentId: agent?.id ?? "",
+    modelKey,
+    thinkingLevel: model?.reasoning ? data.config.thinkingLevel : "off",
+    prompt: "",
+    recurrence: "once",
+    startAt: localDateTimeInputValue(new Date(Date.now() + 5 * 60 * 1000)),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+}
+
 function groupSessions(sessions: SessionSummary[]) {
   const now = new Date();
   const yesterday = new Date(now);
@@ -179,18 +249,6 @@ function groupSessions(sessions: SessionSummary[]) {
   return Object.entries(groups).filter(([, items]) => items.length > 0);
 }
 
-function agentColor(id: string) {
-  const palette = ["#ff5d52", "#27b9df", "#9b5de5", "#ff7a1a", "#4e7ee8", "#e84a9b", "#12b8a6"];
-  const index = [...id].reduce((total, character) => total + character.charCodeAt(0), 0) % palette.length;
-  return palette[index];
-}
-
-function compactWorkspace(workspace: string) {
-  if (!workspace) return "No workspace";
-  const parts = workspace.split("/").filter(Boolean);
-  return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : workspace;
-}
-
 function timeNow() {
   return new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" }).format(new Date());
 }
@@ -203,13 +261,6 @@ function formatWorkingDuration(milliseconds: number) {
   if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
   if (minutes > 0) return `${minutes}m ${seconds}s`;
   return `${seconds}s`;
-}
-
-function formatTokenCount(value: number | null) {
-  if (value === null) return "—";
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
-  return String(value);
 }
 
 function labelThinkingLevel(level: ThinkingLevel) {
@@ -362,8 +413,9 @@ function ThinkingSelect({
 export function Composer({
   busy,
   disabled,
-  agentName,
   config,
+  focusKey = "composer",
+  placeholder = "Message your agent",
   onPrompt,
   onAbort,
   onModelChange,
@@ -371,8 +423,9 @@ export function Composer({
 }: {
   busy: boolean;
   disabled: boolean;
-  agentName: string;
   config: PiConfig;
+  focusKey?: string;
+  placeholder?: string;
   onPrompt: (message: string) => void;
   onAbort: () => void;
   onModelChange: (key: string) => void;
@@ -380,62 +433,50 @@ export function Composer({
 }) {
   const [message, setMessage] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const contextPercent = config.context.percent === null ? 0 : Math.min(100, Math.max(0, config.context.percent));
-  const contextLabel = config.context.percent === null ? "—" : config.context.percent > 0 && config.context.percent < 1 ? "<1%" : `${config.context.percent.toFixed(0)}%`;
   const reasoningLevels = config.availableThinkingLevels.length > 0 ? config.availableThinkingLevels : ["off"] as ThinkingLevel[];
 
-  function submit(event: { preventDefault: () => void }) {
-    event.preventDefault();
-    const value = message.trim();
+  useEffect(() => {
+    if (!disabled) inputRef.current?.focus();
+  }, [disabled, focusKey]);
+
+  function submit(prompt: PromptInputMessage) {
+    const value = prompt.text.trim();
     if (!value || busy || disabled) return;
     setMessage("");
-    if (inputRef.current) {
-      inputRef.current.style.height = "40px";
-      inputRef.current.style.overflowY = "hidden";
-    }
     onPrompt(value);
   }
 
   return (
     <PromptInput className="composer" onSubmit={submit}>
-      <PromptInputTextarea
-        ref={inputRef}
-        className="composer-input"
-        aria-label={`Message ${agentName}`}
-        value={message}
-        onChange={(event) => {
-          setMessage(event.target.value);
-          event.currentTarget.style.height = "40px";
-          const nextHeight = Math.min(event.currentTarget.scrollHeight, 150);
-          event.currentTarget.style.height = `${nextHeight}px`;
-          event.currentTarget.style.overflowY = event.currentTarget.scrollHeight > 150 ? "auto" : "hidden";
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-          event.preventDefault();
-          event.currentTarget.form?.requestSubmit();
-        }}
-        placeholder="Ask Pi Bot anything…"
-        disabled={disabled}
-        rows={1}
-      />
+      <PromptInputBody>
+        <PromptInputTextarea
+          ref={inputRef}
+          className="composer-input"
+          aria-label="Message"
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+          rows={1}
+        />
+      </PromptInputBody>
       <PromptInputFooter className="composer-toolbar">
-        <PromptInputTools className="composer-toolbar-left">
-          <span className="composer-prefix" aria-hidden="true">+</span>
-          <span className="composer-divider" aria-hidden="true">•</span>
-          <div className="composer-context" title={`${formatTokenCount(config.context.tokens)} of ${formatTokenCount(config.context.contextWindow)} tokens used`}>
-            <span>{contextLabel} context used</span>
-            <Progress className="context-meter" value={contextPercent} aria-label="Context usage" />
-          </div>
-        </PromptInputTools>
         <PromptInputTools className="composer-actions">
+          <Context usedTokens={config.context.tokens ?? 0} maxTokens={config.context.tokens === null ? 0 : config.context.contextWindow}>
+            <ContextTrigger className="composer-context-trigger" aria-label="Context usage" />
+            <ContextContent>
+              <ContextContentHeader />
+            </ContextContent>
+          </Context>
           <ModelSelect value={config.modelKey} models={config.models} onChange={onModelChange} disabled={busy || config.models.length === 0} className="composer-model-select" />
           <ThinkingSelect value={config.thinkingLevel} levels={reasoningLevels} onChange={onThinkingChange} disabled={busy || !config.modelAvailable} />
-          {busy ? (
-            <PromptInputSubmit className="stop-button" size="icon" status="streaming" onClick={onAbort}><Square /></PromptInputSubmit>
-          ) : (
-            <PromptInputSubmit className="send-button" size="icon" status="ready" disabled={disabled || !message.trim()}><Send /></PromptInputSubmit>
-          )}
+          <PromptInputSubmit
+            className={busy ? "stop-button" : "send-button"}
+            variant={busy ? "ghost" : "default"}
+            status={busy ? "streaming" : "ready"}
+            onStop={onAbort}
+            disabled={!busy && (disabled || !message.trim())}
+          />
         </PromptInputTools>
       </PromptInputFooter>
     </PromptInput>
@@ -627,50 +668,13 @@ export function ActivityGroup({ items, startedAt, endedAt, running = false }: { 
   );
 }
 
-function MermaidDiagram({ chart }: { chart: string }) {
-  const [svg, setSvg] = useState<string>();
-  const [error, setError] = useState<string>();
-
-  useEffect(() => {
-    let cancelled = false;
-    setSvg(undefined);
-    setError(undefined);
-
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const { default: mermaid } = await import("mermaid");
-          mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "default" });
-          const { svg: renderedSvg } = await mermaid.render(`mermaid-diagram-${mermaidDiagramId++}`, chart);
-          if (!cancelled) setSvg(renderedSvg);
-        } catch (reason) {
-          if (!cancelled) setError(readableError(reason));
-        }
-      })();
-    }, 250);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [chart]);
-
-  if (error) {
-    return <div className="mermaid-diagram-error"><span>Diagram tidak bisa dirender: {error}</span><pre><code>{chart}</code></pre></div>;
-  }
-
-  if (!svg) return <div className="mermaid-diagram-loading">Merender diagram…</div>;
-
-  return <div className="mermaid-diagram" aria-label="Diagram Mermaid" dangerouslySetInnerHTML={{ __html: svg }} />;
-}
-
-export function MarkdownContent({ body, streaming, onWorkspaceFile }: { body: string; streaming: boolean; onWorkspaceFile?: (path: string) => void }) {
+export function MarkdownContent({ body, streaming, workspaceFiles, onWorkspaceFile }: { body: string; streaming: boolean; workspaceFiles?: readonly string[]; onWorkspaceFile?: (path: string) => void }) {
   return (
     <div className="markdown-content" data-motion={streaming ? "streaming-caret" : undefined}>
       <MessageResponse
         mode={streaming ? "streaming" : "static"}
         isAnimating={streaming}
-        mermaidRenderer={(chart) => <MermaidDiagram chart={chart} />}
+        workspaceFiles={workspaceFiles}
         onWorkspaceFile={onWorkspaceFile}
       >
         {body}
@@ -679,28 +683,18 @@ export function MarkdownContent({ body, streaming, onWorkspaceFile }: { body: st
   );
 }
 
-function ChatMessage({ item, agent }: { item: TimelineItem; agent?: AgentProfile }) {
+function ChatMessage({ item, workspaceFiles }: { item: TimelineItem; workspaceFiles?: readonly string[] }) {
   const isUser = item.kind === "user";
+  const copyLabel = isUser ? "Copy message" : "Copy response";
   const streaming = !isUser && item.status === "running";
   const reducedMotion = useReducedMotion();
   return (
     <motion.div layout="position" initial={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
       <Message from={isUser ? "user" : "assistant"} className={`chat-message ${isUser ? "user" : "assistant"}`}>
-        <div className="chat-avatar">
-          {isUser ? <Avatar className="chat-avatar-inner"><AvatarFallback>YO</AvatarFallback></Avatar> : agent ? <AgentAvatar agent={agent} /> : <Avatar className="chat-avatar-inner"><AvatarFallback>AS</AvatarFallback></Avatar>}
-        </div>
         <MessageContent className="chat-message-main">
-          <div className="chat-message-meta">
-            <strong>{isUser ? "You" : agent?.name ?? "Assistant"}</strong>
-            {item.status === "failed" && <Badge variant="destructive">Failed</Badge>}
-          </div>
-          <div className={`chat-bubble ${isUser ? "muted" : "ghost"}`}>
-            <div className={`chat-body ${isUser ? "user" : "assistant"}`}>
-              <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} onWorkspaceFile={(path) => { void window.piBot.openWorkspaceFile(path); }} />
-            </div>
-          </div>
-          <div className="chat-message-footer"><time>{item.timestamp}</time>{!isUser && item.body && <MessageActions className="message-actions"><MessageAction label="Copy response" tooltip="Copy response" onClick={() => { void navigator.clipboard?.writeText(item.body); }}><Copy /></MessageAction></MessageActions>}</div>
+          {isUser ? <span className="user-message-text">{item.body}</span> : <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} workspaceFiles={workspaceFiles} onWorkspaceFile={(path) => { void window.piBot.openWorkspaceFile(path); }} />}
         </MessageContent>
+        <MessageToolbar className="chat-message-footer"><time>{item.timestamp}</time>{item.status === "failed" && <Badge variant="destructive">Failed</Badge>}{item.body && <MessageActions className="message-actions"><MessageAction label={copyLabel} tooltip={copyLabel} onClick={() => { void navigator.clipboard?.writeText(item.body); }}><Copy /></MessageAction></MessageActions>}</MessageToolbar>
       </Message>
     </motion.div>
   );
@@ -741,21 +735,21 @@ export function groupConversationItems(items: TimelineItem[]): ConversationBlock
   return blocks;
 }
 
-function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?: AgentProfile; responding: boolean }) {
+function EventRows({ items, responding, sessionId, workspaceFiles }: { items: TimelineItem[]; responding: boolean; sessionId: string; workspaceFiles?: readonly string[] }) {
   const blocks = groupConversationItems(items);
   const lastActivityIndex = blocks.findLastIndex((block) => block.kind === "activity");
 
   return (
     <div className="conversation-feed">
       {items.length === 0 ? (
-        <ConversationEmptyState className="empty-conversation" icon={<Bot className="empty-orbit" />} title={`Start a conversation with ${agent?.name ?? "Assistant"}`} description="Ask a question or describe what you want to work on." />
+        <ConversationEmptyState className="empty-conversation" title="Start a conversation" description="Ask a question or describe what you want to work on." />
       ) : (
-        <Conversation className="conversation-scroll" aria-label="Conversation">
+        <Conversation key={sessionId} className="conversation-scroll" aria-label="Conversation" initial="instant">
           <ConversationContent className="conversation-blocks">
             <AnimatePresence initial={false}>
               {blocks.map((block, index) => {
                 const messageId = block.kind === "activity" ? `activity-${block.items[0].id}` : block.item.id;
-                if (block.kind === "message") return <div className="conversation-item" key={messageId}><ChatMessage item={block.item} agent={agent} /></div>;
+                if (block.kind === "message") return <div className="conversation-item" key={messageId}><ChatMessage item={block.item} workspaceFiles={workspaceFiles} /></div>;
                 const previous = blocks[index - 1];
                 const next = blocks[index + 1];
                 const startedAt = previous?.kind === "message" && previous.item.kind === "user" ? previous.item.timestampMs : block.items[0]?.timestampMs;
@@ -771,46 +765,87 @@ function EventRows({ items, agent, responding }: { items: TimelineItem[]; agent?
   );
 }
 
-function AgentAvatar({ agent, active = false, className = "" }: { agent: AgentProfile; active?: boolean; className?: string }) {
-  return <Avatar className={`agent-avatar ${active ? "active" : ""} ${className}`} aria-hidden="true"><AvatarFallback className="agent-avatar-fallback" style={{ backgroundColor: agentColor(agent.id) }}>{agent.initials}</AvatarFallback></Avatar>;
+function AgentAvatar({ agent, className = "" }: { agent: AgentProfile; className?: string }) {
+  return <Avatar className={`agent-avatar ${className}`} aria-hidden="true"><AvatarFallback>{agent.initials}</AvatarFallback></Avatar>;
+}
+
+function AvatarEmojiPicker({ value, onChange, disabled }: { value: string; onChange: (emoji: string) => void; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger render={<Button type="button" variant="outline" className="avatar-picker-trigger" disabled={disabled} aria-label="Choose avatar emoji" />}>{value || defaultAvatarEmoji}</PopoverTrigger><PopoverContent className="avatar-emoji-picker" align="end"><EmojiPicker.Root columns={8} onEmojiSelect={({ emoji }) => { onChange(emoji); setOpen(false); }}><EmojiPicker.Search aria-label="Search emoji" placeholder="Search emoji" /><EmojiPicker.Viewport><EmojiPicker.Loading>Loading…</EmojiPicker.Loading><EmojiPicker.Empty>No emoji found.</EmojiPicker.Empty><EmojiPicker.List /></EmojiPicker.Viewport></EmojiPicker.Root></PopoverContent></Popover>;
 }
 
 function AgentSidebarSection({
   data,
   theme,
+  busy,
+  query,
+  onQueryChange,
   onSelect,
+  onTogglePin,
   onCreateAgent,
   onToggleTheme,
   onSettings,
 }: {
   data: PiBootstrap;
   theme: Theme;
+  busy: boolean;
+  query: string;
+  onQueryChange: (query: string) => void;
   onSelect: (agentId: AgentId) => void;
+  onTogglePin: (agent: AgentProfile) => void;
   onCreateAgent: () => void;
   onToggleTheme: () => void;
   onSettings: () => void;
 }) {
-  const agents = data.agents.filter((agent) => !agent.archived);
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const latestSessionFor = (agent: AgentProfile) => [...(data.sessionsByAgent[agent.id] ?? [])]
+    .sort((a, b) => new Date(b.modified ?? b.created ?? 0).getTime() - new Date(a.modified ?? a.created ?? 0).getTime())[0];
+  const latestTimestampFor = (agent: AgentProfile) => {
+    const latest = latestSessionFor(agent);
+    return new Date(latest?.modified ?? latest?.created ?? 0).getTime();
+  };
+  const agents = data.agents
+    .filter((agent) => !agent.archived)
+    .filter((agent) => !normalizedQuery || `${agent.name} ${agent.description}`.toLocaleLowerCase().includes(normalizedQuery))
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || latestTimestampFor(b) - latestTimestampFor(a) || a.name.localeCompare(b.name));
   return (
     <section className="agent-sidebar-section">
-      <div className="agent-rail-brand" title="Pi Bot">
-        <img src={theme === "dark" ? "./branding/pi-bot-logo-dark.png" : "./branding/pi-bot-logo.png"} alt="Pi Bot" />
-      </div>
+      <header className="agent-inbox-header">
+        <div className="agent-inbox-brand" title="Pi Bot">
+          <img src={theme === "dark" ? "./branding/pi-bot-logo-dark.png" : "./branding/pi-bot-logo.png"} alt="Pi Bot" />
+          <strong>Pi Bot</strong>
+        </div>
+        <Button className="agent-create-button" variant="ghost" size="icon" onClick={onCreateAgent} title="Create agent" aria-label="Create agent" disabled={busy}><Plus /></Button>
+      </header>
+      <label className="agent-search">
+        <Search aria-hidden="true" />
+        <Input value={query} onChange={(event) => onQueryChange(event.target.value)} className="agent-search-input" placeholder="Search" aria-label="Search agents" />
+      </label>
       <SidebarGroup className="agent-sidebar-group">
         <SidebarMenu className="agent-list" aria-label="Agents">
-          {agents.map((agent) => (
-            <SidebarMenuItem key={agent.id}>
-              <SidebarMenuButton className={`agent-list-item ${agent.id === data.activeAgentId ? "selected" : ""}`} isActive={agent.id === data.activeAgentId} onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} tooltip={agent.name} data-motion="agent-select">
-                <AgentAvatar agent={agent} active={agent.id === data.activeAgentId} />
-                <span><strong>{agent.name}</strong><small>{agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-          {agents.length === 0 && <li className="muted-copy">No agents yet.</li>}
+          {agents.map((agent) => {
+            const latest = latestSessionFor(agent);
+            return <SidebarMenuItem key={agent.id}>
+              <ContextMenu>
+                <ContextMenuTrigger className="agent-list-context">
+                  <SidebarMenuButton className={`agent-list-item ${agent.id === data.activeAgentId ? "selected" : ""}`} isActive={agent.id === data.activeAgentId} onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} tooltip={agent.name} data-motion="agent-select">
+                    <AgentAvatar agent={agent} />
+                    <span className="agent-list-copy">
+                      <span className="agent-list-heading"><strong>{agent.name}</strong><span className="agent-list-meta">{agent.pinned && <span className="agent-pin-indicator" title="Pinned"><Pin aria-hidden="true" /></span>}<time>{shortDate(latest?.modified ?? latest?.created)}</time></span></span>
+                      <small>{latest?.preview ?? "Start a conversation"}</small>
+                    </span>
+                  </SidebarMenuButton>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="agent-context-menu-content"><ContextMenuGroup>
+                  <ContextMenuItem disabled={busy} onClick={() => onTogglePin(agent)}>{agent.pinned ? <PinOff /> : <Pin />} {agent.pinned ? "Unpin agent" : "Pin agent"}</ContextMenuItem>
+                </ContextMenuGroup></ContextMenuContent>
+              </ContextMenu>
+            </SidebarMenuItem>;
+          })}
+          {agents.length === 0 && <li className="muted-copy agent-list-empty">{normalizedQuery ? "No agents match your search." : "No agents yet."}</li>}
         </SidebarMenu>
       </SidebarGroup>
-      <div className="agent-rail-actions">
-        <Button className="agent-create-button" variant="outline" size="icon" onClick={onCreateAgent} title="Create agent" aria-label="Create agent"><Plus data-icon="inline-start" /></Button>
+      <div className="agent-inbox-footer">
         <Button className="agent-theme-button" variant="ghost" size="icon-sm" onClick={onToggleTheme} title={theme === "dark" ? "Use light mode" : "Use dark mode"} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>{theme === "dark" ? <Sun data-icon="inline-start" /> : <Moon data-icon="inline-start" />}</Button>
         <Button className="agent-settings-button" variant="ghost" size="icon-sm" onClick={onSettings} title="App settings" aria-label="App settings"><Settings2 data-icon="inline-start" /></Button>
       </div>
@@ -818,12 +853,16 @@ function AgentSidebarSection({
   );
 }
 
-type SessionSidebarProps = {
+type HistorySidebarProps = {
   data: PiBootstrap;
   busy: boolean;
+  theme: Theme;
   onNewChat: () => void;
   onOpenSession: (session: SessionSummary) => void;
   onDeleteSession: (session: SessionSummary) => void;
+  onBack: () => void;
+  onToggleTheme: () => void;
+  onSettings: () => void;
 };
 
 function SessionMenu({ chat, busy, onDeleteSession }: { chat: SessionSummary; busy: boolean; onDeleteSession: (session: SessionSummary) => void }) {
@@ -837,25 +876,33 @@ function SessionMenu({ chat, busy, onDeleteSession }: { chat: SessionSummary; bu
   </DropdownMenu>;
 }
 
-const SessionSidebar = forwardRef<HTMLElement, SessionSidebarProps>(function SessionSidebar({
+function HistorySidebar({
   data,
   busy,
+  theme,
   onNewChat,
   onOpenSession,
   onDeleteSession,
-}, ref) {
+  onBack,
+  onToggleTheme,
+  onSettings,
+}: HistorySidebarProps) {
   const agent = findAgent(data.agents, data.activeAgentId);
   const sessions = agent ? data.sessionsByAgent[agent.id] ?? [] : [];
   const groups = groupSessions(sessions);
   return (
-    <section ref={ref} className="session-sidebar" data-motion="session-sidebar">
-      <header className="session-sidebar-header">
-        <div>
-          <span className="eyebrow">Sessions</span>
+    <section className="history-sidebar" data-motion="history-sidebar">
+      <header className="history-sidebar-header">
+        <Button className="history-back-button" variant="ghost" size="sm" onClick={onBack} aria-label="Back to agents"><ArrowLeft /> <span>All agents</span></Button>
+        {agent && <AgentAvatar agent={agent} />}
+        <div className="history-sidebar-agent">
           <strong>{agent?.name ?? "No active agent"}</strong>
+          {agent?.description && <small>{agent.description}</small>}
         </div>
       </header>
-      <Button className="new-chat-button" onClick={onNewChat} disabled={!data.activeAgentId}><MessageSquarePlus /> New session <Plus /></Button>
+      <Button className="new-chat-button" onClick={onNewChat} disabled={!data.activeAgentId || busy}><MessageSquarePlus /> New conversation <Plus /></Button>
+      {agent && sessions.length === 0 && <Empty className="session-empty"><EmptyMedia variant="icon"><MessagesSquare /></EmptyMedia><EmptyHeader><EmptyTitle>No sessions yet</EmptyTitle><EmptyDescription>Start a new session with {agent.name}.</EmptyDescription></EmptyHeader></Empty>}
+      {!agent && <Empty className="session-empty"><EmptyMedia variant="icon"><Bot /></EmptyMedia><EmptyHeader><EmptyTitle>No active agents</EmptyTitle><EmptyDescription>Create an agent from the Agents section to begin.</EmptyDescription></EmptyHeader></Empty>}
       <div className="session-groups">
         {groups.map(([label, items]) => (
           <section className="session-group" key={label}>
@@ -872,45 +919,51 @@ const SessionSidebar = forwardRef<HTMLElement, SessionSidebarProps>(function Ses
           </section>
         ))}
       </div>
-      {agent && sessions.length === 0 && <Empty className="session-empty"><EmptyMedia variant="icon"><MessagesSquare /></EmptyMedia><EmptyTitle>No sessions yet</EmptyTitle><EmptyDescription>Start a session with {agent.name}.</EmptyDescription></Empty>}
-      {!agent && <Empty className="session-empty"><EmptyMedia variant="icon"><Bot /></EmptyMedia><EmptyTitle>No active agents</EmptyTitle><EmptyDescription>Create an agent from the Agents section to begin.</EmptyDescription></Empty>}
+      <div className="agent-inbox-footer">
+        <Button className="agent-theme-button" variant="ghost" size="icon-sm" onClick={onToggleTheme} title={theme === "dark" ? "Use light mode" : "Use dark mode"} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>{theme === "dark" ? <Sun data-icon="inline-start" /> : <Moon data-icon="inline-start" />}</Button>
+        <Button className="agent-settings-button" variant="ghost" size="icon-sm" onClick={onSettings} title="App settings" aria-label="App settings"><Settings2 data-icon="inline-start" /></Button>
+      </div>
     </section>
   );
-});
+}
 
 function AppSidebar({
   data,
   theme,
   busy,
+  historyAgentId,
   onSelectAgent,
+  onTogglePin,
   onCreateAgent,
   onToggleTheme,
   onSettings,
   onNewChat,
   onOpenSession,
   onDeleteSession,
+  onBackFromHistory,
 }: {
   data: PiBootstrap;
   theme: Theme;
   busy: boolean;
+  historyAgentId: AgentId | null;
   onSelectAgent: (agentId: AgentId) => void;
+  onTogglePin: (agent: AgentProfile) => void;
   onCreateAgent: () => void;
   onToggleTheme: () => void;
   onSettings: () => void;
   onNewChat: () => void;
   onOpenSession: (session: SessionSummary) => void;
   onDeleteSession: (session: SessionSummary) => void;
+  onBackFromHistory: () => void;
 }) {
+  const [query, setQuery] = useState("");
   return (
     <Sidebar className="app-sidebar" collapsible="offcanvas" data-motion="app-sidebar">
       <SidebarHeader className="combined-sidebar-topbar section-topbar" aria-label="Sidebar toolbar">
         <SidebarTrigger className="sidebar-window-toggle" title="Hide sidebar" aria-label="Hide sidebar" data-motion="sidebar-toggle"><PanelLeftClose data-icon="inline-start" /></SidebarTrigger>
       </SidebarHeader>
       <SidebarContent className="app-sidebar-main">
-        <div className="app-sidebar-columns">
-          <AgentSidebarSection data={data} theme={theme} onSelect={onSelectAgent} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} />
-          <SessionSidebar data={data} busy={busy} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} />
-        </div>
+        {historyAgentId ? <HistorySidebar data={{ ...data, activeAgentId: historyAgentId }} theme={theme} busy={busy} onBack={onBackFromHistory} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} onToggleTheme={onToggleTheme} onSettings={onSettings} /> : <AgentSidebarSection data={data} theme={theme} busy={busy} query={query} onQueryChange={setQuery} onSelect={onSelectAgent} onTogglePin={onTogglePin} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} />}
       </SidebarContent>
     </Sidebar>
   );
@@ -1015,14 +1068,14 @@ function FilesSidebar({ workspace }: { workspace: string }) {
   return <div className="workspace-files"><AnimatePresence initial={false}>{error && <motion.div className="workspace-panel-error" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={motionTransitions.standard}><CircleAlert /><span>{error}</span></motion.div>}</AnimatePresence><div className="files-filter"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter files…" aria-label="Filter files" /><Button variant="ghost" size="icon-sm" onClick={() => void loadFiles()} disabled={loading} aria-label="Refresh files"><RefreshCw className={loading ? "spin" : ""} /></Button></div>{!loading && !error && files.length === 0 ? <Empty className="workspace-empty"><EmptyMedia variant="icon"><Files /></EmptyMedia><EmptyTitle>No files yet</EmptyTitle><EmptyDescription>Files created by your assistant will appear here.</EmptyDescription></Empty> : <div className="files-tree-list">{renderTree(roots)}</div>}</div>;
 }
 
-function BrowserPanel({ tab, sessionKey, agentOperating, onChange }: { tab: WorkspaceTab; sessionKey: string; agentOperating: boolean; onChange: (next: Pick<WorkspaceTab, "url" | "title">) => void }) {
+export function BrowserPanel({ tab, sessionKey, agentOperating, onChange }: { tab: WorkspaceTab; sessionKey: string; agentOperating: boolean; onChange: (next: Pick<WorkspaceTab, "url" | "title">) => void }) {
   const viewRef = useRef<BrowserView | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const partitionKey = `${sessionKey}\u0000${tab.id}`;
   const [partitionState, setPartitionState] = useState<{ key: string; value: string }>();
   const partition = partitionState?.key === partitionKey ? partitionState.value : undefined;
   const [view, setView] = useState<BrowserView | null>(null);
-  const initialUrl = tab.url || defaultBrowserUrl;
+  const initialUrl = useRef(tab.url || defaultBrowserUrl).current;
   const [address, setAddress] = useState(initialUrl);
   const [currentUrl, setCurrentUrl] = useState(initialUrl);
   const [loading, setLoading] = useState(false);
@@ -1207,16 +1260,35 @@ type ChatViewProps = {
   onAbort: () => void;
   onModelChange: (key: string) => void;
   onThinkingChange: (level: ThinkingLevel) => void;
+  workspaceFiles?: readonly string[];
+  onShowHistory?: (agentId: AgentId) => void;
   workspaceOpen?: boolean;
   onShowWorkspace?: () => void;
 };
 
-function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onModelChange, onThinkingChange }: Omit<ChatViewProps, "workspaceOpen" | "onShowWorkspace">) {
+function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onModelChange, onThinkingChange, onShowHistory }: Omit<ChatViewProps, "workspaceOpen" | "onShowWorkspace">) {
   const storageKey = `pi-bot.workspace-panel:${workspacePanelSessionKey(data)}`;
+  const [workspaceFileState, setWorkspaceFileState] = useState<{ workspace: string; paths: string[] }>({ workspace: "", paths: [] });
   const [preferences, setPreferences] = useState<WorkspacePanelPreferences>(defaultWorkspacePanelPreferences);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const loadedStorageKey = useRef<string | undefined>(undefined);
   const resize = useRef<{ x: number; width: number } | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    const workspace = data.config.workspace;
+    if (!workspace) {
+      setWorkspaceFileState({ workspace: "", paths: [] });
+      return () => { cancelled = true; };
+    }
+    window.piBot.listWorkspaceFiles()
+      .then((files) => {
+        if (!cancelled) setWorkspaceFileState({ workspace, paths: files.filter((file) => file.kind === "file").map((file) => file.path) });
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaceFileState({ workspace, paths: [] });
+      });
+    return () => { cancelled = true; };
+  }, [data.config.workspace, busy]);
   useEffect(() => {
     let cancelled = false;
     loadedStorageKey.current = undefined;
@@ -1259,7 +1331,8 @@ function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onMo
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", end);
   };
-  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${preferences.open ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${preferences.width}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} workspaceOpen={preferences.open} onShowWorkspace={() => setPreferences((current) => ({ ...current, open: true }))} />{preferences.open && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<AnimatePresence initial={false} mode="popLayout">{preferences.open && <RightWorkspacePanel key="workspace-panel" data={data} open={preferences.open} storageKey={storageKey} sessionKey={workspacePanelSessionKey(data)} preferences={preferences} onChange={setPreferences} onClose={() => setPreferences((current) => ({ ...current, open: false }))} />}</AnimatePresence></motion.section>;
+  const workspaceFiles = workspaceFileState.workspace && workspaceFileState.workspace === data.config.workspace ? workspaceFileState.paths : undefined;
+  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${preferences.open ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${preferences.width}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} workspaceFiles={workspaceFiles} onShowHistory={onShowHistory} workspaceOpen={preferences.open} onShowWorkspace={() => setPreferences((current) => ({ ...current, open: true }))} />{preferences.open && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<AnimatePresence initial={false} mode="popLayout">{preferences.open && <RightWorkspacePanel key="workspace-panel" data={data} open={preferences.open} storageKey={storageKey} sessionKey={workspacePanelSessionKey(data)} preferences={preferences} onChange={setPreferences} onClose={() => setPreferences((current) => ({ ...current, open: false }))} />}</AnimatePresence></motion.section>;
 }
 
 function ChatView({
@@ -1271,6 +1344,8 @@ function ChatView({
   onAbort,
   onModelChange,
   onThinkingChange,
+  workspaceFiles,
+  onShowHistory,
   workspaceOpen = true,
   onShowWorkspace,
 }: ChatViewProps) {
@@ -1282,19 +1357,24 @@ function ChatView({
     <motion.main className="chat-pane" layout="position" data-motion="chat-view">
       <header className="section-topbar chat-section-topbar" aria-label="Conversation toolbar">
         {!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle" title="Show sidebar" aria-label="Show sidebar" data-motion="sidebar-toggle"><PanelLeftOpen data-icon="inline-start" /></SidebarTrigger>}
+        <div className="chat-agent-title">
+          {agent && <AgentAvatar agent={agent} />}
+          <span><strong>{agent?.name ?? "No active agent"}</strong></span>
+          {agent && onShowHistory && <DropdownMenu>
+            <DropdownMenuTrigger render={<Button className="chat-agent-menu-button" variant="ghost" size="icon-sm" aria-label={`Open menu for ${agent.name}`} />}><MoreHorizontal data-icon="inline-start" /></DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="chat-agent-menu-content"><DropdownMenuGroup>
+              <DropdownMenuItem onClick={() => onShowHistory(agent.id)} data-motion="chat-history"><MessagesSquare /> Chat history</DropdownMenuItem>
+            </DropdownMenuGroup></DropdownMenuContent>
+          </DropdownMenu>}
+        </div>
         <AnimatePresence initial={false}>{responding && <motion.span className="responding-indicator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.micro}><motion.i animate={reducedMotion ? { opacity: 1 } : { opacity: [0.35, 1, 0.35] }} transition={reducedMotion ? motionTransitions.micro : { duration: 1.2, repeat: Infinity, ease: "easeInOut" }} /> Responding</motion.span>}</AnimatePresence>
         {!workspaceOpen && onShowWorkspace && <Button className="workspace-panel-show" variant="ghost" size="icon-sm" onClick={onShowWorkspace} title="Show workspace" aria-label="Show workspace"><PanelRightOpen /></Button>}
-      </header>
-      <header className="chat-header">
-        <div className="chat-header-leading">
-          <div><h1>{data.config.session?.name ?? "New session"}</h1><span>{agent?.name ?? "No active agent"} · {compactWorkspace(data.config.workspace)}</span></div>
-        </div>
       </header>
       <ErrorBanner message={error} />
       {!data.authenticated && <Alert className="notice-line"><KeyRound /><AlertDescription>Add a provider credential in App Settings to start chatting.</AlertDescription></Alert>}
       {data.authenticated && blocked && agent && <Alert className="notice-line"><CircleAlert /><AlertDescription>This agent’s model is unavailable. Choose another model in App Settings.</AlertDescription></Alert>}
-      <EventRows items={data.transcript} agent={agent} responding={responding} />
-      <Composer busy={responding} disabled={blocked || responding} agentName={agent?.name ?? "Assistant"} config={data.config} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
+      <EventRows items={data.transcript} responding={responding} sessionId={data.config.session?.path ?? "new-session"} workspaceFiles={workspaceFiles} />
+      <Composer busy={responding} disabled={blocked || responding} config={data.config} focusKey={workspacePanelSessionKey(data)} placeholder={agent ? `Message ${agent.name}` : "Message your agent"} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
     </motion.main>
   );
 }
@@ -1316,7 +1396,7 @@ function AgentEditor({
   models: PiModelOption[];
   isNew: boolean;
   busy: boolean;
-  onCreate: (name: string, initials: string) => void;
+  onCreate: (name: string, initials: string, description: string) => void;
   onSave: (agent: AgentProfile) => void;
   onChooseFolder: (agentId: AgentId) => void;
   onTrustWorkspace: (agentId: AgentId) => void;
@@ -1325,16 +1405,18 @@ function AgentEditor({
   onModelChange: (agentId: AgentId, key: string) => void;
 }) {
   const [name, setName] = useState(agent?.name ?? "");
-  const [initials, setInitials] = useState(agent?.initials ?? "");
+  const [initials, setInitials] = useState(agent?.initials ?? defaultAvatarEmoji);
+  const [description, setDescription] = useState(agent?.description ?? "");
   const [instructions, setInstructions] = useState(agent?.instructions ?? "");
   useEffect(() => {
     setName(agent?.name ?? "");
-    setInitials(agent?.initials ?? "");
+    setInitials(agent?.initials ?? defaultAvatarEmoji);
+    setDescription(agent?.description ?? "");
     setInstructions(agent?.instructions ?? "");
-  }, [agent?.id, agent?.name, agent?.initials, agent?.instructions, isNew]);
+  }, [agent?.id, agent?.name, agent?.initials, agent?.description, agent?.instructions, isNew]);
 
   if (isNew) {
-    return <section className="settings-detail"><div className="detail-heading"><div><span className="eyebrow">New agent</span><h2>Create an agent</h2><p>Give this teammate a name. Its workspace starts isolated and empty.</p></div></div><div className="settings-form"><label className="form-field"><span>Name</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Release helper" /></label><label className="form-field compact-field"><span>Initials <em>optional</em></span><Input maxLength={4} value={initials} onChange={(event) => setInitials(event.target.value.toUpperCase())} placeholder="Auto" /></label><div className="settings-actions"><Button onClick={() => onCreate(name, initials)} disabled={busy || !name.trim()}><Plus /> Create agent</Button></div></div></section>;
+    return <section className="settings-detail"><div className="detail-heading"><div><span className="eyebrow">New agent</span><h2>Create an agent</h2><p>Give this teammate a name. Its workspace starts isolated and empty.</p></div></div><div className="settings-form"><label className="form-field"><span>Name</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Deep Research Agent" /></label><label className="form-field compact-field"><span>Avatar</span><AvatarEmojiPicker value={initials} onChange={setInitials} /></label><label className="form-field"><span>Description <em>optional</em></span><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What does this agent do?" /></label><div className="settings-actions"><Button onClick={() => onCreate(name, initials, description)} disabled={busy || !name.trim()}><Plus /> Create agent</Button></div></div></section>;
   }
 
   if (!agent) return <Empty className="settings-detail empty-settings"><EmptyMedia variant="icon"><Bot /></EmptyMedia><EmptyTitle>No active agents</EmptyTitle><EmptyDescription>Create an agent to begin.</EmptyDescription></Empty>;
@@ -1342,11 +1424,12 @@ function AgentEditor({
     <section className="settings-detail">
       <div className="detail-heading"><div className="detail-agent-title"><AgentAvatar agent={{ ...agent, initials: initials || agent.initials }} /><div><span className="eyebrow">Agent settings</span><h2>{agent.name}</h2><p>Identity, instructions, workspace, and default model for new chats.</p></div></div></div>
       <div className="settings-form">
-        <div className="form-grid"><label className="form-field"><span>Name</span><Input value={name} onChange={(event) => setName(event.target.value)} disabled={busy} /></label><label className="form-field compact-field"><span>Initials</span><Input maxLength={4} value={initials} onChange={(event) => setInitials(event.target.value.toUpperCase())} disabled={busy} /></label></div>
-        <label className="form-field"><span>Instructions <em>saved to this agent’s AGENTS.md</em></span><Textarea className="instructions-field" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Leave empty to use Pi’s default behavior." disabled={busy} /></label>
+        <div className="form-grid"><label className="form-field"><span>Name</span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Deep Research Agent" disabled={busy} /></label><label className="form-field compact-field"><span>Avatar</span><AvatarEmojiPicker value={initials} onChange={setInitials} disabled={busy} /></label></div>
+        <label className="form-field"><span>Description</span><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What does this agent do?" disabled={busy} /></label>
+        <label className="form-field"><span>Instructions</span><Textarea className="instructions-field" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Write what this agent should do, what to focus on, what to avoid..." disabled={busy} /></label>
         <div className="settings-card"><div className="settings-card-heading"><div><span className="eyebrow">Workspace</span><strong>{agent.workspaceKind === "app" ? "App-owned workspace" : "External workspace"}</strong></div><FolderOpen /></div><p className="workspace-path" title={agent.workspace}>{agent.workspace || "No workspace"}</p><div className="settings-card-actions"><Button variant="outline" size="sm" onClick={() => onChooseFolder(agent.id)} disabled={busy}><FolderOpen /> Change workspace</Button>{agent.workspaceKind === "external" && !agent.workspaceTrusted && <Button variant="outline" size="sm" onClick={() => onTrustWorkspace(agent.id)} disabled={busy}><ShieldCheck /> Trust skills</Button>}</div><small>{agent.workspaceTrusted ? "Workspace skills are available from .agents/skills." : "Skills are disabled until this workspace is trusted."}</small></div>
         <div className="form-field"><span>Default model <em>applies to new chats</em></span><ModelSelect value={agent.defaultModelKey} models={models} onChange={(key) => onModelChange(agent.id, key)} disabled={busy || models.length === 0} className="field-select-trigger" /></div>
-        <div className="settings-actions"><Button onClick={() => onSave({ ...agent, name: name.trim() || agent.name, initials: initials.trim().slice(0, 4) || agent.initials, instructions })} disabled={busy || !name.trim()}><Check /> Save changes</Button></div>
+        <div className="settings-actions"><Button onClick={() => onSave({ ...agent, name: name.trim() || agent.name, initials, description: description.trim(), instructions })} disabled={busy || !name.trim()}><Check /> Save changes</Button></div>
       </div>
       <div className="danger-zone"><span className="eyebrow">Lifecycle</span><div className="danger-actions"><Button variant="outline" size="sm" onClick={() => onArchive(agent)} disabled={busy}>{agent.archived ? <RotateCcw /> : <Archive />}{agent.archived ? "Restore agent" : "Archive agent"}</Button><Button variant="destructive" size="sm" onClick={() => onDelete(agent)} disabled={busy}><Trash2 /> Delete permanently</Button></div><p>Archiving hides this agent from chat. Deleting removes its sessions; an external workspace folder is never deleted.</p></div>
     </section>
@@ -1362,6 +1445,88 @@ function ModelsSettings({ data, busy, onApiKey, onOAuth, onLogout, onImport }: {
   const [apiProvider, setApiProvider] = useState<ProviderInfo>();
   const [apiKey, setApiKey] = useState("");
   return <motion.section className="settings-detail" layout data-motion="models-settings"><div className="detail-heading"><div><span className="eyebrow">App settings</span><h2>Models & authentication</h2><p>Credentials are global. Each agent chooses its own default model.</p></div></div><div className="settings-card security-card"><LockKeyhole /><div><strong>{connected ? `${connected} provider${connected === 1 ? "" : "s"} connected` : "No provider connected"}</strong><small>Stored in the app’s protected app file.</small></div></div><AnimatePresence initial={false}>{apiProvider && <motion.div className="inline-auth-card" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><div><span className="eyebrow">Connect provider</span><strong>{apiProvider.name}</strong></div><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste an API key" autoFocus /><div className="settings-card-actions"><Button onClick={() => { onApiKey(apiProvider, apiKey); setApiKey(""); setApiProvider(undefined); }} disabled={busy || !apiKey.trim()}><KeyRound /> Save key</Button><Button variant="ghost" onClick={() => setApiProvider(undefined)}>Cancel</Button></div></motion.div>}</AnimatePresence><div className="provider-list">{data.setup.providers.length ? data.setup.providers.map((provider) => <motion.div key={provider.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }}><AuthProviderRow provider={provider} busy={busy} onApiKey={(selected) => setApiProvider(selected)} onOAuth={onOAuth} onLogout={onLogout} /></motion.div>) : <p className="muted-copy">No provider authentication methods are available.</p>}</div>{data.setup.canImportPiAuth && <motion.div className="import-card" layout><div><strong>Import from Pi</strong><p>One-time import of all credentials detected from your local Pi installation.</p></div><Button variant="outline" onClick={onImport} disabled={busy}><KeyRound /> Import Pi auth</Button></motion.div>}<p className="settings-footnote">Pi Bot works without the Pi desktop app or CLI. Existing Pi credentials are only copied when you choose the one-time import.</p></motion.section>;
+}
+
+function ScheduledJobsSettings({
+  data,
+  busy,
+  onSave,
+  onPause,
+  onRun,
+  onDelete,
+  onOpenSession,
+}: {
+  data: PiBootstrap;
+  busy: boolean;
+  onSave: (id: string | undefined, draft: ScheduledJobDraft) => void;
+  onPause: (job: ScheduledJob) => void;
+  onRun: (job: ScheduledJob) => void;
+  onDelete: (job: ScheduledJob) => void;
+  onOpenSession: (job: ScheduledJob) => void;
+}) {
+  const [editingId, setEditingId] = useState<string>();
+  const [form, setForm] = useState<ScheduledJobForm>(() => scheduledJobDraftFromData(data));
+  const editingJob = editingId && editingId !== "new" ? data.scheduledJobs.find((job) => job.id === editingId) : undefined;
+
+  useEffect(() => {
+    if (!editingId) return;
+    if (editingId === "new") {
+      setForm(scheduledJobDraftFromData(data));
+      return;
+    }
+    if (editingJob) {
+      setForm({
+        name: editingJob.name,
+        agentId: editingJob.agentId,
+        modelKey: editingJob.modelKey,
+        thinkingLevel: editingJob.thinkingLevel,
+        prompt: editingJob.prompt,
+        recurrence: editingJob.recurrence,
+        startAt: localDateTimeInputValue(new Date(editingJob.startAt), editingJob.timeZone),
+        timeZone: editingJob.timeZone,
+      });
+    }
+  }, [editingId, editingJob, data]);
+
+  const selectedModel = data.config.models.find((model) => model.key === form.modelKey);
+  const availableThinkingLevels: ThinkingLevel[] = selectedModel?.reasoning ? ["off", "minimal", "low", "medium", "high", "xhigh", "max"] : ["off"];
+  const activeAgents = data.agents.filter((agent) => !agent.archived);
+
+  function updateAgent(agentId: string) {
+    const agent = activeAgents.find((item) => item.id === agentId);
+    const modelKey = agent?.defaultModelKey && data.config.models.some((model) => model.key === agent.defaultModelKey)
+      ? agent.defaultModelKey
+      : data.config.models[0]?.key ?? "";
+    const model = data.config.models.find((item) => item.key === modelKey);
+    setForm((previous) => ({ ...previous, agentId, modelKey, thinkingLevel: model?.reasoning ? previous.thinkingLevel : "off" }));
+  }
+
+  function save() {
+    const startAt = scheduledDateFromWallClock(form.startAt, form.timeZone);
+    if (!startAt) return;
+    onSave(editingId === "new" ? undefined : editingId, {
+      ...form,
+      startAt: startAt.toISOString(),
+      thinkingLevel: availableThinkingLevels.includes(form.thinkingLevel) ? form.thinkingLevel : "off",
+    });
+    setEditingId(undefined);
+  }
+
+  return <motion.section className="settings-detail scheduled-settings" layout data-motion="scheduled-settings">
+    <div className="detail-heading"><div><span className="eyebrow">App settings</span><h2>Scheduled jobs</h2><p>Prepare work for an agent to run while Pi Bot is open. Each job keeps its own agent, workspace, model, reasoning level, and prompt.</p></div></div>
+    <div className="scheduled-toolbar"><Button onClick={() => { setForm(scheduledJobDraftFromData(data)); setEditingId("new"); }} disabled={busy || activeAgents.length === 0 || data.config.models.length === 0}><Plus /> New scheduled job</Button><span className="muted-copy">{data.scheduledJobs.length} job{data.scheduledJobs.length === 1 ? "" : "s"}</span></div>
+    <div className="scheduled-lifecycle-note"><CalendarClock /><span><strong>Open-app only</strong><small>Jobs do not run after Pi Bot closes. Missed runs are skipped on the next launch, and overlapping runs are not started.</small></span></div>
+    {data.scheduledJobs.length > 0 ? <div className="scheduled-job-list">{data.scheduledJobs.map((job) => {
+      const agent = findAgent(data.agents, job.agentId);
+      return <article className={`scheduled-job-row ${job.status === "paused" ? "paused" : ""}`} key={job.id}>
+        <header className="scheduled-job-header"><div><strong>{job.name}</strong><span>{agent?.name ?? "Agent unavailable"} · {compactWorkspace(job.workspace)}</span></div><span className={`scheduled-status ${job.status}`}>{job.status === "paused" ? "Paused" : "Active"}</span></header>
+        <p className="scheduled-job-prompt">{job.prompt}</p>
+        <div className="scheduled-job-meta"><span><b>Schedule</b>{recurrenceLabel(job.recurrence)} · {formatScheduledDate(job.startAt, job.timeZone)}</span><span><b>Next run</b>{formatScheduledDate(job.nextRunAt, job.timeZone)}</span><span title={job.lastError ?? undefined}><b>Last run</b>{job.lastRunAt ? `${scheduledRunLabel(job)} · ${formatScheduledDate(job.lastRunAt, job.timeZone)}` : scheduledRunLabel(job)}</span></div>
+        <div className="scheduled-job-actions"><Button variant="outline" size="sm" onClick={() => onPause(job)} disabled={busy}><>{job.status === "paused" ? <Play /> : <Pause />}{job.status === "paused" ? "Resume" : "Pause"}</></Button><Button variant="outline" size="sm" onClick={() => onRun(job)} disabled={busy}><RefreshCw /> Run now</Button><Button variant="ghost" size="sm" onClick={() => { setForm({ name: job.name, agentId: job.agentId, modelKey: job.modelKey, thinkingLevel: job.thinkingLevel, prompt: job.prompt, recurrence: job.recurrence, startAt: localDateTimeInputValue(new Date(job.startAt), job.timeZone), timeZone: job.timeZone }); setEditingId(job.id); }} disabled={busy}><Pencil /> Edit</Button>{job.lastSessionPath && <Button variant="ghost" size="sm" onClick={() => onOpenSession(job)} disabled={busy}><MessagesSquare /> Open session</Button>}<Button variant="ghost" size="sm" onClick={() => onDelete(job)} disabled={busy}><Trash2 /> Delete</Button></div>
+      </article>;
+    })}</div> : <Empty className="scheduled-empty"><EmptyMedia variant="icon"><CalendarClock /></EmptyMedia><EmptyTitle>No scheduled jobs yet</EmptyTitle><EmptyDescription>Create a recurring or one-time prompt for an agent. It will stay here across app restarts.</EmptyDescription></Empty>}
+    {editingId && <section className="scheduled-job-editor"><div className="detail-heading"><div><span className="eyebrow">{editingId === "new" ? "New job" : "Edit job"}</span><h3>{editingId === "new" ? "Schedule agent work" : "Update scheduled job"}</h3></div><Button variant="ghost" size="icon-sm" onClick={() => setEditingId(undefined)} aria-label="Close scheduled job editor"><X /></Button></div><div className="scheduled-form"><label className="form-field"><span>Name</span><Input autoFocus value={form.name} onChange={(event) => setForm((previous) => ({ ...previous, name: event.target.value }))} placeholder="e.g. Review open pull requests" /></label><div className="form-grid"><label className="form-field"><span>Agent</span><select className="field-select" value={form.agentId} onChange={(event) => updateAgent(event.target.value)}>{activeAgents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>)}</select></label><label className="form-field"><span>Model</span><select className="field-select" value={form.modelKey} onChange={(event) => { const model = data.config.models.find((item) => item.key === event.target.value); setForm((previous) => ({ ...previous, modelKey: event.target.value, thinkingLevel: model?.reasoning ? previous.thinkingLevel : "off" })); }} disabled={data.config.models.length === 0}>{data.config.models.map((model) => <option value={model.key} key={model.key}>{model.name} · {model.provider}</option>)}</select></label></div><div className="form-grid"><label className="form-field"><span>Recurrence</span><select className="field-select" value={form.recurrence} onChange={(event) => setForm((previous) => ({ ...previous, recurrence: event.target.value as ScheduledJobRecurrence }))}><option value="once">One time</option><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option></select></label><label className="form-field"><span>Reasoning</span><select className="field-select" value={form.thinkingLevel} onChange={(event) => setForm((previous) => ({ ...previous, thinkingLevel: event.target.value as ThinkingLevel }))}>{availableThinkingLevels.map((level) => <option value={level} key={level}>{labelThinkingLevel(level)}</option>)}</select></label></div><div className="form-grid"><label className="form-field"><span>{form.recurrence === "once" ? "Run at" : "First run at"}</span><Input type="datetime-local" value={form.startAt} onChange={(event) => setForm((previous) => ({ ...previous, startAt: event.target.value }))} /></label><label className="form-field"><span>Time zone</span><Input value={form.timeZone} readOnly /><small className="field-help">The schedule uses this IANA time zone. Recurring monthly dates clamp to the last day when a month is shorter.</small></label></div><label className="form-field"><span>Prompt</span><Textarea className="scheduled-prompt-field" rows={5} value={form.prompt} onChange={(event) => setForm((previous) => ({ ...previous, prompt: event.target.value }))} placeholder="What should the agent do?" /></label><div className="settings-actions"><Button variant="outline" onClick={() => setEditingId(undefined)} disabled={busy}>Cancel</Button><Button onClick={save} disabled={busy || !form.name.trim() || !form.agentId || !form.modelKey || !form.prompt.trim()}><Check /> Save scheduled job</Button></div></div></section>}
+  </motion.section>;
 }
 
 function SettingsPage({
@@ -1381,6 +1546,12 @@ function SettingsPage({
   onOAuth,
   onLogout,
   onImport,
+  onCreateScheduledJob,
+  onUpdateScheduledJob,
+  onPauseScheduledJob,
+  onRunScheduledJob,
+  onDeleteScheduledJob,
+  onOpenScheduledSession,
 }: {
   data: PiBootstrap;
   busy: boolean;
@@ -1388,7 +1559,7 @@ function SettingsPage({
   createNewAgent: boolean;
   onBack: () => void;
   onUpdate: (profile: AgentProfile) => void;
-  onCreate: (name: string, initials: string) => void;
+  onCreate: (name: string, initials: string, description: string) => void;
   onChooseFolder: (agentId: AgentId) => void;
   onTrustWorkspace: (agentId: AgentId) => void;
   onArchive: (agent: AgentProfile) => void;
@@ -1398,6 +1569,12 @@ function SettingsPage({
   onOAuth: (provider: ProviderInfo) => void;
   onLogout: (provider: ProviderInfo) => void;
   onImport: () => void;
+  onCreateScheduledJob: (draft: ScheduledJobDraft) => void;
+  onUpdateScheduledJob: (id: string, draft: ScheduledJobDraft) => void;
+  onPauseScheduledJob: (job: ScheduledJob) => void;
+  onRunScheduledJob: (job: ScheduledJob) => void;
+  onDeleteScheduledJob: (job: ScheduledJob) => void;
+  onOpenScheduledSession: (job: ScheduledJob) => void;
 }) {
   const [section, setSection] = useState<SettingsSection>("agents");
   const [selectedId, setSelectedId] = useState<AgentId | "new">(createNewAgent ? "new" : (data.activeAgentId ?? (data.agents[0]?.id ?? "new")));
@@ -1421,11 +1598,15 @@ function SettingsPage({
             {section === "models" && <motion.span className="settings-nav-active" layoutId="settings-nav-active" transition={motionSprings.layout} aria-hidden="true" />}
             <KeyRound /><span>Models & authentication</span>
           </motion.button>
+          <motion.button type="button" className={section === "schedules" ? "selected" : ""} onClick={() => setSection("schedules")} whileTap={{ scale: 0.98 }} transition={motionSprings.press} data-motion="settings-nav">
+            {section === "schedules" && <motion.span className="settings-nav-active" layoutId="settings-nav-active" transition={motionSprings.layout} aria-hidden="true" />}
+            <CalendarClock /><span>Scheduled jobs</span><small>{data.scheduledJobs.length}</small>
+          </motion.button>
         </nav>
         <AnimatePresence initial={false} mode="wait">
-          {section === "models" ? <motion.div key="models" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ModelsSettings data={data} busy={busy} onApiKey={onApiKey} onOAuth={onOAuth} onLogout={onLogout} onImport={onImport} /></motion.div> : <motion.div key="agents" className="agent-settings-layout" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}>
+          {section === "models" ? <motion.div key="models" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ModelsSettings data={data} busy={busy} onApiKey={onApiKey} onOAuth={onOAuth} onLogout={onLogout} onImport={onImport} /></motion.div> : section === "schedules" ? <motion.div key="schedules" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ScheduledJobsSettings data={data} busy={busy} onSave={(id, draft) => { if (id) onUpdateScheduledJob(id, draft); else onCreateScheduledJob(draft); }} onPause={onPauseScheduledJob} onRun={onRunScheduledJob} onDelete={onDeleteScheduledJob} onOpenSession={onOpenScheduledSession} /></motion.div> : <motion.div key="agents" className="agent-settings-layout" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}>
             <aside className="settings-agent-list"><div className="settings-list-heading"><span className="eyebrow">All agents</span><Button variant="outline" size="icon-sm" onClick={() => setSelectedId("new")} disabled={busy} aria-label="Create agent"><Plus /></Button></div>{data.agents.map((agent) => <motion.button type="button" className={`settings-agent-item ${selectedId === agent.id ? "selected" : ""} ${agent.archived ? "archived" : ""}`} key={agent.id} onClick={() => setSelectedId(agent.id)} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="settings-agent-select">{selectedId === agent.id && <motion.span className="settings-agent-active" layoutId="settings-agent-active" transition={motionSprings.layout} aria-hidden="true" />}<AgentAvatar agent={agent} /><span><strong>{agent.name}</strong><small>{agent.archived ? "Archived" : agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span></motion.button>)}{data.agents.length === 0 && <p className="muted-copy">No agents yet.</p>}</aside>
-            <AgentEditor agent={selected} models={data.config.models} isNew={selectedId === "new"} busy={busy} onCreate={(name, initials) => onCreate(name, initials)} onSave={onUpdate} onChooseFolder={onChooseFolder} onTrustWorkspace={onTrustWorkspace} onArchive={onArchive} onDelete={onDelete} onModelChange={onModelChange} />
+            <AgentEditor agent={selected} models={data.config.models} isNew={selectedId === "new"} busy={busy} onCreate={(name, initials, description) => onCreate(name, initials, description)} onSave={onUpdate} onChooseFolder={onChooseFolder} onTrustWorkspace={onTrustWorkspace} onArchive={onArchive} onDelete={onDelete} onModelChange={onModelChange} />
           </motion.div>}
         </AnimatePresence>
       </div>
@@ -1466,6 +1647,7 @@ export function App() {
   const [error, setError] = useState<string>();
   const [view, setView] = useState<View>("chat");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [historyAgentId, setHistoryAgentId] = useState<AgentId | null>(null);
   const [createNewAgent, setCreateNewAgent] = useState(false);
   const [authPrompt, setAuthPrompt] = useState<{ id: string; prompt: AuthPrompt }>();
   const [authNotice, setAuthNotice] = useState<string>();
@@ -1507,10 +1689,11 @@ export function App() {
         else if (event.type === "error") { setBusy(false); setError(event.message); }
         else if (event.type === "auth-prompt") setAuthPrompt({ id: event.id, prompt: event.prompt });
         else if (event.type === "auth-notify") setAuthNotice(event.event.message || event.event.instructions || (event.event.url ? `Continue in your browser: ${event.event.url}` : undefined));
-        else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId } : previous);
+        else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId, scheduledJobs: event.scheduledJobs } : previous);
+        else if (event.type === "scheduled-jobs-sync") setData((previous) => previous ? { ...previous, scheduledJobs: event.scheduledJobs } : previous);
       }
     });
-    window.piBot.connect().then((result) => { setData(result); setConnecting(false); }).catch((reason) => { setError(readableError(reason)); setConnecting(false); });
+    Promise.all([window.piBot.connect(), window.piBot.getTheme()]).then(([result, savedTheme]) => { setData(result); setTheme(savedTheme); setConnecting(false); }).catch((reason) => { setError(readableError(reason)); setConnecting(false); });
     return () => {
       streamBatcherRef.current?.cancel();
       unsubscribe();
@@ -1520,6 +1703,12 @@ export function App() {
   useEffect(() => {
     if (data?.setup.required) window.piBot.reportRendererStage("setup-ready");
   }, [data]);
+
+  useEffect(() => {
+    if (!historyAgentId) return;
+    const agent = data?.agents.find((item) => item.id === historyAgentId);
+    if (!agent || agent.archived) setHistoryAgentId(null);
+  }, [data, historyAgentId]);
 
   async function perform(action: () => Promise<PiBootstrap | null>) {
     setBusy(true);
@@ -1580,6 +1769,22 @@ export function App() {
     setView("chat");
     void perform(action).catch(() => undefined);
   }
+  function selectAgent(agentId: AgentId) {
+    setHistoryAgentId(null);
+    navigateToChat(() => window.piBot.selectAgent(agentId));
+  }
+  function showHistory(agentId: AgentId) {
+    setHistoryAgentId(agentId);
+    setSidebarOpen(true);
+  }
+  function startNewConversation() {
+    setHistoryAgentId(null);
+    navigateToChat(() => window.piBot.newSession());
+  }
+  function openConversation(chat: SessionSummary) {
+    setHistoryAgentId(null);
+    navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId));
+  }
   function deleteSession(chat: SessionSummary) {
     if (!window.confirm(`Delete “${chat.name}” permanently? This chat cannot be restored.`)) return;
     updateWith(() => window.piBot.deleteSession(chat.path));
@@ -1589,12 +1794,43 @@ export function App() {
     if (profile.workspaceKind !== "app" && !window.confirm(`Delete ${profile.name} and all of its sessions permanently? The external workspace folder will stay.`)) return;
     updateWith(() => window.piBot.deleteAgent(profile.id, deletesWorkspace));
   }
+  function toggleAgentPin(profile: AgentProfile) {
+    updateWith(() => window.piBot.updateAgent({ ...profile, pinned: !profile.pinned }));
+  }
+  function createScheduledJob(draft: ScheduledJobDraft) {
+    updateWith(() => window.piBot.createScheduledJob(draft));
+  }
+  function updateScheduledJob(id: string, draft: ScheduledJobDraft) {
+    updateWith(() => window.piBot.updateScheduledJob(id, draft));
+  }
+  function pauseScheduledJob(job: ScheduledJob) {
+    updateWith(() => window.piBot.setScheduledJobPaused(job.id, job.status !== "paused"));
+  }
+  function runScheduledJob(job: ScheduledJob) {
+    updateWith(() => window.piBot.runScheduledJob(job.id));
+  }
+  function deleteScheduledJob(job: ScheduledJob) {
+    if (!window.confirm(`Delete “${job.name}” permanently? Its run history will be removed.`)) return;
+    updateWith(() => window.piBot.deleteScheduledJob(job.id));
+  }
+  function openScheduledSession(job: ScheduledJob) {
+    if (!job.lastSessionPath) return;
+    navigateToChat(() => window.piBot.openScheduledSession(job.id));
+  }
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    void window.piBot.saveTheme(next).catch((reason) => {
+      setTheme(theme);
+      setError(readableError(reason));
+    });
+  }
 
       return <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen} className="app-sidebar-provider">
         <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
-          <AppSidebar data={data} theme={theme} busy={busy} onSelectAgent={(id) => navigateToChat(() => window.piBot.selectAgent(id))} onCreateAgent={() => { setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={() => setTheme((current) => current === "dark" ? "light" : "dark")} onSettings={() => { setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={() => navigateToChat(() => window.piBot.newSession())} onOpenSession={(chat) => navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId))} onDeleteSession={deleteSession} />
+          <AppSidebar data={data} theme={theme} busy={busy} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
           <AnimatePresence initial={false} mode="wait">
-            {view === "chat" ? <motion.div className="app-view" key={`chat-${workspacePanelSessionKey(data)}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials) => void perform(() => window.piBot.createAgent({ name, initials })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} /></motion.div>}
+            {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
       </AnimatePresence>
       <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
     </div>

@@ -2,41 +2,111 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("agent rows stay packed at the top of the combined sidebar", async () => {
-  const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
-  const agentList = styles.match(/\.agent-list\s*\{([^}]*)\}/)?.[1] ?? "";
-  const createAgent = styles.match(/\.agent-create-button\s*\{([^}]*)\}/)?.[1] ?? "";
-  const sidebarColumns = styles.match(/\.app-sidebar-columns\s*\{([^}]*)\}/)?.[1] ?? "";
+async function readLayoutSources() {
+  const [app, styles, sidebar] = await Promise.all([
+    readFile(new URL("../src/App.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/ui/sidebar.tsx", import.meta.url), "utf8"),
+  ]);
+  return { app, styles, sidebar };
+}
 
-  assert.match(agentList, /align-content:\s*start/);
-  assert.match(agentList, /grid-auto-rows:\s*max-content/);
-  assert.match(createAgent, /width:\s*42px/);
-  assert.match(createAgent, /height:\s*42px/);
-  assert.match(sidebarColumns, /grid-template-columns:\s*72px\s+minmax\(0,\s*1fr\)/);
+function appSidebarSource(app) {
+  return app.match(/function AppSidebar[\s\S]*?function ErrorBanner/)?.[0] ?? "";
+}
+
+function agentInboxSource(app) {
+  const start = app.search(/(?:function|const) (?:AgentInbox|AgentSidebarSection)/);
+  if (start < 0) return "";
+  const end = [
+    app.indexOf("\ntype HistorySidebarProps", start),
+    app.indexOf("\nfunction HistorySidebar", start),
+    app.indexOf("\ntype SessionSidebarProps", start),
+    app.indexOf("\nfunction AppSidebar", start),
+  ].filter((index) => index >= 0).sort((a, b) => a - b)[0] ?? app.length;
+  return app.slice(start, end);
+}
+
+function historySource(app) {
+  return app.match(/(?:function|const) (?:AgentHistory|HistorySidebar|SessionHistory|SessionSidebar)[\s\S]*?function AppSidebar/)?.[0] ?? "";
+}
+
+test("agent navigation is a full-width inbox with search and create action", async () => {
+  const { app, styles } = await readLayoutSources();
+  const sidebar = appSidebarSource(app);
+  const inbox = agentInboxSource(app);
+
+  assert.match(inbox, /(?:agent-inbox|AgentInbox|agent-list)/);
+  assert.match(inbox, /(?:Search agents|placeholder=["']Search|aria-label=["']Search)/i);
+  assert.match(inbox, /(?:agent-create-button|Create agent|onCreateAgent)/);
+  assert.match(styles, /\.agent-search\s*\{[^}]*border:\s*1px solid var\(--border\)[^}]*background:\s*var\(--secondary\)/);
+
+  // Agent history is a mode of this surface, not a second permanent column.
+  assert.doesNotMatch(sidebar, /app-sidebar-columns/);
+  assert.doesNotMatch(sidebar, /<SessionSidebar\b/);
+
+  const openShell = styles.match(/\.app-shell\.sidebar-open\s*\{([^}]*)\}/)?.[1] ?? "";
+  const sidebarWidth = Number(openShell.match(/grid-template-columns:\s*(\d+)px\s+minmax\(0,\s*1fr\)/)?.[1]);
+  assert.ok(Number.isFinite(sidebarWidth), "open sidebar must declare a fixed layout width");
+  assert.ok(sidebarWidth >= 300 && sidebarWidth <= 340, `sidebar width ${sidebarWidth}px must stay in the approved 300–340px range`);
 });
 
-test("agent rail owns the brand and bottom controls", async () => {
-  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
-  const section = app.match(/function AgentSidebarSection[\s\S]*?type SessionSidebarProps/)?.[0] ?? "";
-  const actions = styles.match(/\.agent-rail-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+test("agent rows show the latest response preview and a selected state", async () => {
+  const { app } = await readLayoutSources();
+  const inbox = agentInboxSource(app);
 
-  assert.match(section, /agent-rail-brand/);
-  assert.match(section, /agent-rail-actions/);
-  assert.match(section, /agent-create-button/);
-  assert.doesNotMatch(section, /<Switch/);
-  assert.match(section, /<Sun/);
-  assert.match(section, /<Moon/);
-  assert.match(section, /App settings/);
-  assert.doesNotMatch(section, /SidebarGroupLabel/);
-  assert.match(actions, /flex-direction:\s*column/);
-  assert.ok(section.indexOf("agent-create-button") < section.indexOf("agent-theme-button"));
+  assert.match(inbox, /sessionsByAgent|data\.sessions/);
+  // The row must have enough information to behave like a chat inbox preview.
+  assert.match(inbox, /(?:latest|modified|created|messageCount|preview|snippet|summary)/i);
+  assert.match(inbox, /(?:shortDate|formatDate|<time|timestamp)/i);
+  assert.match(inbox, /latest\?\.preview/);
+  assert.doesNotMatch(inbox, /latest\?\.name/);
+  assert.match(inbox, /selected/);
+  assert.match(inbox, /data\.activeAgentId/);
+  assert.match(inbox, /isActive|agent\.id === data\.activeAgentId/);
+});
+
+test("agents are ordered by pins and latest chat activity", async () => {
+  const { app, styles } = await readLayoutSources();
+  const inbox = agentInboxSource(app);
+
+  assert.match(inbox, /latestTimestampFor/);
+  assert.match(inbox, /Number\(b\.pinned\) - Number\(a\.pinned\)/);
+  assert.match(inbox, /latestTimestampFor\(b\) - latestTimestampFor\(a\)/);
+  assert.match(inbox, /agent\.pinned \? "Unpin agent" : "Pin agent"/);
+  assert.match(inbox, /onTogglePin\(agent\)/);
+  assert.match(inbox, /agent-pin-indicator/);
+  assert.match(inbox, /<ContextMenu>[\s\S]*?<ContextMenuTrigger[\s\S]*?<SidebarMenuButton[\s\S]*?<ContextMenuContent/);
+  assert.doesNotMatch(inbox, /<DropdownMenu/);
+  assert.doesNotMatch(inbox, /agent-list-menu/);
+  assert.match(styles, /\.agent-context-menu-content/);
+  assert.doesNotMatch(styles, /\.agent-list-menu/);
+});
+
+test("history is an in-place sidebar mode with back, new, open, and delete actions", async () => {
+  const { app } = await readLayoutSources();
+  const sidebar = appSidebarSource(app);
+  const inbox = agentInboxSource(app);
+  const history = historySource(app);
+
+  assert.ok(history, "the sidebar must define an explicit history mode");
+  assert.match(app, /(?:agent-history|history-mode|historyMode|showHistory|session-history)/i);
+  assert.match(history, /(?:Back to agents|back-to-agents|history-back|onBack|setHistory)/i);
+  assert.match(history, /(?:New session|New conversation|newSession|onNewChat|history-new)/i);
+  assert.match(history, /(?:session-select|history-session|onOpenSession|openSession)/i);
+  assert.match(history, /(?:session-delete|history-delete|onDeleteSession|deleteSession)/i);
+
+  // There is exactly one shadcn Sidebar; history must not mount another one.
+  assert.equal([...app.matchAll(/<Sidebar\b/g)].length, 1);
+  assert.doesNotMatch(history, /<Sidebar\b/);
+  assert.match(sidebar, /<HistorySidebar\b/);
+  assert.match(sidebar, /historyAgentId[\s\S]*?<HistorySidebar[\s\S]*?:[\s\S]*?<AgentSidebarSection/);
+  assert.doesNotMatch(sidebar, /app-sidebar-columns/);
+  assert.doesNotMatch(sidebar, /<SessionSidebar\b/);
 });
 
 test("sidebar toggle keeps the main view placed and clear of window controls", async () => {
-  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  const sidebar = await readFile(new URL("../src/components/ui/sidebar.tsx", import.meta.url), "utf8");
-  const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+  const { app, sidebar, styles } = await readLayoutSources();
 
   assert.match(sidebar, /TooltipProvider/);
   assert.match(sidebar, /<TooltipProvider>[\s\S]*?<SidebarContext\.Provider/);
@@ -45,20 +115,19 @@ test("sidebar toggle keeps the main view placed and clear of window controls", a
 
   const toggle = styles.match(/\.sidebar-window-toggle\s*\{([^}]*)\}/)?.[1] ?? "";
   const appSidebarStyles = styles.match(/^\.app-sidebar\s*\{([^}]*)\}/m)?.[1] ?? "";
-  const chatHeader = styles.match(/^\.chat-header\s*\{([^}]*)\}/m)?.[1] ?? "";
+  const chatTopbar = styles.match(/^\.chat-section-topbar\s*\{([^}]*)\}/m)?.[1] ?? "";
   assert.match(toggle, /top:\s*10px/);
   assert.match(toggle, /left:\s*84px/);
   assert.match(toggle, /pointer-events:\s*auto/);
   assert.match(toggle, /-webkit-app-region:\s*no-drag/);
   assert.match(appSidebarStyles, /-webkit-app-region:\s*no-drag/);
-  assert.match(chatHeader, /-webkit-app-region:\s*drag/);
+  assert.match(chatTopbar, /-webkit-app-region:\s*drag/);
   assert.match(app, /combined-sidebar-topbar section-topbar[\s\S]*?<SidebarTrigger className="sidebar-window-toggle"/);
   assert.match(app, /!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle"/);
 });
 
 test("primary sections share one 46px topbar contract", async () => {
-  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+  const { app, styles } = await readLayoutSources();
 
   assert.match(styles, /--section-topbar-height:\s*46px/);
   assert.match(styles, /\.section-topbar\s*\{[^}]*height:\s*var\(--section-topbar-height\)/);
@@ -70,26 +139,21 @@ test("primary sections share one 46px topbar contract", async () => {
   assert.match(app, /workspace-panel-topbar section-topbar/);
 });
 
-test("combined sidebar owns one titlebar above both columns", async () => {
-  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
-  const sidebar = app.match(/function AppSidebar[\s\S]*?function ErrorBanner/)?.[0] ?? "";
+test("one sidebar titlebar sits above the inbox surface", async () => {
+  const { app, styles } = await readLayoutSources();
+  const sidebar = appSidebarSource(app);
 
   assert.match(sidebar, /<SidebarHeader className="combined-sidebar-topbar section-topbar"/);
-  assert.match(sidebar, /<div className="app-sidebar-columns">[\s\S]*?<AgentSidebarSection[\s\S]*?<SessionSidebar/);
-  assert.ok(sidebar.indexOf("combined-sidebar-topbar") < sidebar.indexOf("app-sidebar-columns"));
+  assert.match(sidebar, /(?:AgentInbox|AgentSidebarSection|agent-inbox)/);
+  assert.doesNotMatch(sidebar, /app-sidebar-columns/);
+  assert.doesNotMatch(sidebar, /<SessionSidebar\b/);
 
-  const columns = styles.match(/\.app-sidebar-columns\s*\{([^}]*)\}/)?.[1] ?? "";
-  const brand = styles.match(/\.agent-rail-brand\s*\{([^}]*)\}/)?.[1] ?? "";
-  const sessions = styles.match(/\.session-sidebar-header\s*\{([^}]*)\}/)?.[1] ?? "";
-  assert.match(columns, /grid-template-columns:\s*72px\s+minmax\(0,\s*1fr\)/);
-  assert.match(brand, /height:\s*58px/);
-  assert.match(sessions, /height:\s*58px/);
+  const topbar = styles.match(/\.combined-sidebar-topbar\s*\{([^}]*)\}/)?.[1] ?? "";
+  assert.match(topbar, /-webkit-app-region:\s*drag/);
 });
 
 test("right workspace owns one complete topbar", async () => {
-  const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
-  const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+  const { app, styles } = await readLayoutSources();
 
   assert.match(app, /workspace-panel-topbar section-topbar/);
   assert.match(app, /className="workspace-panel-close"/);

@@ -31,6 +31,10 @@ import {
   protectBrowserSessionManager,
   summarizeBrowserToolCall,
 } from "./browser-automation.mjs";
+import {
+  buildScheduledJob,
+  ScheduledJobScheduler,
+} from "./scheduled-jobs.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
@@ -42,6 +46,15 @@ const configuredBrowserPartitions = new Set();
 const browserPartitionBySession = new WeakMap();
 const maxWorkspaceFiles = 500;
 const defaultAgentId = "assistant";
+const developmentServerUrl = process.env.PI_BOT_DEV_SERVER_URL;
+const developmentUserDataDir = process.env.PI_BOT_USER_DATA_DIR;
+
+if (!app.isPackaged) {
+  if (!developmentServerUrl || !developmentUserDataDir) {
+    throw new Error("Run Pi Bot development through npm run dev.");
+  }
+  app.setPath("userData", developmentUserDataDir);
+}
 
 let window;
 let agentProfiles = {};
@@ -65,6 +78,7 @@ let modelRuntime;
 let availableModels = [];
 let storedCredentials = {};
 let appDatabase;
+let scheduledJobScheduler;
 const pendingAuthPrompts = new Map();
 let smokeTest;
 
@@ -102,6 +116,14 @@ function isAgentId(value) {
 function cleanText(value, fallback, maxLength = 4000) {
   if (typeof value !== "string") return fallback;
   return value.trim().slice(0, maxLength);
+}
+
+function cleanAvatar(value, fallback) {
+  if (typeof value !== "string") return fallback;
+  return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value.trim()))
+    .slice(0, 4)
+    .map(({ segment }) => segment)
+    .join("") || fallback;
 }
 
 function isPiBotBrowserPartition(value) {
@@ -170,7 +192,7 @@ function initialsFor(name) {
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
-    .map((part) => part[0])
+    .map((part) => Array.from(part)[0])
     .join("")
     .toUpperCase();
   return initials || "AS";
@@ -180,7 +202,8 @@ function defaultAgentProfile() {
   return {
     id: defaultAgentId,
     name: "Assistant",
-    initials: "AS",
+    initials: "🤖",
+    description: "",
     instructions: "",
     workspace: defaultWorkspace(defaultAgentId),
     workspaceKind: "app",
@@ -188,6 +211,7 @@ function defaultAgentProfile() {
     defaultModelKey: "",
     thinkingLevel: preferredThinkingLevel,
     archived: false,
+    pinned: false,
   };
 }
 
@@ -207,7 +231,8 @@ function normalizeProfile(id, value = {}, fallback = {}) {
   return {
     id,
     name,
-    initials: (cleanText(value.initials, fallback.initials || initialsFor(name), 4) || initialsFor(name)).toUpperCase(),
+    initials: cleanAvatar(value.initials, fallback.initials || "🤖").toUpperCase(),
+    description: cleanText(value.description, fallback.description || "", 160),
     instructions: typeof value.instructions === "string" ? value.instructions.slice(0, 20000) : readInstructions(workspace),
     workspace,
     workspaceKind,
@@ -215,6 +240,7 @@ function normalizeProfile(id, value = {}, fallback = {}) {
     defaultModelKey: cleanText(value.defaultModelKey ?? value.modelKey, fallback.defaultModelKey || "", 240),
     thinkingLevel: thinkingLevels.includes(value.thinkingLevel) ? value.thinkingLevel : fallback.thinkingLevel || preferredThinkingLevel,
     archived: Boolean(value.archived),
+    pinned: Boolean(value.pinned),
   };
 }
 
@@ -463,36 +489,41 @@ function sessionSummary(info, agentId, workspace) {
   const entries = appDatabase.getSessionEntries(info.path);
   const named = [...entries].reverse().find((entry) => entry.type === "session_info" && typeof entry.name === "string" && entry.name.trim());
   const firstUser = entries.find((entry) => entry.type === "message" && entry.message?.role === "user");
+  const latestResponse = [...entries].reverse().find((entry) => entry.type === "message" && entry.message?.role === "assistant" && (messageText(entry.message.content) || entry.message.errorMessage));
   return {
     path: info.path,
     id: info.id,
     agentId,
     workspace,
     name: named?.name || titleFromPrompt(firstUser ? messageText(firstUser.message.content) : "New conversation"),
+    preview: latestResponse ? messageText(latestResponse.message.content) || latestResponse.message.errorMessage : undefined,
     created: info.created,
     modified: info.modified,
     messageCount: info.messageCount,
   };
 }
 
-async function listSessions(agentId = activeAgentId) {
+async function listSessions(agentId = activeAgentId, workspaceOverride) {
   const profile = isAgentId(agentId) ? agentProfiles[agentId] : undefined;
   if (!profile) return [];
+  const workspace = typeof workspaceOverride === "string" && workspaceOverride ? workspaceOverride : profile.workspace;
   try {
-    return appDatabase.listSessions(agentId, profile.workspace)
+    return appDatabase.listSessions(agentId, workspace)
       .filter((info) => info.messageCount > 0)
       .map((info) => {
-        sessionRecords[info.path] = { agentId, workspace: profile.workspace };
-        return sessionSummary(info, agentId, profile.workspace);
+        sessionRecords[info.path] = { agentId, workspace };
+        return sessionSummary(info, agentId, workspace);
       });
   } catch {
     return [];
   }
 }
 
-async function sessionsByAgent() {
+async function sessionsByAgent(activeWorkspace) {
   const result = {};
-  for (const profile of listAgents({ includeArchived: false })) result[profile.id] = await listSessions(profile.id);
+  for (const profile of listAgents({ includeArchived: false })) {
+    result[profile.id] = await listSessions(profile.id, profile.id === activeAgentId ? activeWorkspace : undefined);
+  }
   return result;
 }
 
@@ -550,6 +581,7 @@ function currentConfig(runtime = activeRuntime()) {
   const profile = activeProfile();
   const currentSession = runtime?.session ?? session;
   const manager = runtime?.sessionManager ?? sessionManager;
+  const workspace = runtime?.workspace ?? profile?.workspace ?? "";
   const currentModel = currentSession?.model ?? currentSavedModel(manager);
   const currentKey = modelKey(currentModel) || profile?.defaultModelKey || "";
   const available = availableModels.some((model) => modelKey(model) === currentKey);
@@ -557,9 +589,9 @@ function currentConfig(runtime = activeRuntime()) {
   const contextWindow = contextUsage?.contextWindow ?? currentModel?.contextWindow ?? 0;
   return {
     agentId: activeAgentId,
-    workspace: profile?.workspace ?? "",
-    workspaceKind: profile?.workspaceKind ?? "",
-    workspaceTrusted: profile?.workspaceTrusted ?? false,
+    workspace,
+    workspaceKind: runtime?.workspace && runtime.workspace !== profile?.workspace ? "external" : (profile?.workspaceKind ?? ""),
+    workspaceTrusted: runtime?.workspaceTrusted ?? profile?.workspaceTrusted ?? false,
     model: currentModel?.name ?? (currentKey ? "Model unavailable" : "No model selected"),
     modelKey: currentKey,
     defaultModelKey: profile?.defaultModelKey ?? "",
@@ -624,15 +656,17 @@ function setupState() {
 async function bootstrap() {
   const profile = activeProfile();
   const runtime = activeRuntime();
+  const workspace = runtime?.workspace;
   return {
     config: currentConfig(runtime),
     transcript: runtime ? transcriptForRuntime(runtime) : transcriptFromManager(sessionManager, profile),
-    sessions: await listSessions(activeAgentId),
-    sessionsByAgent: await sessionsByAgent(),
+    sessions: await listSessions(activeAgentId, workspace),
+    sessionsByAgent: await sessionsByAgent(workspace),
     agents: listAgents(),
     setup: setupState(),
     authenticated: availableModels.length > 0,
     activeAgentId,
+    scheduledJobs: appDatabase.listScheduledJobs(),
     profile,
   };
 }
@@ -717,8 +751,8 @@ function updateRuntimeTranscript(runtime, event) {
 async function sendSessionSync(runtime) {
   if (!runtime || runtime.key !== activeRuntimeKey) return;
   const key = runtime.key;
-  const sessions = await listSessions(runtime.agentId);
-  const grouped = await sessionsByAgent();
+  const sessions = await listSessions(runtime.agentId, runtime.workspace);
+  const grouped = await sessionsByAgent(runtime.workspace);
   if (activeRuntimeKey !== key) return;
   send({
     type: "session-sync",
@@ -730,7 +764,12 @@ async function sendSessionSync(runtime) {
     setup: setupState(),
     authenticated: availableModels.length > 0,
     activeAgentId: runtime.agentId,
+    scheduledJobs: appDatabase.listScheduledJobs(),
   });
+}
+
+function sendScheduledJobsSync() {
+  send({ type: "scheduled-jobs-sync", scheduledJobs: appDatabase.listScheduledJobs() });
 }
 
 function relay(runtime, event) {
@@ -823,14 +862,14 @@ async function closeAgentSessions(agentId) {
   for (const key of keys) await disposeRuntime(key);
 }
 
-async function createResourceLoader(profile) {
+async function createResourceLoader(profile, runtimeDir = isolatedRuntimeDir(profile.id)) {
   const skillResult = profile.workspaceTrusted
     ? loadSkillsFromDir({ dir: path.join(profile.workspace, ".agents", "skills"), source: "agent-workspace" })
     : { skills: [], diagnostics: [] };
   const agentsFile = path.join(profile.workspace, "AGENTS.md");
   const loader = new DefaultResourceLoader({
     cwd: profile.workspace,
-    agentDir: isolatedRuntimeDir(profile.id),
+    agentDir: runtimeDir,
     settingsManager: SettingsManager.inMemory(),
     noExtensions: true,
     noSkills: true,
@@ -858,7 +897,7 @@ function selectedModelFor(profile, manager, mode) {
   return undefined;
 }
 
-async function openSession({ mode = "continue", sessionPath, agentId = activeAgentId } = {}) {
+async function openSession({ mode = "continue", sessionPath, agentId = activeAgentId, workspaceOverride } = {}) {
   if (agentId !== null && !isAgentId(agentId)) throw new Error("Invalid agent.");
   if (!agentId) {
     await closeCurrentSession();
@@ -866,8 +905,12 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
     saveSettings();
     return bootstrap();
   }
-  const profile = agentProfiles[agentId];
+  const savedProfile = agentProfiles[agentId];
+  const profile = typeof workspaceOverride === "string" && workspaceOverride.trim()
+    ? { ...savedProfile, workspace: workspaceOverride.trim(), workspaceKind: "external" }
+    : savedProfile;
   if (profile.archived) throw new Error("That agent is archived. Restore it before selecting it.");
+  if (workspaceOverride && (!existsSync(profile.workspace) || !lstatSync(profile.workspace).isDirectory())) throw new Error("That conversation workspace is no longer available.");
   ensureWorkspace(profile);
   await refreshRuntime();
 
@@ -938,6 +981,7 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
     key: runtimeKey,
     agentId,
     workspace: profile.workspace,
+    workspaceTrusted: profile.workspaceTrusted,
     session: result.session,
     sessionManager: manager,
     transcript: transcriptFromManager(manager, profile),
@@ -951,6 +995,67 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
   }
   saveSettings();
   return bootstrap();
+}
+
+async function executeScheduledJob(job) {
+  if (!setupComplete || !executionRiskAccepted) throw new Error("Complete Pi Bot setup before running scheduled jobs.");
+  const profile = agentProfiles[job.agentId];
+  if (!profile || profile.archived) throw new Error("The scheduled job's agent is unavailable. Edit the job or restore the agent.");
+  if (!existsSync(job.workspace) || !lstatSync(job.workspace).isDirectory()) throw new Error("The scheduled job workspace is no longer available.");
+
+  await refreshRuntime();
+  const selectedModel = availableModels.find((model) => modelKey(model) === job.modelKey);
+  if (!selectedModel) throw new Error("The scheduled job's model is unavailable. Edit the job and choose another model.");
+  if (!selectedModel.reasoning && job.thinkingLevel !== "off") throw new Error("The scheduled job's reasoning level is not supported by its model.");
+
+  const scheduledProfile = {
+    ...profile,
+    workspace: job.workspace,
+    workspaceTrusted: job.workspaceTrusted === true,
+    defaultModelKey: job.modelKey,
+    thinkingLevel: job.thinkingLevel,
+  };
+  const manager = createDatabaseSession({ database: appDatabase, profile: scheduledProfile, agentId: job.agentId });
+  manager.appendSessionInfo(`Scheduled · ${job.name}`);
+  const runtimeDir = userDataPath("runtime", "scheduled", job.id);
+  let runtime;
+  try {
+    const resourceLoader = await createResourceLoader(scheduledProfile, runtimeDir);
+    const result = await createAgentSession({
+      cwd: job.workspace,
+      agentDir: runtimeDir,
+      modelRuntime,
+      model: selectedModel,
+      thinkingLevel: job.thinkingLevel,
+      tools: codingTools,
+      sessionManager: manager,
+      settingsManager: SettingsManager.inMemory(),
+      resourceLoader,
+    });
+    runtime = {
+      key: `scheduled:${job.id}:${manager.getSessionId()}`,
+      agentId: job.agentId,
+      workspace: job.workspace,
+      workspaceTrusted: job.workspaceTrusted,
+      session: result.session,
+      sessionManager: manager,
+      transcript: transcriptFromManager(manager, scheduledProfile),
+    };
+    runtime.unsubscribe = runtime.session.subscribe((event) => relay(runtime, event));
+    sessionRuntimes.set(runtime.key, runtime);
+    sessionRecords[manager.getSessionFile()] = { agentId: job.agentId, workspace: job.workspace };
+    await runtime.session.prompt(job.prompt);
+    const entries = manager.getEntries();
+    const assistant = [...entries].reverse().find((entry) => entry.type === "message" && entry.message?.role === "assistant");
+    if (!assistant) throw new Error("The scheduled agent did not produce a response.");
+    if (assistant.message.errorMessage) throw new Error(assistant.message.errorMessage);
+    return { sessionPath: manager.getSessionFile() };
+  } catch (error) {
+    if (error && typeof error === "object") error.sessionPath = manager.getSessionFile();
+    throw error;
+  } finally {
+    if (runtime) await disposeRuntime(runtime.key);
+  }
 }
 
 function createSession(options = {}) {
@@ -1004,6 +1109,40 @@ function authInteraction() {
   };
 }
 
+function prepareScheduledJob(draft, existing = null) {
+  if (!draft || typeof draft !== "object") throw new Error("Invalid scheduled job.");
+  const agentId = typeof draft.agentId === "string" ? draft.agentId : existing?.agentId;
+  if (!isAgentId(agentId) || agentProfiles[agentId].archived) throw new Error("Choose an available agent for this scheduled job.");
+  const profile = agentProfiles[agentId];
+  const selectedModelKey = typeof draft.modelKey === "string" ? draft.modelKey : existing?.modelKey;
+  const selectedModel = availableModels.find((model) => modelKey(model) === selectedModelKey);
+  if (!selectedModel) throw new Error("Choose an available model for this scheduled job.");
+  const thinkingLevel = typeof draft.thinkingLevel === "string" ? draft.thinkingLevel : existing?.thinkingLevel;
+  if (!thinkingLevels.includes(thinkingLevel)) throw new Error("Choose a valid reasoning level for this scheduled job.");
+  if (!selectedModel.reasoning && thinkingLevel !== "off") throw new Error("That model only supports off reasoning.");
+  const allowExpiredOnce = existing?.lastStatus && existing.lastStatus !== "running";
+  const record = buildScheduledJob({
+    ...existing,
+    ...draft,
+    id: existing?.id ?? randomUUID(),
+    agentId,
+    workspace: profile.workspace,
+    workspaceTrusted: profile.workspaceTrusted,
+    modelKey: selectedModelKey,
+    thinkingLevel,
+    status: "active",
+    createdAt: existing?.createdAt,
+  }, { allowExpiredOnce: Boolean(allowExpiredOnce) });
+  if (existing) {
+    record.lastRunAt = existing.lastRunAt;
+    record.lastStatus = existing.lastStatus;
+    record.lastError = existing.lastError;
+    record.lastSessionPath = existing.lastSessionPath;
+  }
+  if (existing?.status === "paused") record.status = "paused";
+  return record;
+}
+
 ipcMain.handle("pi:connect", async () => {
   await refreshRuntime();
   if (!setupComplete || !executionRiskAccepted) return bootstrap();
@@ -1024,6 +1163,7 @@ ipcMain.handle("pi:create-agent", async (_event, draft) => {
   const profile = normalizeProfile(id, {
     name,
     initials: draft.initials,
+    description: draft.description,
     instructions: "",
     defaultModelKey: assistant?.defaultModelKey || "",
     workspace: defaultWorkspace(id),
@@ -1135,6 +1275,17 @@ ipcMain.handle("pi:open-session", async (_event, sessionPath, agentId) => {
   return createSession({ mode: "open", sessionPath, agentId });
 });
 
+ipcMain.handle("pi:open-scheduled-session", async (_event, jobId) => {
+  if (typeof jobId !== "string" || !jobId) throw new Error("Invalid scheduled job.");
+  const job = appDatabase.getScheduledJob(jobId);
+  if (!job?.lastSessionPath) throw new Error("This scheduled job has no completed session yet.");
+  if (!isAgentId(job.agentId)) throw new Error("The scheduled job's agent is unavailable.");
+  if (!existsSync(job.workspace) || !lstatSync(job.workspace).isDirectory()) throw new Error("The scheduled job workspace is no longer available.");
+  const stored = appDatabase.getSession(job.lastSessionPath);
+  if (!stored || stored.agent_id !== job.agentId || stored.workspace !== job.workspace) throw new Error("The scheduled session is no longer available.");
+  return createSession({ mode: "open", sessionPath: job.lastSessionPath, agentId: job.agentId, workspaceOverride: job.workspace });
+});
+
 ipcMain.handle("pi:get-sessions", (_event, agentId = activeAgentId) => listSessions(agentId));
 
 ipcMain.handle("pi:delete-session", async (_event, sessionPath) => {
@@ -1149,6 +1300,42 @@ ipcMain.handle("pi:delete-session", async (_event, sessionPath) => {
   if (currentSessions[activeAgentId] === sessionPath) delete currentSessions[activeAgentId];
   saveSettings();
   return wasCurrent ? createSession({ mode: "new" }) : bootstrap();
+});
+
+ipcMain.handle("pi:get-scheduled-jobs", () => appDatabase.listScheduledJobs());
+
+ipcMain.handle("pi:create-scheduled-job", async (_event, draft) => {
+  const job = prepareScheduledJob(draft);
+  appDatabase.createScheduledJob(job);
+  sendScheduledJobsSync();
+  void scheduledJobScheduler?.tick();
+  return bootstrap();
+});
+
+ipcMain.handle("pi:update-scheduled-job", async (_event, id, draft) => {
+  const current = appDatabase.getScheduledJob(id);
+  if (!current) throw new Error("Scheduled job was not found.");
+  if (scheduledJobScheduler?.isRunning(id)) throw new Error("This scheduled job is running. Wait for it to finish first.");
+  const job = prepareScheduledJob(draft, current);
+  appDatabase.updateScheduledJob(id, job);
+  sendScheduledJobsSync();
+  void scheduledJobScheduler?.tick();
+  return bootstrap();
+});
+
+ipcMain.handle("pi:set-scheduled-job-paused", async (_event, id, paused) => {
+  await scheduledJobScheduler.setPaused(id, Boolean(paused));
+  return bootstrap();
+});
+
+ipcMain.handle("pi:run-scheduled-job", async (_event, id) => {
+  await scheduledJobScheduler.runNow(id);
+  return bootstrap();
+});
+
+ipcMain.handle("pi:delete-scheduled-job", async (_event, id) => {
+  scheduledJobScheduler.delete(id);
+  return bootstrap();
 });
 
 ipcMain.handle("pi:prompt", async (_event, message) => {
@@ -1270,6 +1457,8 @@ ipcMain.handle("pi:import-pi-auth", async (_event, accepted) => {
 
 ipcMain.handle("pi:auth-respond", (_event, promptId, value) => respondToAuthPrompt(promptId, value));
 ipcMain.handle("pi:auth-cancel", (_event, promptId) => cancelAuthPrompt(promptId));
+ipcMain.handle("pi:get-theme", () => appDatabase.getTheme());
+ipcMain.handle("pi:save-theme", (_event, theme) => appDatabase.saveTheme(theme));
 ipcMain.handle("pi:get-workspace-preferences", (_event, key) => appDatabase.getWorkspacePreferences(key));
 ipcMain.handle("pi:save-workspace-preferences", (_event, key, preferences) => appDatabase.saveWorkspacePreferences(key, preferences));
 function rejectPendingBrowserRegistration(tabId, sessionKey) {
@@ -1448,7 +1637,7 @@ function createWindow() {
   }
   const pageLoad = app.isPackaged
     ? window.loadFile(path.join(appRoot, "dist", "index.html"))
-    : window.loadURL("http://127.0.0.1:5173");
+    : window.loadURL(developmentServerUrl);
   pageLoad.catch((error) => {
     if (isSmokeTest) writeFileSync(userDataPath("smoke-test.json"), JSON.stringify({ error: String(error) }, null, 2));
   });
@@ -1466,6 +1655,12 @@ app.whenReady().then(() => {
   loadSettings();
   loadCredentials();
   ensureAllWorkspaces();
+  scheduledJobScheduler = new ScheduledJobScheduler({
+    database: appDatabase,
+    executeJob: executeScheduledJob,
+    onChange: sendScheduledJobsSync,
+  });
+  void scheduledJobScheduler.start();
   createWindow();
 });
 
@@ -1478,6 +1673,7 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
+  scheduledJobScheduler?.stop();
   for (const pending of pendingAuthPrompts.values()) pending.reject(new Error("Authentication was cancelled."));
   pendingAuthPrompts.clear();
   for (const runtime of sessionRuntimes.values()) {

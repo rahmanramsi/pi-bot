@@ -15,10 +15,11 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { recoverPendingSessions } from "./session-persistence.mjs";
 
 export const DATABASE_FILENAME = "pi-bot.sqlite";
-export const DATABASE_SCHEMA_VERSION = 2;
+export const DATABASE_SCHEMA_VERSION = 5;
 export const SESSION_PATH_PREFIX = "pi-session://";
 
 const migrationKey = "legacy-jsonl";
+const themePreferenceKey = "pi-bot.theme";
 
 export class UnsupportedDatabaseSchemaError extends Error {
   name = "UnsupportedDatabaseSchemaError";
@@ -164,13 +165,15 @@ function createApplicationTables(database) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       initials TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
       instructions TEXT NOT NULL DEFAULT '',
       workspace TEXT NOT NULL,
       workspace_kind TEXT NOT NULL,
       workspace_trusted INTEGER NOT NULL DEFAULT 0,
       default_model_key TEXT NOT NULL DEFAULT '',
       thinking_level TEXT NOT NULL DEFAULT 'medium',
-      archived INTEGER NOT NULL DEFAULT 0
+      archived INTEGER NOT NULL DEFAULT 0,
+      pinned INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -207,6 +210,43 @@ function migrateSchemaV2(database) {
       updated_at TEXT NOT NULL
     );
   `);
+}
+
+function migrateSchemaV3(database) {
+  const columns = readRows(database.prepare("PRAGMA table_info(agents)"));
+  if (!columns.some((column) => column.name === "description")) database.exec("ALTER TABLE agents ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+}
+
+function migrateSchemaV4(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS scheduled_jobs (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      workspace TEXT NOT NULL,
+      workspace_trusted INTEGER NOT NULL DEFAULT 0,
+      model_key TEXT NOT NULL,
+      thinking_level TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      recurrence TEXT NOT NULL,
+      start_at TEXT NOT NULL,
+      time_zone TEXT NOT NULL,
+      status TEXT NOT NULL,
+      next_run_at TEXT,
+      last_run_at TEXT,
+      last_status TEXT,
+      last_error TEXT,
+      last_session_path TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS scheduled_jobs_due_idx ON scheduled_jobs (status, next_run_at);
+  `);
+}
+
+function migrateSchemaV5(database) {
+  const columns = readRows(database.prepare("PRAGMA table_info(agents)"));
+  if (!columns.some((column) => column.name === "pinned")) database.exec("ALTER TABLE agents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
 }
 
 function normalizeWorkspacePreferences(value) {
@@ -268,6 +308,18 @@ export class AppDatabase {
       if (storedVersion < 2) {
         migrateSchemaV2(this.db);
         this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(2, nowIso());
+      }
+      if (storedVersion < 3) {
+        migrateSchemaV3(this.db);
+        this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(3, nowIso());
+      }
+      if (storedVersion < 4) {
+        migrateSchemaV4(this.db);
+        this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(4, nowIso());
+      }
+      if (storedVersion < 5) {
+        migrateSchemaV5(this.db);
+        this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(5, nowIso());
       }
       this.db.prepare("INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(DATABASE_SCHEMA_VERSION));
     });
@@ -352,11 +404,137 @@ export class AppDatabase {
     return preferences;
   }
 
+  getTheme() {
+    const row = this.db.prepare("SELECT value_json FROM preferences WHERE key = ?").get(themePreferenceKey);
+    if (!row) return "dark";
+    try {
+      return JSON.parse(row.value_json) === "light" ? "light" : "dark";
+    } catch {
+      return "dark";
+    }
+  }
+
+  saveTheme(theme) {
+    if (theme !== "dark" && theme !== "light") throw new Error("Invalid theme.");
+    this.transaction(() => {
+      this.db.prepare("INSERT INTO preferences (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at").run(themePreferenceKey, JSON.stringify(theme), nowIso());
+    });
+    return theme;
+  }
+
+  listScheduledJobs() {
+    return readRows(this.db.prepare(`
+      SELECT id, name, agent_id, workspace, workspace_trusted, model_key, thinking_level,
+        prompt, recurrence, start_at, time_zone, status, next_run_at, last_run_at,
+        last_status, last_error, last_session_path, created_at, updated_at
+      FROM scheduled_jobs
+      ORDER BY CASE WHEN next_run_at IS NULL THEN 1 ELSE 0 END, next_run_at, name
+    `)).map((row) => ({
+      id: row.id,
+      name: row.name,
+      agentId: row.agent_id,
+      workspace: row.workspace,
+      workspaceTrusted: integerToBool(row.workspace_trusted),
+      modelKey: row.model_key,
+      thinkingLevel: row.thinking_level,
+      prompt: row.prompt,
+      recurrence: row.recurrence,
+      startAt: row.start_at,
+      timeZone: row.time_zone,
+      status: row.status,
+      nextRunAt: row.next_run_at,
+      lastRunAt: row.last_run_at,
+      lastStatus: row.last_status,
+      lastError: row.last_error,
+      lastSessionPath: row.last_session_path,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  getScheduledJob(id) {
+    return this.listScheduledJobs().find((job) => job.id === id) ?? null;
+  }
+
+  createScheduledJob(job) {
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO scheduled_jobs (
+          id, name, agent_id, workspace, workspace_trusted, model_key, thinking_level,
+          prompt, recurrence, start_at, time_zone, status, next_run_at, last_run_at,
+          last_status, last_error, last_session_path, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        job.id,
+        job.name,
+        job.agentId,
+        job.workspace,
+        boolToInteger(job.workspaceTrusted),
+        job.modelKey,
+        job.thinkingLevel,
+        job.prompt,
+        job.recurrence,
+        job.startAt,
+        job.timeZone,
+        job.status,
+        job.nextRunAt,
+        job.lastRunAt,
+        job.lastStatus,
+        job.lastError,
+        job.lastSessionPath,
+        job.createdAt,
+        job.updatedAt,
+      );
+    });
+    return this.getScheduledJob(job.id);
+  }
+
+  updateScheduledJob(id, changes) {
+    const current = this.getScheduledJob(id);
+    if (!current) throw new Error("Scheduled job was not found.");
+    const next = { ...current, ...changes };
+    this.transaction(() => {
+      this.db.prepare(`
+        UPDATE scheduled_jobs SET
+          name = ?, agent_id = ?, workspace = ?, workspace_trusted = ?, model_key = ?,
+          thinking_level = ?, prompt = ?, recurrence = ?, start_at = ?, time_zone = ?,
+          status = ?, next_run_at = ?, last_run_at = ?, last_status = ?, last_error = ?,
+          last_session_path = ?, created_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        next.name,
+        next.agentId,
+        next.workspace,
+        boolToInteger(next.workspaceTrusted),
+        next.modelKey,
+        next.thinkingLevel,
+        next.prompt,
+        next.recurrence,
+        next.startAt,
+        next.timeZone,
+        next.status,
+        next.nextRunAt,
+        next.lastRunAt,
+        next.lastStatus,
+        next.lastError,
+        next.lastSessionPath,
+        next.createdAt,
+        next.updatedAt,
+        id,
+      );
+    });
+    return this.getScheduledJob(id);
+  }
+
+  deleteScheduledJob(id) {
+    return this.transaction(() => this.db.prepare("DELETE FROM scheduled_jobs WHERE id = ?").run(id).changes > 0);
+  }
+
   getState() {
     const appState = this.db.prepare("SELECT setup_complete, execution_risk_accepted, active_agent_id, thinking_level FROM app_state WHERE id = 1").get();
     const agents = readRows(this.db.prepare(`
-      SELECT id, name, initials, instructions, workspace, workspace_kind, workspace_trusted,
-        default_model_key, thinking_level, archived
+      SELECT id, name, initials, description, instructions, workspace, workspace_kind, workspace_trusted,
+        default_model_key, thinking_level, archived, pinned
       FROM agents ORDER BY id
     `));
     const currentRows = readRows(this.db.prepare("SELECT agent_id, session_id FROM current_sessions"));
@@ -370,6 +548,7 @@ export class AppDatabase {
         id: agent.id,
         name: agent.name,
         initials: agent.initials,
+        description: agent.description,
         instructions: agent.instructions,
         workspace: agent.workspace,
         workspaceKind: agent.workspace_kind,
@@ -377,6 +556,7 @@ export class AppDatabase {
         defaultModelKey: agent.default_model_key,
         thinkingLevel: agent.thinking_level,
         archived: integerToBool(agent.archived),
+        pinned: integerToBool(agent.pinned),
       })),
       currentSessions,
     };
@@ -394,13 +574,13 @@ export class AppDatabase {
       );
       const keep = new Set();
       const upsert = this.db.prepare(`
-        INSERT INTO agents (id, name, initials, instructions, workspace, workspace_kind, workspace_trusted, default_model_key, thinking_level, archived)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO agents (id, name, initials, description, instructions, workspace, workspace_kind, workspace_trusted, default_model_key, thinking_level, archived, pinned)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name, initials = excluded.initials, instructions = excluded.instructions,
+          name = excluded.name, initials = excluded.initials, description = excluded.description, instructions = excluded.instructions,
           workspace = excluded.workspace, workspace_kind = excluded.workspace_kind,
           workspace_trusted = excluded.workspace_trusted, default_model_key = excluded.default_model_key,
-          thinking_level = excluded.thinking_level, archived = excluded.archived
+          thinking_level = excluded.thinking_level, archived = excluded.archived, pinned = excluded.pinned
       `);
       for (const agent of agents) {
         if (!agent || typeof agent.id !== "string" || !agent.id) continue;
@@ -409,6 +589,7 @@ export class AppDatabase {
           agent.id,
           typeof agent.name === "string" ? agent.name : "Untitled agent",
           typeof agent.initials === "string" ? agent.initials : "AS",
+          typeof agent.description === "string" ? agent.description : "",
           typeof agent.instructions === "string" ? agent.instructions : "",
           typeof agent.workspace === "string" ? agent.workspace : "",
           typeof agent.workspaceKind === "string" ? agent.workspaceKind : "app",
@@ -416,6 +597,7 @@ export class AppDatabase {
           typeof agent.defaultModelKey === "string" ? agent.defaultModelKey : "",
           typeof agent.thinkingLevel === "string" ? agent.thinkingLevel : "medium",
           boolToInteger(agent.archived),
+          boolToInteger(agent.pinned),
         );
       }
       if (keep.size === 0) this.db.exec("DELETE FROM agents");
