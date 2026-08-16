@@ -4,9 +4,12 @@
 
 ## Duplicate heading
 
+## INSTALL
+
 [Jump to the first duplicate](#duplicate-heading)
 
 ==highlight== H~2~O x^2^ ~~strikethrough~~ :smile: :rocket: :unknown-shortcode:
+\==literal== H\~2~O x\^2^ \:smile:
 
 <u onclick="alert('unsafe')">underlined</u>
 

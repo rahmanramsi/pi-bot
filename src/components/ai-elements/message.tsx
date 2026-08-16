@@ -158,6 +158,31 @@ function normalizeWorkspaceLinks(parent: MarkdownNode) {
 
 const inlineMarkdownPattern = /(?<!\\)==([^=\n]+)==|(?<!\\)(?<!~)~([^~\n]+)~(?!~)|(?<!\\)\^([^\^\n]+)\^(?!\^)|:([a-z0-9_+-]+):/gi;
 
+const inlineEscapeTokens = {
+  "==": "\uE000pi-highlight\uE001",
+  "~": "\uE000pi-subscript\uE001",
+  "^": "\uE000pi-superscript\uE001",
+  ":": "\uE000pi-emoji\uE001",
+} as const;
+
+function protectEscapedInlineSyntax(value: string) {
+  return value.replace(/\\(==|~|\^|:)/g, (_, delimiter: keyof typeof inlineEscapeTokens) => inlineEscapeTokens[delimiter]);
+}
+
+function restoreInlineEscapeTokens(parent: MarkdownNode) {
+  if (!parent.children) return;
+  for (const child of parent.children) {
+    if (typeof child.value === "string") {
+      const preserveEscape = child.type === "code" || child.type === "inlineCode" || child.type === "html";
+      child.value = Object.entries(inlineEscapeTokens).reduce(
+        (value, [delimiter, token]) => value.replaceAll(token, `${preserveEscape ? "\\" : ""}${delimiter}`),
+        child.value,
+      );
+    }
+    restoreInlineEscapeTokens(child);
+  }
+}
+
 function transformInlineText(value: string) {
   const children: MarkdownNode[] = [];
   let cursor = 0;
@@ -217,6 +242,7 @@ function remarkMarkdownExtensions() {
     normalizeWorkspaceLinks(tree);
     transformDefinitionLists(tree);
     transformInlineSyntax(tree, typeof file.value === "string" ? file.value : "");
+    restoreInlineEscapeTokens(tree);
   };
 }
 
@@ -266,7 +292,7 @@ function createHeadingRenderer(tagName: "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
     const base = reactNodeText(children)
       .normalize("NFKC")
       .trim()
-      .toLocaleLowerCase()
+      .toLowerCase()
       .replace(/[^\p{L}\p{N}\s-]/gu, "")
       .replace(/\s+/g, "-")
       .replace(/-+/g, "-") || "heading";
@@ -293,6 +319,7 @@ export const MessageResponse = memo(function MessageResponse({
   ...props
 }: MessageResponseProps) {
   const headingIds = new Map<string, number>();
+  const content = protectEscapedInlineSyntax(children ?? "");
   const mergedComponents: Components = {
     ...components,
     h1: createHeadingRenderer("h1", headingIds) as Components["h1"],
@@ -354,7 +381,7 @@ export const MessageResponse = memo(function MessageResponse({
       }}
       {...props}
     >
-      {children ?? ""}
+      {content}
     </Streamdown>
   );
 });

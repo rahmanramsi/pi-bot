@@ -262,6 +262,10 @@ describe("AI Elements renderer adapters", () => {
       expect(host.textContent).toContain("😄");
       expect(host.textContent).toContain("🚀");
       expect(host.textContent).toContain(":unknown-shortcode:");
+      expect(host.textContent).toContain("==literal==");
+      expect(host.textContent).toContain("H~2~O");
+      expect(host.textContent).toContain("x^2^");
+      expect(host.textContent).toContain(":smile:");
 
       expect(host.querySelectorAll("dl > dt")).toHaveLength(2);
       expect(host.querySelectorAll("dl > dd")).toHaveLength(2);
@@ -280,6 +284,7 @@ describe("AI Elements renderer adapters", () => {
 
       expect(host.querySelectorAll("#duplicate-heading")).toHaveLength(1);
       expect(host.querySelectorAll("#duplicate-heading-1")).toHaveLength(1);
+      expect(host.querySelectorAll("#install")).toHaveLength(1);
       expect(host.querySelector('a[href="#duplicate-heading"]')).not.toBeNull();
 
       const reference = host.querySelector('a[data-footnote-ref]') as HTMLAnchorElement;
