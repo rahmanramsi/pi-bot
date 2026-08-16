@@ -210,7 +210,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .agent-inbox-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .agent-inbox-brand img { width: 30px; height: 30px; object-fit: contain; }
 .agent-inbox-brand strong { overflow: hidden; font-size: var(--text-subheading); font-weight: 680; letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
-.agent-search { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; min-width: 0; height: 42px; margin: 0 14px 15px; padding: 0 11px; border: 1px solid var(--input); border-radius: 11px; color: var(--muted-foreground); background: color-mix(in oklch, var(--input) 75%, var(--ring)); }
+.agent-search { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; min-width: 0; height: 42px; margin: 0 14px 15px; padding: 0 11px; border: 1px solid var(--border); border-radius: 11px; color: var(--muted-foreground); background: var(--secondary); }
 .agent-search:focus-within { border-color: var(--ring); box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 18%, transparent); }
 .agent-search > svg { flex: 0 0 auto; width: 19px; height: 19px; }
 .agent-search-input { width: 100%; min-width: 0; height: 34px; padding: 0; border: 0; color: var(--foreground); background: transparent; box-shadow: none; font-size: var(--text-body); }

@@ -39,7 +39,7 @@ test("agent navigation is a full-width inbox with search and create action", asy
   assert.match(inbox, /(?:agent-inbox|AgentInbox|agent-list)/);
   assert.match(inbox, /(?:Search agents|placeholder=["']Search|aria-label=["']Search)/i);
   assert.match(inbox, /(?:agent-create-button|Create agent|onCreateAgent)/);
-  assert.match(styles, /\.agent-search\s*\{[^}]*background:\s*color-mix\(in oklch, var\(--input\) 75%, var\(--ring\)\)/);
+  assert.match(styles, /\.agent-search\s*\{[^}]*border:\s*1px solid var\(--border\)[^}]*background:\s*var\(--secondary\)/);
 
   // Agent history is a mode of this surface, not a second permanent column.
   assert.doesNotMatch(sidebar, /app-sidebar-columns/);
