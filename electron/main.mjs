@@ -203,6 +203,7 @@ function defaultAgentProfile() {
     defaultModelKey: "",
     thinkingLevel: preferredThinkingLevel,
     archived: false,
+    pinned: false,
   };
 }
 
@@ -231,6 +232,7 @@ function normalizeProfile(id, value = {}, fallback = {}) {
     defaultModelKey: cleanText(value.defaultModelKey ?? value.modelKey, fallback.defaultModelKey || "", 240),
     thinkingLevel: thinkingLevels.includes(value.thinkingLevel) ? value.thinkingLevel : fallback.thinkingLevel || preferredThinkingLevel,
     archived: Boolean(value.archived),
+    pinned: Boolean(value.pinned),
   };
 }
 
@@ -475,12 +477,14 @@ function sessionSummary(info, agentId, workspace) {
   const entries = appDatabase.getSessionEntries(info.path);
   const named = [...entries].reverse().find((entry) => entry.type === "session_info" && typeof entry.name === "string" && entry.name.trim());
   const firstUser = entries.find((entry) => entry.type === "message" && entry.message?.role === "user");
+  const latestResponse = [...entries].reverse().find((entry) => entry.type === "message" && entry.message?.role === "assistant" && (messageText(entry.message.content) || entry.message.errorMessage));
   return {
     path: info.path,
     id: info.id,
     agentId,
     workspace,
     name: named?.name || titleFromPrompt(firstUser ? messageText(firstUser.message.content) : "New conversation"),
+    preview: latestResponse ? messageText(latestResponse.message.content) || latestResponse.message.errorMessage : undefined,
     created: info.created,
     modified: info.modified,
     messageCount: info.messageCount,

@@ -369,6 +369,7 @@ describe("AI Elements renderer adapters", () => {
     const result = render(<Composer busy={false} disabled={false} config={config} onPrompt={onPrompt} onAbort={vi.fn()} onModelChange={vi.fn()} onThinkingChange={vi.fn()} />);
     roots.push(result.root);
     const textarea = result.host.querySelector("textarea") as HTMLTextAreaElement;
+    expect(document.activeElement).toBe(textarea);
     const send = result.host.querySelector('button[aria-label="Send message"]') as HTMLButtonElement;
     const modelSelector = result.host.querySelector(".composer-model-select") as HTMLElement;
     const contextTrigger = result.host.querySelector('button[aria-label="Context usage"]') as HTMLButtonElement;

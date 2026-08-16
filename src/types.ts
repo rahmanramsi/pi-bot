@@ -13,6 +13,7 @@ export type AgentProfile = {
   defaultModelKey: string;
   thinkingLevel: ThinkingLevel;
   archived: boolean;
+  pinned: boolean;
 };
 
 export type AgentDraft = {
@@ -34,6 +35,7 @@ export type SessionSummary = {
   path: string;
   id: string;
   name: string;
+  preview?: string;
   agentId: AgentId;
   workspace?: string;
   created?: string;
