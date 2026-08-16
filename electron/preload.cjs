@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld("piBot", {
   importPiAuth: (accepted) => ipcRenderer.invoke("pi:import-pi-auth", accepted),
   respondAuth: (promptId, value) => ipcRenderer.invoke("pi:auth-respond", promptId, value),
   cancelAuth: (promptId) => ipcRenderer.invoke("pi:auth-cancel", promptId),
+  getTheme: () => ipcRenderer.invoke("pi:get-theme"),
+  saveTheme: (theme) => ipcRenderer.invoke("pi:save-theme", theme),
   getWorkspacePreferences: (key) => ipcRenderer.invoke("pi:get-workspace-preferences", key),
   saveWorkspacePreferences: (key, preferences) => ipcRenderer.invoke("pi:save-workspace-preferences", key, preferences),
   listWorkspaceFiles: () => ipcRenderer.invoke("pi:list-workspace-files"),

@@ -19,6 +19,7 @@ export const DATABASE_SCHEMA_VERSION = 2;
 export const SESSION_PATH_PREFIX = "pi-session://";
 
 const migrationKey = "legacy-jsonl";
+const themePreferenceKey = "pi-bot.theme";
 
 export class UnsupportedDatabaseSchemaError extends Error {
   name = "UnsupportedDatabaseSchemaError";
@@ -350,6 +351,24 @@ export class AppDatabase {
       this.db.prepare("INSERT INTO preferences (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at").run(key, JSON.stringify(preferences), nowIso());
     });
     return preferences;
+  }
+
+  getTheme() {
+    const row = this.db.prepare("SELECT value_json FROM preferences WHERE key = ?").get(themePreferenceKey);
+    if (!row) return "dark";
+    try {
+      return JSON.parse(row.value_json) === "light" ? "light" : "dark";
+    } catch {
+      return "dark";
+    }
+  }
+
+  saveTheme(theme) {
+    if (theme !== "dark" && theme !== "light") throw new Error("Invalid theme.");
+    this.transaction(() => {
+      this.db.prepare("INSERT INTO preferences (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at").run(themePreferenceKey, JSON.stringify(theme), nowIso());
+    });
+    return theme;
   }
 
   getState() {

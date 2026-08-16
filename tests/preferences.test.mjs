@@ -33,11 +33,28 @@ test("persists workspace panel preferences through SQLite across restart", () =>
   restarted.close();
 }));
 
+test("persists the selected theme through SQLite across restart", () => withTempDir((directory) => {
+  const databasePath = path.join(directory, "pi-bot.sqlite");
+  const database = createAppDatabase(databasePath);
+
+  assert.equal(database.getTheme(), "dark");
+  assert.equal(database.saveTheme("light"), "light");
+  database.close();
+
+  const restarted = createAppDatabase(databasePath);
+  assert.equal(restarted.getTheme(), "light");
+  restarted.close();
+}));
+
 test("exposes only the workspace preference operations through preload", () => {
   const preload = readFileSync(path.join(process.cwd(), "electron", "preload.cjs"), "utf8");
+  const app = readFileSync(path.join(process.cwd(), "src", "App.tsx"), "utf8");
+  assert.match(preload, /getTheme/);
+  assert.match(preload, /saveTheme/);
   assert.match(preload, /getWorkspacePreferences/);
   assert.match(preload, /saveWorkspacePreferences/);
   assert.doesNotMatch(preload, /appDatabase|node:sqlite|pi-bot\.sqlite/);
+  assert.match(app, /window\.piBot\.saveTheme\(next\)/);
 });
 
 test("guards preference writes until the current session key finishes loading", () => {
