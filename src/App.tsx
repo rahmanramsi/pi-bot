@@ -10,6 +10,7 @@ import {
   Copy,
   ChevronRight,
   CircleAlert,
+  CircleHelp,
   ChevronLeft,
   ExternalLink,
   FileText,
@@ -72,6 +73,7 @@ import { scheduledDateFromWallClock } from "./scheduled-time";
 import type {
   AgentId,
   AgentProfile,
+  AttentionItem,
   AuthPrompt,
   PiBootstrap,
   PiConfig,
@@ -89,7 +91,7 @@ import type {
   WorkspacePanelTab,
 } from "./types";
 
-type View = "chat" | "settings";
+type View = "chat" | "settings" | "attention";
 type SettingsSection = "agents" | "models" | "schedules";
 type Theme = "dark" | "light";
 type WorkspaceTabKind = WorkspacePanelTab["kind"];
@@ -777,6 +779,7 @@ function AgentSidebarSection({
   onSelect,
   onTogglePin,
   onCreateAgent,
+  onAttention,
   onToggleTheme,
   onSettings,
 }: {
@@ -788,6 +791,7 @@ function AgentSidebarSection({
   onSelect: (agentId: AgentId) => void;
   onTogglePin: (agent: AgentProfile) => void;
   onCreateAgent: () => void;
+  onAttention: () => void;
   onToggleTheme: () => void;
   onSettings: () => void;
 }) {
@@ -815,6 +819,11 @@ function AgentSidebarSection({
         <Search aria-hidden="true" />
         <Input value={query} onChange={(event) => onQueryChange(event.target.value)} className="agent-search-input" placeholder="Search" aria-label="Search agents" />
       </label>
+      <Button className="attention-nav-item" variant="ghost" onClick={onAttention} disabled={busy} aria-label={`Attention${data.attentionUnreadCount > 0 ? `, ${data.attentionUnreadCount} unread` : ""}`} data-motion="attention-nav">
+        <CircleAlert />
+        <span>Attention</span>
+        {data.attentionUnreadCount > 0 && <Badge className="attention-nav-count" variant="secondary">{data.attentionUnreadCount > 99 ? "99+" : data.attentionUnreadCount}</Badge>}
+      </Button>
       <SidebarGroup className="agent-sidebar-group">
         <SidebarMenu className="agent-list" aria-label="Agents">
           {agents.map((agent) => {
@@ -921,6 +930,55 @@ function HistorySidebar({
   );
 }
 
+function attentionTypeLabel(type: AttentionItem["type"]) {
+  return type === "question" ? "Question" : type === "failed" ? "Failed" : "Blocked";
+}
+
+function attentionTypeIcon(type: AttentionItem["type"]) {
+  return type === "question" ? <CircleHelp /> : <CircleAlert />;
+}
+
+function AttentionInbox({
+  data,
+  busy,
+  onOpen,
+  onMarkRead,
+  onResolve,
+  onDismiss,
+}: {
+  data: PiBootstrap;
+  busy: boolean;
+  onOpen: (item: AttentionItem) => void;
+  onMarkRead: (item: AttentionItem) => void;
+  onResolve: (item: AttentionItem) => void;
+  onDismiss: (item: AttentionItem) => void;
+}) {
+  return (
+    <main className="attention-page">
+      <header className="section-topbar attention-section-topbar">
+        <div className="attention-heading"><CircleAlert /><div><strong>Attention</strong><span>Questions, failures, and blocked work that need a follow-up.</span></div></div>
+        {data.attentionUnreadCount > 0 && <Badge variant="secondary">{data.attentionUnreadCount} unread</Badge>}
+      </header>
+      <section className="attention-content">
+        {data.attention.length === 0 ? <Empty className="attention-empty"><EmptyMedia variant="icon"><Check /></EmptyMedia><EmptyHeader><EmptyTitle>Nothing needs your attention</EmptyTitle><EmptyDescription>Questions, failures, and blocked runs will appear here when a real runtime event needs follow-up.</EmptyDescription></EmptyHeader></Empty> : <div className="attention-list">
+          {data.attention.map((item) => <article className={`attention-item ${item.status} ${item.readAt ? "read" : "unread"}`} key={item.id}>
+            <button type="button" className="attention-item-main" onClick={() => onOpen(item)} disabled={busy || !item.sessionPath || !item.agentId} data-motion="attention-open">
+              <span className={`attention-item-icon attention-item-icon-${item.type}`}>{attentionTypeIcon(item.type)}</span>
+              <span className="attention-item-copy"><span className="attention-item-meta"><strong>{attentionTypeLabel(item.type)}</strong><time>{shortDate(item.createdAt)}</time></span><strong className="attention-item-summary">{item.summary}</strong><span className="attention-item-origin">{item.agentName} · {item.sessionName}</span>{item.details && <small>{item.details}</small>}</span>
+            </button>
+            <div className="attention-item-actions">
+              {!item.readAt && <Button variant="ghost" size="sm" onClick={() => onMarkRead(item)} disabled={busy} title="Mark as read">Mark read</Button>}
+              {item.status === "open" && <Button variant="ghost" size="sm" onClick={() => onResolve(item)} disabled={busy} title="Resolve attention item"><Check /> Resolve</Button>}
+              {item.status === "open" && <Button variant="ghost" size="sm" onClick={() => onDismiss(item)} disabled={busy} title="Dismiss attention item"><X /> Dismiss</Button>}
+              {item.status !== "open" && <Badge variant="outline">{item.status === "resolved" ? "Resolved" : "Dismissed"}</Badge>}
+            </div>
+          </article>)}
+        </div>}
+      </section>
+    </main>
+  );
+}
+
 function AppSidebar({
   data,
   theme,
@@ -929,6 +987,7 @@ function AppSidebar({
   onSelectAgent,
   onTogglePin,
   onCreateAgent,
+  onAttention,
   onToggleTheme,
   onSettings,
   onNewChat,
@@ -943,6 +1002,7 @@ function AppSidebar({
   onSelectAgent: (agentId: AgentId) => void;
   onTogglePin: (agent: AgentProfile) => void;
   onCreateAgent: () => void;
+  onAttention: () => void;
   onToggleTheme: () => void;
   onSettings: () => void;
   onNewChat: () => void;
@@ -957,7 +1017,7 @@ function AppSidebar({
         <SidebarTrigger className="sidebar-window-toggle" title="Hide sidebar" aria-label="Hide sidebar" data-motion="sidebar-toggle"><PanelLeftClose data-icon="inline-start" /></SidebarTrigger>
       </SidebarHeader>
       <SidebarContent className="app-sidebar-main">
-        {historyAgentId ? <HistorySidebar data={{ ...data, activeAgentId: historyAgentId }} theme={theme} busy={busy} onBack={onBackFromHistory} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} onToggleTheme={onToggleTheme} onSettings={onSettings} /> : <AgentSidebarSection data={data} theme={theme} busy={busy} query={query} onQueryChange={setQuery} onSelect={onSelectAgent} onTogglePin={onTogglePin} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} />}
+      {historyAgentId ? <HistorySidebar data={{ ...data, activeAgentId: historyAgentId }} theme={theme} busy={busy} onBack={onBackFromHistory} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} onToggleTheme={onToggleTheme} onSettings={onSettings} /> : <AgentSidebarSection data={data} theme={theme} busy={busy} query={query} onQueryChange={setQuery} onSelect={onSelectAgent} onTogglePin={onTogglePin} onCreateAgent={onCreateAgent} onAttention={onAttention} onToggleTheme={onToggleTheme} onSettings={onSettings} />}
       </SidebarContent>
     </Sidebar>
   );
@@ -1645,6 +1705,7 @@ export function App() {
         else if (event.type === "auth-prompt") setAuthPrompt({ id: event.id, prompt: event.prompt });
         else if (event.type === "auth-notify") setAuthNotice(event.event.message || event.event.instructions || (event.event.url ? `Continue in your browser: ${event.event.url}` : undefined));
         else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId, scheduledJobs: event.scheduledJobs } : previous);
+        else if (event.type === "attention-sync") setData((previous) => previous ? { ...previous, attention: event.attention, attentionUnreadCount: event.attentionUnreadCount } : previous);
         else if (event.type === "scheduled-jobs-sync") setData((previous) => previous ? { ...previous, scheduledJobs: event.scheduledJobs } : previous);
       }
     });
@@ -1728,6 +1789,33 @@ export function App() {
     setHistoryAgentId(null);
     navigateToChat(() => window.piBot.selectAgent(agentId));
   }
+  function showAttention() {
+    setHistoryAgentId(null);
+    setError(undefined);
+    setView("attention");
+  }
+  function openAttention(item: AttentionItem) {
+    setHistoryAgentId(null);
+    if (!item.sessionPath || !item.agentId) {
+      updateWith(() => window.piBot.markAttentionRead(item.id));
+      return;
+    }
+    setError(undefined);
+    setView("chat");
+    void perform(async () => {
+      await window.piBot.markAttentionRead(item.id);
+      return window.piBot.openSession(item.sessionPath as string, item.agentId as AgentId, item.id);
+    }).catch(() => undefined);
+  }
+  function markAttentionRead(item: AttentionItem) {
+    updateWith(() => window.piBot.markAttentionRead(item.id));
+  }
+  function resolveAttention(item: AttentionItem) {
+    updateWith(() => window.piBot.resolveAttention(item.id));
+  }
+  function dismissAttention(item: AttentionItem) {
+    updateWith(() => window.piBot.dismissAttention(item.id));
+  }
   function showHistory(agentId: AgentId) {
     setHistoryAgentId(agentId);
     setSidebarOpen(true);
@@ -1783,9 +1871,9 @@ export function App() {
 
       return <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen} className="app-sidebar-provider">
         <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
-          <AppSidebar data={data} theme={theme} busy={busy} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
+          <AppSidebar data={data} theme={theme} busy={busy} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onAttention={showAttention} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
           <AnimatePresence initial={false} mode="wait">
-            {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
+            {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} /></motion.div> : view === "attention" ? <motion.div className="app-view" key="attention" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><AttentionInbox data={data} busy={busy} onOpen={openAttention} onMarkRead={markAttentionRead} onResolve={resolveAttention} onDismiss={dismissAttention} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
       </AnimatePresence>
       <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
     </div>

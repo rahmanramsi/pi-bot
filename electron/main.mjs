@@ -15,11 +15,21 @@ import {
   createAppDatabase,
   DATABASE_FILENAME,
   migrateLegacyStorage,
+  sessionIdFromPath,
+  sessionPathForId,
 } from "./app-database.mjs";
 import {
   createDatabaseSession,
   createDatabaseSessionManager,
 } from "./session-database-adapter.mjs";
+import {
+  ATTENTION_TOOL_NAMES,
+  attentionSourceEventId,
+  cleanAttentionText,
+  createAttentionTools,
+  mapExplicitAttentionEvent,
+  mapFailedAttentionEvent,
+} from "./attention.mjs";
 import { reasoningId, thinkingText } from "./reasoning.mjs";
 import {
   buildScheduledJob,
@@ -29,6 +39,7 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
 const codingTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const agentTools = [...codingTools, ...ATTENTION_TOOL_NAMES];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const browserPartitionPrefix = "persist:pi-bot-browser-";
 const configuredBrowserPartitions = new Set();
@@ -333,6 +344,58 @@ function messageText(content) {
   return content.map((part) => part?.type === "text" ? part.text : "").filter(Boolean).join("\n");
 }
 
+function runtimeSessionId(runtime) {
+  return runtime?.sessionManager?.getSessionId?.() ?? null;
+}
+
+function runtimeEventSourceId(runtime, event, fallback = "event") {
+  return attentionSourceEventId(runtimeSessionId(runtime), event, fallback);
+}
+
+function attentionSessionName(item) {
+  if (!item.sessionId) return "Session unavailable";
+  try {
+    const sessionPath = sessionPathForId(item.sessionId);
+    const info = appDatabase.getSession(sessionPath);
+    if (!info) return "Session unavailable";
+    const entries = appDatabase.getSessionEntries(sessionPath);
+    const named = [...entries].reverse().find((entry) => entry.type === "session_info" && typeof entry.name === "string" && entry.name.trim());
+    const firstUser = entries.find((entry) => entry.type === "message" && entry.message?.role === "user");
+    return named?.name || titleFromPrompt(firstUser ? messageText(firstUser.message.content) : "New conversation");
+  } catch {
+    return "Session unavailable";
+  }
+}
+
+function attentionItems() {
+  return appDatabase.listAttention().map((item) => ({
+    ...item,
+    agentName: item.agentId ? agentProfiles[item.agentId]?.name ?? "Deleted agent" : "Deleted agent",
+    sessionName: attentionSessionName(item),
+    sessionPath: item.sessionId ? sessionPathForId(item.sessionId) : null,
+  }));
+}
+
+function sendAttentionSync() {
+  send({ type: "attention-sync", attention: attentionItems(), attentionUnreadCount: appDatabase.attentionUnreadCount() });
+}
+
+function createRuntimeAttention(runtime, event) {
+  const mapped = mapExplicitAttentionEvent({ agentId: runtime?.agentId ?? null, sessionId: runtimeSessionId(runtime) }, event);
+  if (!mapped) return null;
+  const item = appDatabase.createAttentionItem({ ...mapped, originRunId: runtime?.runId ?? null });
+  if (mapped.type === "question") {
+    runtime.createdQuestion = true;
+    runtime.continuationAttentionId = item.id;
+  }
+  else {
+    runtime.runHadFailure = true;
+    runtime.failureRecorded = true;
+  }
+  sendAttentionSync();
+  return item;
+}
+
 function displayTime(timestamp) {
   return new Intl.DateTimeFormat("en", {
     hour: "2-digit",
@@ -586,7 +649,7 @@ function currentConfig(runtime = activeRuntime()) {
       percent: contextUsage?.percent ?? null,
     },
     models: availableModels.map(modelOption),
-    tools: codingTools,
+    tools: agentTools,
     session: currentSessionSummary(runtime),
   };
 }
@@ -647,6 +710,8 @@ async function bootstrap() {
     authenticated: availableModels.length > 0,
     activeAgentId,
     scheduledJobs: appDatabase.listScheduledJobs(),
+    attention: attentionItems(),
+    attentionUnreadCount: appDatabase.attentionUnreadCount(),
     profile,
   };
 }
@@ -752,9 +817,70 @@ function sendScheduledJobsSync() {
   send({ type: "scheduled-jobs-sync", scheduledJobs: appDatabase.listScheduledJobs() });
 }
 
+function handleAttentionRuntimeEvent(runtime, event) {
+  if (event.type === "agent_start") {
+    const continuing = Boolean(runtime.retrying);
+    runtime.runId = runtime.runId || randomUUID();
+    runtime.runHadFailure = false;
+    runtime.runAborted = false;
+    if (!continuing) runtime.pendingFailure = null;
+    if (!continuing) runtime.failureRecorded = false;
+    if (!continuing) runtime.createdQuestion = false;
+    runtime.retrying = false;
+  }
+
+  const explicit = createRuntimeAttention(runtime, event);
+  if (explicit && explicit.type !== "question") runtime.runHadFailure = true;
+
+  if (event.type === "turn_end" && event.message?.role === "assistant" && event.message.errorMessage) {
+    if (event.message.stopReason === "aborted") {
+      runtime.runAborted = true;
+      runtime.pendingFailure = null;
+    } else {
+      runtime.runHadFailure = true;
+      runtime.pendingFailure = mapFailedAttentionEvent({ agentId: runtime?.agentId ?? null, sessionId: runtimeSessionId(runtime) }, event.message, runtimeEventSourceId(runtime, event, "failure"));
+    }
+  }
+
+  if (event.type === "agent_end") {
+    if (event.willRetry) {
+      runtime.retrying = true;
+    } else if (runtime.pendingFailure && !runtime.runAborted) {
+      appDatabase.createAttentionItem({ ...runtime.pendingFailure, originRunId: runtime.runId ?? null });
+      runtime.failureRecorded = true;
+      sendAttentionSync();
+      runtime.pendingFailure = null;
+    }
+  }
+
+  if (event.type === "agent_settled") {
+    if (!runtime.runHadFailure && !runtime.runAborted && runtimeSessionId(runtime)) {
+      const sessionId = runtimeSessionId(runtime);
+      let changed = runtime.runId ? appDatabase.resolveAttentionForRun(sessionId, runtime.runId) : 0;
+      const target = runtime.continuationAttentionId ? appDatabase.getAttentionItem(runtime.continuationAttentionId) : null;
+      if (!runtime.createdQuestion) {
+        if (target?.status === "open"
+          && target.agentId === runtime.agentId
+          && target.sessionId === sessionId) {
+          appDatabase.resolveAttention(target.id);
+          changed += 1;
+        }
+        runtime.continuationAttentionId = null;
+      }
+      if (changed > 0) sendAttentionSync();
+    }
+    runtime.pendingFailure = null;
+    runtime.retrying = false;
+    runtime.runId = null;
+    runtime.failureRecorded = false;
+    runtime.createdQuestion = false;
+  }
+}
+
 function relay(runtime, event) {
   updateRuntimeTranscript(runtime, event);
   updatePendingSession(runtime, event);
+  handleAttentionRuntimeEvent(runtime, event);
   if (runtime.key !== activeRuntimeKey) return;
   if (event.type === "message_update" && event.assistantMessageEvent?.type === "thinking_start") {
     send({ type: "reasoning-start", id: reasoningId(event.message) });
@@ -866,7 +992,7 @@ function selectedModelFor(profile, manager, mode) {
   return undefined;
 }
 
-async function openSession({ mode = "continue", sessionPath, agentId = activeAgentId, workspaceOverride } = {}) {
+async function openSession({ mode = "continue", sessionPath, agentId = activeAgentId, workspaceOverride, continuationAttentionId = null } = {}) {
   if (agentId !== null && !isAgentId(agentId)) throw new Error("Invalid agent.");
   if (!agentId) {
     await closeCurrentSession();
@@ -889,6 +1015,7 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
   const requestedPath = mode === "open" ? sessionPath : mode === "continue" && mappedPathExists ? mappedPath : undefined;
   const existingRuntime = requestedPath ? sessionRuntimes.get(requestedPath) : undefined;
   if (existingRuntime) {
+    if (continuationAttentionId) existingRuntime.continuationAttentionId = continuationAttentionId;
     currentSessions[agentId] = requestedPath;
     activateRuntime(existingRuntime);
     saveSettings();
@@ -930,6 +1057,22 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
     return bootstrap();
   }
 
+  const runtime = {
+    key: sessionFile ?? `${agentId}:${manager.getSessionId()}`,
+    agentId,
+    workspace: profile.workspace,
+    workspaceTrusted: profile.workspaceTrusted,
+    session: null,
+    sessionManager: manager,
+    transcript: transcriptFromManager(manager, profile),
+    runId: null,
+    runHadFailure: false,
+    runAborted: false,
+    pendingFailure: null,
+    failureRecorded: false,
+    createdQuestion: false,
+    continuationAttentionId,
+  };
   const resourceLoader = await createResourceLoader(profile);
   const result = await createAgentSession({
     cwd: profile.workspace,
@@ -937,20 +1080,13 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
     modelRuntime,
     model: selectedModel,
     thinkingLevel: profile.thinkingLevel,
-    tools: codingTools,
+    tools: agentTools,
+    customTools: createAttentionTools({ onAttention: (event) => createRuntimeAttention(runtime, event) }),
     sessionManager: manager,
     settingsManager: SettingsManager.inMemory(),
     resourceLoader,
   });
-  const runtime = {
-    key: sessionFile ?? `${agentId}:${manager.getSessionId()}`,
-    agentId,
-    workspace: profile.workspace,
-    workspaceTrusted: profile.workspaceTrusted,
-    session: result.session,
-    sessionManager: manager,
-    transcript: transcriptFromManager(manager, profile),
-  };
+  runtime.session = result.session;
   runtime.unsubscribe = runtime.session.subscribe((event) => relay(runtime, event));
   sessionRuntimes.set(runtime.key, runtime);
   activeAgentId = agentId;
@@ -985,6 +1121,22 @@ async function executeScheduledJob(job) {
   const runtimeDir = userDataPath("runtime", "scheduled", job.id);
   let runtime;
   try {
+    runtime = {
+      key: `scheduled:${job.id}:${manager.getSessionId()}`,
+      agentId: job.agentId,
+      workspace: job.workspace,
+      workspaceTrusted: job.workspaceTrusted,
+      session: null,
+      sessionManager: manager,
+      transcript: transcriptFromManager(manager, scheduledProfile),
+      runId: null,
+      runHadFailure: false,
+      runAborted: false,
+      pendingFailure: null,
+      failureRecorded: false,
+      createdQuestion: false,
+      continuationAttentionId: null,
+    };
     const resourceLoader = await createResourceLoader(scheduledProfile, runtimeDir);
     const result = await createAgentSession({
       cwd: job.workspace,
@@ -992,20 +1144,13 @@ async function executeScheduledJob(job) {
       modelRuntime,
       model: selectedModel,
       thinkingLevel: job.thinkingLevel,
-      tools: codingTools,
+      tools: agentTools,
+      customTools: createAttentionTools({ onAttention: (event) => createRuntimeAttention(runtime, event) }),
       sessionManager: manager,
       settingsManager: SettingsManager.inMemory(),
       resourceLoader,
     });
-    runtime = {
-      key: `scheduled:${job.id}:${manager.getSessionId()}`,
-      agentId: job.agentId,
-      workspace: job.workspace,
-      workspaceTrusted: job.workspaceTrusted,
-      session: result.session,
-      sessionManager: manager,
-      transcript: transcriptFromManager(manager, scheduledProfile),
-    };
+    runtime.session = result.session;
     runtime.unsubscribe = runtime.session.subscribe((event) => relay(runtime, event));
     sessionRuntimes.set(runtime.key, runtime);
     sessionRecords[manager.getSessionFile()] = { agentId: job.agentId, workspace: job.workspace };
@@ -1232,12 +1377,21 @@ ipcMain.handle("pi:trust-workspace", async (_event, agentId) => {
 
 ipcMain.handle("pi:new-session", () => createSession({ mode: "new", agentId: activeAgentId }));
 
-ipcMain.handle("pi:open-session", async (_event, sessionPath, agentId) => {
+ipcMain.handle("pi:open-session", async (_event, sessionPath, agentId, attentionId) => {
   if (typeof sessionPath !== "string" || !sessionPath) throw new Error("Invalid session path.");
   if (!isAgentId(agentId)) throw new Error("Invalid agent.");
   const sessions = await listSessions(agentId);
   if (!sessions.some((entry) => entry.path === sessionPath)) throw new Error("That conversation is not in this workspace.");
-  return createSession({ mode: "open", sessionPath, agentId });
+  let continuationAttentionId = null;
+  if (attentionId !== undefined && attentionId !== null) {
+    if (typeof attentionId !== "string" || !attentionId) throw new Error("Invalid attention item.");
+    const item = appDatabase.getAttentionItem(attentionId);
+    if (!item || item.status !== "open" || item.agentId !== agentId || item.sessionId !== sessionIdFromPath(sessionPath)) {
+      throw new Error("That attention item does not belong to this conversation.");
+    }
+    continuationAttentionId = attentionId;
+  }
+  return createSession({ mode: "open", sessionPath, agentId, continuationAttentionId });
 });
 
 ipcMain.handle("pi:open-scheduled-session", async (_event, jobId) => {
@@ -1252,6 +1406,33 @@ ipcMain.handle("pi:open-scheduled-session", async (_event, jobId) => {
 });
 
 ipcMain.handle("pi:get-sessions", (_event, agentId = activeAgentId) => listSessions(agentId));
+
+ipcMain.handle("pi:get-attention", () => ({ attention: attentionItems(), attentionUnreadCount: appDatabase.attentionUnreadCount() }));
+
+function requireAttentionItem(id) {
+  if (typeof id !== "string" || !id || !appDatabase.getAttentionItem(id)) throw new Error("That attention item is no longer available.");
+}
+
+ipcMain.handle("pi:mark-attention-read", async (_event, id) => {
+  requireAttentionItem(id);
+  appDatabase.markAttentionRead(id);
+  sendAttentionSync();
+  return bootstrap();
+});
+
+ipcMain.handle("pi:resolve-attention", async (_event, id) => {
+  requireAttentionItem(id);
+  appDatabase.resolveAttention(id);
+  sendAttentionSync();
+  return bootstrap();
+});
+
+ipcMain.handle("pi:dismiss-attention", async (_event, id) => {
+  requireAttentionItem(id);
+  appDatabase.dismissAttention(id);
+  sendAttentionSync();
+  return bootstrap();
+});
 
 ipcMain.handle("pi:delete-session", async (_event, sessionPath) => {
   const sessions = await listSessions(activeAgentId);
@@ -1325,11 +1506,33 @@ ipcMain.handle("pi:prompt", async (_event, message) => {
     timestamp: displayTime(timestampMs),
     timestampMs,
   });
+  runtime.runId = randomUUID();
+  runtime.runHadFailure = false;
+  runtime.runAborted = false;
+  runtime.pendingFailure = null;
   try {
     await promptSession.prompt(message);
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);
-    if (runtime.key === activeRuntimeKey && text !== "Request was aborted") send({ type: "error", message: text });
+    if (text !== "Request was aborted") {
+      runtime.runHadFailure = true;
+      if (!runtime.failureRecorded) {
+        const item = runtime.pendingFailure ?? {
+          agentId: runtime.agentId,
+          sessionId: runtimeSessionId(runtime),
+          type: "failed",
+          summary: "The run ended with an error.",
+          details: cleanAttentionText(text),
+          sourceEventId: `${runtime.runId ?? randomUUID()}:prompt-error`,
+          originRunId: runtime.runId ?? null,
+        };
+        appDatabase.createAttentionItem(item);
+        runtime.failureRecorded = true;
+      }
+      runtime.pendingFailure = null;
+      sendAttentionSync();
+      if (runtime.key === activeRuntimeKey) send({ type: "error", message: text });
+    }
     throw error;
   } finally {
     runtime.transcript = transcriptFromManager(runtime.sessionManager, agentProfiles[runtime.agentId]);

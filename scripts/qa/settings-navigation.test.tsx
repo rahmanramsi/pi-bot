@@ -21,6 +21,8 @@ const data: PiBootstrap = {
   setup: { required: false, canContinue: true, canImportPiAuth: false, piAuthPath: "", credentialStorage: "protected-app-file", providers: [] },
   transcript: [],
   scheduledJobs: [],
+  attention: [],
+  attentionUnreadCount: 0,
 };
 
 const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));

@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -15,8 +16,9 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { recoverPendingSessions } from "./session-persistence.mjs";
 
 export const DATABASE_FILENAME = "pi-bot.sqlite";
-export const DATABASE_SCHEMA_VERSION = 5;
+export const DATABASE_SCHEMA_VERSION = 7;
 export const SESSION_PATH_PREFIX = "pi-session://";
+export const ATTENTION_TYPES = ["question", "failed", "blocked"];
 
 const migrationKey = "legacy-jsonl";
 const themePreferenceKey = "pi-bot.theme";
@@ -39,6 +41,12 @@ function integerToBool(value) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+export function stableAttentionItemId(agentId, sessionId, sourceEventId) {
+  if (typeof sourceEventId !== "string" || !sourceEventId.trim()) throw new Error("Attention source event id is required.");
+  const key = [agentId ?? "", sessionId ?? "", sourceEventId].join("\u0000");
+  return `attention-${createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
 }
 
 function normalizedPath(value) {
@@ -152,6 +160,30 @@ function readRows(statement, ...params) {
   return statement.all(...params).map((row) => ({ ...row }));
 }
 
+function attentionStatus(row) {
+  if (row.dismissed_at) return "dismissed";
+  if (row.resolved_at) return "resolved";
+  return "open";
+}
+
+function attentionItemFromRow(row) {
+  return {
+    id: row.id,
+    agentId: row.agent_id,
+    sessionId: row.session_id,
+    type: row.type,
+    summary: row.summary,
+    details: row.details,
+    sourceEventId: row.source_event_id,
+    originRunId: row.origin_run_id ?? null,
+    createdAt: row.created_at,
+    readAt: row.read_at,
+    resolvedAt: row.resolved_at,
+    dismissedAt: row.dismissed_at,
+    status: attentionStatus(row),
+  };
+}
+
 function createApplicationTables(database) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS app_state (
@@ -249,6 +281,39 @@ function migrateSchemaV5(database) {
   if (!columns.some((column) => column.name === "pinned")) database.exec("ALTER TABLE agents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
 }
 
+function migrateSchemaV6(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS attention_items (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+      session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+      type TEXT NOT NULL CHECK (type IN ('question', 'failed', 'blocked')),
+      summary TEXT NOT NULL,
+      details TEXT NOT NULL DEFAULT '',
+      source_event_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      read_at TEXT,
+      resolved_at TEXT,
+      dismissed_at TEXT,
+      UNIQUE (agent_id, session_id, source_event_id)
+    );
+    CREATE INDEX IF NOT EXISTS attention_items_unresolved_idx
+      ON attention_items (resolved_at, dismissed_at, read_at, created_at);
+    CREATE INDEX IF NOT EXISTS attention_items_session_idx
+      ON attention_items (session_id);
+    CREATE INDEX IF NOT EXISTS attention_items_agent_idx
+      ON attention_items (agent_id);
+  `);
+}
+
+function migrateSchemaV7(database) {
+  const columns = readRows(database.prepare("PRAGMA table_info(attention_items)"));
+  if (!columns.some((column) => column.name === "origin_run_id")) {
+    database.exec("ALTER TABLE attention_items ADD COLUMN origin_run_id TEXT");
+  }
+  database.exec("CREATE INDEX IF NOT EXISTS attention_items_origin_run_idx ON attention_items (session_id, origin_run_id)");
+}
+
 function normalizeWorkspacePreferences(value) {
   const record = asRecord(value);
   const tabs = Array.isArray(record.tabs)
@@ -320,6 +385,14 @@ export class AppDatabase {
       if (storedVersion < 5) {
         migrateSchemaV5(this.db);
         this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(5, nowIso());
+      }
+      if (storedVersion < 6) {
+        migrateSchemaV6(this.db);
+        this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(6, nowIso());
+      }
+      if (storedVersion < 7) {
+        migrateSchemaV7(this.db);
+        this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(7, nowIso());
       }
       this.db.prepare("INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(DATABASE_SCHEMA_VERSION));
     });
@@ -530,6 +603,114 @@ export class AppDatabase {
     return this.transaction(() => this.db.prepare("DELETE FROM scheduled_jobs WHERE id = ?").run(id).changes > 0);
   }
 
+  createAttentionItem({ id, agentId = null, sessionId = null, type, summary, details = "", sourceEventId, originRunId = null, createdAt = nowIso() }) {
+    if (!ATTENTION_TYPES.includes(type)) throw new Error("Invalid attention type.");
+    if (typeof summary !== "string" || !summary.trim()) throw new Error("Attention summary is required.");
+    if (typeof sourceEventId !== "string" || !sourceEventId.trim()) throw new Error("Attention source event id is required.");
+    const safeAgentId = typeof agentId === "string" && agentId ? agentId : null;
+    const safeSessionId = typeof sessionId === "string" && sessionId ? sessionIdFromPath(sessionId) ?? sessionId : null;
+    const itemId = typeof id === "string" && id ? id : stableAttentionItemId(safeAgentId, safeSessionId, sourceEventId);
+    const safeDetails = typeof details === "string" ? details : "";
+    const safeOriginRunId = typeof originRunId === "string" && originRunId ? originRunId : null;
+    return this.transaction(() => {
+      const existing = this.db.prepare(`
+        SELECT id, agent_id, session_id, type, summary, details, source_event_id,
+          origin_run_id, created_at, read_at, resolved_at, dismissed_at
+        FROM attention_items
+        WHERE agent_id IS ? AND session_id IS ? AND source_event_id = ?
+      `).get(safeAgentId, safeSessionId, sourceEventId);
+      if (existing) return attentionItemFromRow(existing);
+      this.db.prepare(`
+        INSERT INTO attention_items (
+          id, agent_id, session_id, type, summary, details, source_event_id, origin_run_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(itemId, safeAgentId, safeSessionId, type, summary.trim(), safeDetails, sourceEventId, safeOriginRunId, createdAt);
+      return attentionItemFromRow(this.db.prepare(`
+        SELECT id, agent_id, session_id, type, summary, details, source_event_id,
+          origin_run_id, created_at, read_at, resolved_at, dismissed_at
+        FROM attention_items WHERE id = ?
+      `).get(itemId));
+    });
+  }
+
+  getAttentionItem(id) {
+    if (typeof id !== "string" || !id) return null;
+    const row = this.db.prepare(`
+      SELECT id, agent_id, session_id, type, summary, details, source_event_id,
+        origin_run_id, created_at, read_at, resolved_at, dismissed_at
+      FROM attention_items WHERE id = ?
+    `).get(id);
+    return row ? attentionItemFromRow(row) : null;
+  }
+
+  listAttention({ includeDismissed = false } = {}) {
+    const rows = readRows(this.db.prepare(`
+      SELECT id, agent_id, session_id, type, summary, details, source_event_id,
+        origin_run_id, created_at, read_at, resolved_at, dismissed_at
+      FROM attention_items
+      ${includeDismissed ? "" : "WHERE dismissed_at IS NULL"}
+      ORDER BY CASE WHEN resolved_at IS NULL THEN 0 ELSE 1 END, created_at DESC
+    `));
+    return rows.map(attentionItemFromRow);
+  }
+
+  attentionUnreadCount() {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM attention_items
+      WHERE read_at IS NULL AND resolved_at IS NULL AND dismissed_at IS NULL
+    `).get();
+    return Number(row?.count ?? 0);
+  }
+
+  markAttentionRead(id) {
+    const timestamp = nowIso();
+    this.transaction(() => {
+      this.db.prepare("UPDATE attention_items SET read_at = COALESCE(read_at, ?) WHERE id = ?").run(timestamp, id);
+    });
+    return this.getAttentionItem(id);
+  }
+
+  resolveAttention(id) {
+    const timestamp = nowIso();
+    this.transaction(() => {
+      this.db.prepare("UPDATE attention_items SET read_at = COALESCE(read_at, ?), resolved_at = COALESCE(resolved_at, ?) WHERE id = ?").run(timestamp, timestamp, id);
+    });
+    return this.getAttentionItem(id);
+  }
+
+  dismissAttention(id) {
+    const timestamp = nowIso();
+    this.transaction(() => {
+      this.db.prepare("UPDATE attention_items SET read_at = COALESCE(read_at, ?), dismissed_at = COALESCE(dismissed_at, ?) WHERE id = ?").run(timestamp, timestamp, id);
+    });
+    return this.getAttentionItem(id);
+  }
+
+  resolveAttentionForRun(sessionId, originRunId, types = ["failed", "blocked"]) {
+    const id = sessionIdFromPath(sessionId) ?? sessionId;
+    const validTypes = types.filter((type) => ATTENTION_TYPES.includes(type));
+    if (!id || typeof originRunId !== "string" || !originRunId || validTypes.length === 0) return 0;
+    const placeholders = validTypes.map(() => "?").join(", ");
+    const timestamp = nowIso();
+    return this.transaction(() => this.db.prepare(`
+      UPDATE attention_items
+      SET read_at = COALESCE(read_at, ?), resolved_at = COALESCE(resolved_at, ?)
+      WHERE session_id = ? AND origin_run_id = ? AND resolved_at IS NULL AND dismissed_at IS NULL AND type IN (${placeholders})
+    `).run(timestamp, timestamp, id, originRunId, ...validTypes).changes);
+  }
+
+  deleteAttentionForSession(sessionId) {
+    const id = sessionIdFromPath(sessionId) ?? sessionId;
+    if (!id) return 0;
+    return this.transaction(() => this.db.prepare("DELETE FROM attention_items WHERE session_id = ?").run(id).changes);
+  }
+
+  deleteAttentionForAgent(agentId) {
+    if (typeof agentId !== "string" || !agentId) return 0;
+    return this.transaction(() => this.db.prepare("DELETE FROM attention_items WHERE agent_id = ?").run(agentId).changes);
+  }
+
   getState() {
     const appState = this.db.prepare("SELECT setup_complete, execution_risk_accepted, active_agent_id, thinking_level FROM app_state WHERE id = 1").get();
     const agents = readRows(this.db.prepare(`
@@ -728,6 +909,7 @@ export class AppDatabase {
     if (!sessionId) throw new Error("Invalid SQLite session path.");
     return this.transaction(() => {
       this.db.prepare("DELETE FROM preferences WHERE key IN (?, ?)").run(`pi-bot.workspace-panel:${sessionPath}`, `pi-bot.workspace-panel:${sessionId}`);
+      this.db.prepare("DELETE FROM attention_items WHERE session_id = ?").run(sessionId);
       return this.db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId).changes > 0;
     });
   }
@@ -738,6 +920,7 @@ export class AppDatabase {
       const deletePreferences = this.db.prepare("DELETE FROM preferences WHERE key IN (?, ?)");
       deletePreferences.run(`pi-bot.workspace-panel:${agentId}`, `pi-bot.workspace-panel:${agentId}`);
       for (const session of paths) deletePreferences.run(`pi-bot.workspace-panel:${session.path}`, `pi-bot.workspace-panel:${session.id}`);
+      this.db.prepare("DELETE FROM attention_items WHERE agent_id = ?").run(agentId);
       return this.db.prepare("DELETE FROM agents WHERE id = ?").run(agentId).changes > 0;
     });
   }

@@ -43,6 +43,28 @@ export type SessionSummary = {
   messageCount?: number;
 };
 
+export type AttentionType = "question" | "failed" | "blocked";
+export type AttentionStatus = "open" | "resolved" | "dismissed";
+
+export type AttentionItem = {
+  id: string;
+  agentId: AgentId | null;
+  sessionId: string | null;
+  sessionPath: string | null;
+  type: AttentionType;
+  summary: string;
+  details: string;
+  sourceEventId: string;
+  originRunId: string | null;
+  createdAt: string;
+  readAt: string | null;
+  resolvedAt: string | null;
+  dismissedAt: string | null;
+  status: AttentionStatus;
+  agentName: string;
+  sessionName: string;
+};
+
 export type ScheduledJobRecurrence = "once" | "daily" | "weekly" | "monthly";
 export type ScheduledJobStatus = "active" | "paused";
 export type ScheduledJobRunStatus = "running" | "succeeded" | "failed" | "missed";
@@ -161,6 +183,8 @@ export type PiBootstrap = {
   authenticated: boolean;
   activeAgentId: AgentId | null;
   scheduledJobs: ScheduledJob[];
+  attention: AttentionItem[];
+  attentionUnreadCount: number;
   profile?: AgentProfile;
 };
 
@@ -180,6 +204,7 @@ export type PiEvent =
   | { type: "auth-prompt"; id: string; prompt: AuthPrompt }
   | { type: "auth-notify"; event: { type: string; message?: string; url?: string; instructions?: string; userCode?: string; verificationUri?: string } }
   | { type: "session-sync"; transcript: TimelineItem[]; sessions: SessionSummary[]; sessionsByAgent: Record<AgentId, SessionSummary[]>; config: PiConfig; agents: AgentProfile[]; setup: PiSetup; authenticated: boolean; activeAgentId: AgentId | null; scheduledJobs: ScheduledJob[] }
+  | { type: "attention-sync"; attention: AttentionItem[]; attentionUnreadCount: number }
   | { type: "scheduled-jobs-sync"; scheduledJobs: ScheduledJob[] };
 
 export type PiBotBridge = {
@@ -193,10 +218,14 @@ export type PiBotBridge = {
   deleteAgent: (agentId: AgentId, deleteWorkspace?: boolean) => Promise<PiBootstrap>;
   trustWorkspace: (agentId: AgentId) => Promise<PiBootstrap>;
   newSession: () => Promise<PiBootstrap>;
-  openSession: (sessionPath: string, agentId: AgentId) => Promise<PiBootstrap>;
+  openSession: (sessionPath: string, agentId: AgentId, attentionId?: string) => Promise<PiBootstrap>;
   openScheduledSession: (jobId: string) => Promise<PiBootstrap>;
   deleteSession: (sessionPath: string) => Promise<PiBootstrap>;
   getSessions: (agentId?: AgentId | null) => Promise<SessionSummary[]>;
+  getAttention: () => Promise<{ attention: AttentionItem[]; attentionUnreadCount: number }>;
+  markAttentionRead: (id: string) => Promise<PiBootstrap>;
+  resolveAttention: (id: string) => Promise<PiBootstrap>;
+  dismissAttention: (id: string) => Promise<PiBootstrap>;
   getScheduledJobs: () => Promise<ScheduledJob[]>;
   createScheduledJob: (draft: ScheduledJobDraft) => Promise<PiBootstrap>;
   updateScheduledJob: (id: string, draft: ScheduledJobDraft) => Promise<PiBootstrap>;
