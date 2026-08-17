@@ -25,10 +25,13 @@ import {
   buildScheduledJob,
   ScheduledJobScheduler,
 } from "./scheduled-jobs.mjs";
+import { agentProfileToolName, createAgentProfileTool } from "./agent-profile-tool.mjs";
+import { migrateAppOwnedWorkspaces } from "./agent-workspace.mjs";
+import { refreshAgentRuntime } from "./agent-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
-const codingTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const codingTools = ["read", "bash", "edit", "write", "grep", "find", "ls", agentProfileToolName];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const browserPartitionPrefix = "persist:pi-bot-browser-";
 const configuredBrowserPartitions = new Set();
@@ -207,25 +210,19 @@ function defaultAgentProfile() {
   };
 }
 
-function readInstructions(workspace) {
-  const file = path.join(workspace, "AGENTS.md");
-  try {
-    return readFileSync(file, "utf8");
-  } catch {
-    return "";
-  }
-}
-
 function normalizeProfile(id, value = {}, fallback = {}) {
   const name = cleanText(value.name, fallback.name || "Untitled agent", 80) || "Untitled agent";
   const workspace = cleanText(value.workspace, fallback.workspace || defaultWorkspace(id), 2000) || defaultWorkspace(id);
   const workspaceKind = value.workspaceKind === "external" || fallback.workspaceKind === "external" ? "external" : "app";
+  const instructions = typeof value.instructions === "string"
+    ? value.instructions
+    : typeof fallback.instructions === "string" ? fallback.instructions : "";
   return {
     id,
     name,
     initials: cleanAvatar(value.initials, fallback.initials || "🤖").toUpperCase(),
     description: cleanText(value.description, fallback.description || "", 160),
-    instructions: typeof value.instructions === "string" ? value.instructions.slice(0, 20000) : readInstructions(workspace),
+    instructions: instructions.slice(0, 20000),
     workspace,
     workspaceKind,
     workspaceTrusted: workspaceKind === "app" || value.workspaceTrusted === true || fallback.workspaceTrusted === true,
@@ -364,7 +361,7 @@ function titleFromPrompt(prompt) {
 function listAgents({ includeArchived = true } = {}) {
   return Object.values(agentProfiles)
     .filter((agent) => includeArchived || !agent.archived)
-    .map((agent) => ({ ...agent, instructions: readInstructions(agent.workspace) }))
+    .map((agent) => ({ ...agent }))
     .sort((a, b) => Number(a.archived) - Number(b.archived) || a.name.localeCompare(b.name));
 }
 
@@ -385,8 +382,6 @@ function uniqueAgentId(seed) {
 
 function ensureWorkspace(profile) {
   mkdirSync(profile.workspace, { recursive: true });
-  const agentsFile = path.join(profile.workspace, "AGENTS.md");
-  if (!existsSync(agentsFile)) writeFileSync(agentsFile, "");
   mkdirSync(path.join(profile.workspace, ".agents", "skills"), { recursive: true });
 }
 
@@ -860,7 +855,6 @@ async function createResourceLoader(profile, runtimeDir = isolatedRuntimeDir(pro
   const skillResult = profile.workspaceTrusted
     ? loadSkillsFromDir({ dir: path.join(profile.workspace, ".agents", "skills"), source: "agent-workspace" })
     : { skills: [], diagnostics: [] };
-  const agentsFile = path.join(profile.workspace, "AGENTS.md");
   const loader = new DefaultResourceLoader({
     cwd: profile.workspace,
     agentDir: runtimeDir,
@@ -871,10 +865,8 @@ async function createResourceLoader(profile, runtimeDir = isolatedRuntimeDir(pro
     noThemes: true,
     noContextFiles: true,
     systemPrompt: "You are a helpful coding teammate. Work directly in the selected agent workspace using the available tools. Be clear and concise.",
+    appendSystemPromptOverride: (base) => profile.instructions ? [...base, profile.instructions] : base,
     skillsOverride: () => skillResult,
-    agentsFilesOverride: () => ({
-      agentsFiles: [{ path: agentsFile, content: readInstructions(profile.workspace) }],
-    }),
   });
   await loader.reload();
   return loader;
@@ -963,6 +955,7 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
     model: selectedModel,
     thinkingLevel: profile.thinkingLevel,
     tools: codingTools,
+    customTools: [createAgentProfileTool(profile)],
     sessionManager: manager,
     settingsManager: SettingsManager.inMemory(),
     resourceLoader,
@@ -1018,6 +1011,7 @@ async function executeScheduledJob(job) {
       model: selectedModel,
       thinkingLevel: job.thinkingLevel,
       tools: codingTools,
+      customTools: [createAgentProfileTool(scheduledProfile)],
       sessionManager: manager,
       settingsManager: SettingsManager.inMemory(),
       resourceLoader,
@@ -1170,6 +1164,9 @@ ipcMain.handle("pi:create-agent", async (_event, draft) => {
 ipcMain.handle("pi:update-agent", async (_event, value) => {
   if (!value || typeof value !== "object" || !isAgentId(value.id)) throw new Error("Invalid agent profile.");
   if (session?.isStreaming && value.id === activeAgentId) throw new Error("Wait for the response to finish before changing this agent.");
+  if ([...sessionRuntimes.values()].some((runtime) => runtime.agentId === value.id && runtime.session?.isStreaming)) {
+    throw new Error("Wait for the response to finish before changing this agent.");
+  }
   const current = agentProfiles[value.id];
   const next = normalizeProfile(value.id, {
     ...current,
@@ -1180,9 +1177,15 @@ ipcMain.handle("pi:update-agent", async (_event, value) => {
   }, current);
   agentProfiles[value.id] = next;
   ensureWorkspace(next);
-  writeFileSync(path.join(next.workspace, "AGENTS.md"), next.instructions ?? "");
   saveSettings();
-  return bootstrap();
+  return refreshAgentRuntime({
+    agentId: value.id,
+    currentWorkspace: current.workspace,
+    activeRuntime: activeRuntime(),
+    closeAgentSessions,
+    createSession,
+    bootstrap,
+  });
 });
 
 ipcMain.handle("pi:archive-agent", async (_event, agentId, archived) => {
@@ -1236,7 +1239,7 @@ ipcMain.handle("pi:choose-folder", async (_event, agentId = activeAgentId) => {
     cancelId: 1,
     title: "Trust workspace skills?",
     message: "Allow Pi Bot to load skills from this workspace's .agents/skills folder?",
-    detail: "AGENTS.md is loaded from the workspace. Skills stay disabled until you trust this folder.",
+    detail: "Skills stay disabled until you trust this folder.",
   });
   trusted = trust.response === 0;
   profile.workspace = selectedWorkspace;
@@ -1546,6 +1549,9 @@ app.whenReady().then(() => {
     normalizeAgent: (id, value, fallback) => normalizeProfile(id, value, fallback),
   });
   loadSettings();
+  migrateAppOwnedWorkspaces(agentProfiles, (profile, error) => {
+    console.warn(`Could not migrate workspace for ${profile.name}:`, error);
+  });
   loadCredentials();
   ensureAllWorkspaces();
   scheduledJobScheduler = new ScheduledJobScheduler({
