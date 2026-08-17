@@ -70,7 +70,8 @@ test("keeps profile persistence in main and sends current context to interactive
   assert.match(mainSource, /transcript: transcriptFromManager\(manager, scheduledProfile\),\s*profileVersion,/);
   assert.match(mainSource, /await refreshRuntimeProfileContext\(runtime\);\s*await runtime\.session\.prompt\(job\.prompt\)/);
   assert.match(mainSource, /await refreshRuntimeProfileContext\(runtime\);\s*const hasUserMessage/);
-  assert.match(mainSource, /appendUserProfileContext\(/);
+  assert.match(mainSource, /formatUserProfileContext\(currentUserProfile\)/);
+  assert.match(mainSource, /\.\.\.\(userProfileContext \? \[userProfileContext\] : \[\]\)/);
   assert.doesNotMatch(preloadSource, /appDatabase|node:sqlite|pi-bot\.sqlite/);
   assert.doesNotMatch(rendererSource, /localStorage.*(?:profile|userProfile)|(?:profile|userProfile).*localStorage/);
 });

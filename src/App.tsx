@@ -99,6 +99,7 @@ type WorkspaceTab = WorkspacePanelTab;
 
 const defaultBrowserUrl = "https://www.google.com/";
 const defaultAvatarEmoji = "🤖";
+const defaultUserAvatarEmoji = "🙂";
 
 function defaultWorkspacePanelPreferences(): WorkspacePanelPreferences {
   return {
@@ -1447,10 +1448,9 @@ function ProfileSettings({ profile, busy, onSave }: { profile: UserProfile; busy
   return <motion.section className="settings-detail profile-settings" layout data-motion="profile-settings">
     <div className="detail-heading"><div><span className="eyebrow">App settings</span><h2>Profile</h2><p>Share a little context about yourself with every Pi Bot agent. This profile stays local to this app.</p></div></div>
     <div className="settings-form profile-form">
-      <div className="profile-avatar-field"><div className="form-field"><span>Avatar</span><div className="profile-avatar-controls"><AvatarEmojiPicker value={avatar || defaultAvatarEmoji} onChange={setAvatar} disabled={busy} /><Button type="button" variant="ghost" size="sm" onClick={() => setAvatar("")} disabled={busy || !avatar}>Clear</Button></div></div></div>
+      <div className="profile-avatar-field"><div className="form-field"><span>Avatar</span><div className="profile-avatar-controls"><AvatarEmojiPicker value={avatar || defaultUserAvatarEmoji} onChange={setAvatar} disabled={busy} /><Button type="button" variant="ghost" size="sm" onClick={() => setAvatar("")} disabled={busy || !avatar}>Clear</Button></div></div></div>
       <label className="form-field"><span>Name <em>optional</em></span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Rahman" disabled={busy} /></label>
       <label className="form-field"><span>About you <em>optional</em></span><Textarea className="profile-about-field" rows={6} value={about} onChange={(event) => setAbout(event.target.value)} placeholder="Your background, preferences, goals, or working style" disabled={busy} /></label>
-      <Alert className="profile-warning"><CircleAlert /><AlertDescription>Do not add passwords, API keys, financial information, or other sensitive data to About you.</AlertDescription></Alert>
       <div className="settings-actions"><Button onClick={() => onSave({ avatar: avatar.trim(), name: name.trim(), about: about.trim() })} disabled={busy}><Check /> Save profile</Button></div>
     </div>
   </motion.section>;
@@ -1652,13 +1652,45 @@ function AuthPromptCard({ prompt, notice, onRespond, onCancel }: { prompt: { id:
   </Dialog>;
 }
 
-function SetupPage({ data, busy, error, onContinue, onImport, onApiKey, onOAuth }: { data: PiBootstrap; busy: boolean; error?: string; onContinue: (accepted: boolean) => void; onImport: (accepted: boolean) => void; onApiKey: (providerId: string, apiKey: string, accepted: boolean) => void; onOAuth: (provider: ProviderInfo, accepted: boolean) => void }) {
+function SetupPage({ data, busy, error, onSaveProfile, onContinue, onImport, onApiKey, onOAuth }: { data: PiBootstrap; busy: boolean; error?: string; onSaveProfile: (profile: UserProfile) => Promise<boolean>; onContinue: (accepted: boolean) => void; onImport: (accepted: boolean) => void; onApiKey: (providerId: string, apiKey: string, accepted: boolean) => void; onOAuth: (provider: ProviderInfo, accepted: boolean) => void }) {
+  const [step, setStep] = useState<"profile" | "provider">("profile");
+  const [avatar, setAvatar] = useState(data.userProfile.avatar);
+  const [name, setName] = useState(data.userProfile.name);
+  const [about, setAbout] = useState(data.userProfile.about);
   const apiProviders = data.setup.providers.filter((provider) => provider.methods.includes("api_key"));
   const [providerId, setProviderId] = useState(apiProviders[0]?.id ?? "");
   const [apiKey, setApiKey] = useState("");
   const [executionRiskAccepted, setExecutionRiskAccepted] = useState(false);
   const provider = data.setup.providers.find((item) => item.id === providerId);
-  return <motion.main className="setup-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={motionTransitions.standard} data-motion="setup-page"><motion.div className="setup-card" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...motionTransitions.emphasis, delay: 0.04 }}><div className="setup-mark"><img src="./branding/pi-bot-logo-dark.png" alt="" /></div><span className="eyebrow">Public Alpha</span><h1>Set up Pi Bot</h1><p className="setup-lede">Connect a provider and start chatting with a workspace teammate.</p><ErrorBanner message={error} /><label className="setup-risk"><input type="checkbox" checked={executionRiskAccepted} onChange={(event) => setExecutionRiskAccepted(event.target.checked)} /><span><strong>I understand the execution risk</strong><small>Pi Bot can run commands and read, create, edit, or delete files in the selected workspace without asking for approval for each action.</small></span></label>{apiProviders.length > 0 ? <motion.div className="setup-auth-form" layout><label className="form-field"><span>Provider</span><select className="field-select" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{apiProviders.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label className="form-field"><span>API key</span><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste a provider API key" /></label><Button className="setup-primary" onClick={() => onApiKey(providerId, apiKey, executionRiskAccepted)} disabled={busy || !executionRiskAccepted || !apiKey.trim() || !providerId}>{busy ? <LoaderCircle className="spin" /> : <KeyRound />} Connect provider</Button>{provider?.methods.includes("oauth") && <Button variant="outline" onClick={() => onOAuth(provider, executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><ExternalLink /> Sign in with subscription</Button>}</motion.div> : <p className="muted-copy">No direct API-key provider is available. You can import credentials from Pi if they are detected.</p>}{data.setup.canContinue && <Button className="setup-continue" variant="outline" onClick={() => onContinue(executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><Check /> Continue with connected provider</Button>}{data.setup.canImportPiAuth && <motion.div className="setup-import" layout><div><strong>Already use Pi?</strong><p>Import all detected Pi credentials once. The original auth stays untouched.</p></div><Button variant="outline" onClick={() => onImport(executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><KeyRound /> Import auth from Pi</Button></motion.div>}<p className="setup-storage"><LockKeyhole /> Credentials are stored in the app’s protected app file.</p></motion.div></motion.main>;
+  async function continueFromProfile() {
+    const saved = await onSaveProfile({ avatar: avatar.trim(), name: name.trim(), about: about.trim() });
+    if (saved) setStep("provider");
+  }
+  return <motion.main className="setup-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={motionTransitions.standard} data-motion="setup-page">
+    <motion.div className="setup-card" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ ...motionTransitions.emphasis, delay: 0.04 }}>
+      <div className="setup-mark"><img src="./branding/pi-bot-logo-dark.png" alt="" /></div>
+      <div className="setup-progress" aria-label="Setup progress"><span className={step === "profile" ? "active" : "complete"}>1 <small>Profile</small></span><span className={step === "provider" ? "active" : ""}>2 <small>Provider</small></span></div>
+      <ErrorBanner message={error} />
+      <AnimatePresence initial={false} mode="wait">
+        {step === "profile" ? <motion.section key="profile" className="setup-step" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={motionTransitions.standard} data-motion="setup-profile-step">
+          <div><span className="eyebrow">Step 1 of 2</span><h1>Tell your agents about you</h1><p className="setup-lede">Add context that every Pi Bot agent can use. You can leave everything blank and change it later.</p></div>
+          <div className="setup-profile-form">
+            <div className="form-field"><span>Avatar</span><div className="profile-avatar-controls"><AvatarEmojiPicker value={avatar || defaultUserAvatarEmoji} onChange={setAvatar} disabled={busy} /><Button type="button" variant="ghost" size="sm" onClick={() => setAvatar("")} disabled={busy || !avatar}>Clear</Button></div></div>
+            <label className="form-field"><span>Name <em>optional</em></span><Input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder="e.g. Rahman" disabled={busy} /></label>
+            <label className="form-field"><span>About you <em>optional</em></span><Textarea className="setup-profile-about" rows={5} value={about} onChange={(event) => setAbout(event.target.value)} maxLength={2000} placeholder="Your background, preferences, goals, or working style" disabled={busy} /></label>
+            <Button className="setup-primary" onClick={() => void continueFromProfile()} disabled={busy}>{busy ? <LoaderCircle className="spin" data-icon="inline-start" /> : <ChevronRight data-icon="inline-start" />} Continue</Button>
+          </div>
+        </motion.section> : <motion.section key="provider" className="setup-step" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={motionTransitions.standard} data-motion="setup-provider-step">
+          <div><Button className="setup-back" type="button" variant="ghost" size="sm" onClick={() => setStep("profile")} disabled={busy}><ArrowLeft data-icon="inline-start" /> Back</Button><span className="eyebrow">Step 2 of 2</span><h1>Connect a provider</h1><p className="setup-lede">Connect a provider and start chatting with a workspace teammate.</p></div>
+          <label className="setup-risk"><input type="checkbox" checked={executionRiskAccepted} onChange={(event) => setExecutionRiskAccepted(event.target.checked)} /><span><strong>I understand the execution risk</strong><small>Pi Bot can run commands and read, create, edit, or delete files in the selected workspace without asking for approval for each action.</small></span></label>
+          {apiProviders.length > 0 ? <motion.div className="setup-auth-form" layout><label className="form-field"><span>Provider</span><select className="field-select" value={providerId} onChange={(event) => setProviderId(event.target.value)}>{apiProviders.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label className="form-field"><span>API key</span><Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Paste a provider API key" /></label><Button className="setup-primary" onClick={() => onApiKey(providerId, apiKey, executionRiskAccepted)} disabled={busy || !executionRiskAccepted || !apiKey.trim() || !providerId}>{busy ? <LoaderCircle className="spin" data-icon="inline-start" /> : <KeyRound data-icon="inline-start" />} Connect provider</Button>{provider?.methods.includes("oauth") && <Button variant="outline" onClick={() => onOAuth(provider, executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><ExternalLink data-icon="inline-start" /> Sign in with subscription</Button>}</motion.div> : <p className="muted-copy">No direct API-key provider is available. You can import credentials from Pi if they are detected.</p>}
+          {data.setup.canContinue && <Button className="setup-continue" variant="outline" onClick={() => onContinue(executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><Check data-icon="inline-start" /> Continue with connected provider</Button>}
+          {data.setup.canImportPiAuth && <motion.div className="setup-import" layout><div><strong>Already use Pi?</strong><p>Import all detected Pi credentials once. The original auth stays untouched.</p></div><Button variant="outline" onClick={() => onImport(executionRiskAccepted)} disabled={busy || !executionRiskAccepted}><KeyRound data-icon="inline-start" /> Import auth from Pi</Button></motion.div>}
+          <p className="setup-storage"><LockKeyhole /> Credentials are stored in the app’s protected app file.</p>
+        </motion.section>}
+      </AnimatePresence>
+    </motion.div>
+  </motion.main>;
 }
 
 export function App() {
@@ -1811,7 +1843,7 @@ export function App() {
   }
 
   if (connecting || !data) return <motion.div className="loading-screen" initial={{ opacity: 0 }} animate={{ opacity: 1 }} data-motion="loading-screen"><LoaderCircle className="spin" /><span>Opening Pi Bot…</span></motion.div>;
-  if (data.setup.required) return <><SetupPage data={data} busy={busy} error={error} onContinue={(accepted) => void authenticate(() => window.piBot.completeSetup(accepted))} onImport={(accepted) => void authenticate(() => window.piBot.importPiAuth(accepted))} onApiKey={(providerId, apiKey, accepted) => void authenticate(() => window.piBot.setProviderApiKey(providerId, apiKey, accepted))} onOAuth={(provider, accepted) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth", accepted))} /><AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence></>;
+  if (data.setup.required) return <><SetupPage data={data} busy={busy} error={error} onSaveProfile={async (profile) => { try { return Boolean(await perform(() => window.piBot.saveUserProfile(profile))); } catch { return false; } }} onContinue={(accepted) => void authenticate(() => window.piBot.completeSetup(accepted))} onImport={(accepted) => void authenticate(() => window.piBot.importPiAuth(accepted))} onApiKey={(providerId, apiKey, accepted) => void authenticate(() => window.piBot.setProviderApiKey(providerId, apiKey, accepted))} onOAuth={(provider, accepted) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth", accepted))} /><AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence></>;
 
   const activeId = data.activeAgentId;
   const updateWith = (action: () => Promise<PiBootstrap | null>) => void perform(action);

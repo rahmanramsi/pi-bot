@@ -78,6 +78,8 @@ test("agent avatars use an emoji picker with a robot default", async () => {
 
   assert.match(app, /import \{ EmojiPicker \} from "frimousse"/);
   assert.match(app, /const defaultAvatarEmoji = "🤖"/);
+  assert.match(app, /const defaultUserAvatarEmoji = "🙂"/);
+  assert.equal(app.match(/AvatarEmojiPicker value=\{avatar \|\| defaultUserAvatarEmoji\}/g)?.length, 2);
   assert.match(editor, /<PopoverTrigger render=\{<Button type="button" variant="outline" className="avatar-picker-trigger"/);
   assert.match(editor, /<EmojiPicker\.Root columns=\{8\} onEmojiSelect=/);
   assert.match(editor, /<EmojiPicker\.Search aria-label="Search emoji"/);

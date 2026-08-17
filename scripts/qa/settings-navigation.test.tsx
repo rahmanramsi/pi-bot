@@ -129,7 +129,7 @@ describe("Settings navigation", () => {
     });
     await waitFor(() => expect(host.querySelector('[data-motion="profile-settings"]')).not.toBeNull());
     expect(host.textContent).toContain("About you");
-    expect(host.textContent).toContain("Do not add passwords, API keys");
+    expect(host.textContent).not.toContain("Do not add passwords, API keys");
 
     const save = [...host.querySelectorAll("button")].find((item) => item.textContent?.includes("Save profile")) as HTMLButtonElement;
     await act(async () => {
@@ -137,5 +137,36 @@ describe("Settings navigation", () => {
       await wait(30);
     });
     expect(bridge.saveUserProfile).toHaveBeenCalledWith({ avatar: "", name: "", about: "" });
+  });
+
+  it("collects the user profile before provider setup on first install", async () => {
+    const setupData: PiBootstrap = {
+      ...data,
+      authenticated: false,
+      setup: { ...data.setup, required: true, canContinue: false },
+      userProfile: { avatar: "🧑‍💻", name: "Rahman", about: "Prefers concise answers." },
+    };
+    bridge.connect = vi.fn(async () => setupData);
+    bridge.saveUserProfile = vi.fn(async (profile) => ({ ...setupData, userProfile: profile }));
+
+    await act(async () => {
+      root.render(<MotionProvider><App /></MotionProvider>);
+      await wait(30);
+    });
+    await waitFor(() => expect(host.querySelector('[data-motion="setup-profile-step"]')).not.toBeNull());
+    expect(host.textContent).toContain("Step 1 of 2");
+    expect(host.textContent).toContain("Tell your agents about you");
+    expect(host.textContent).not.toContain("Do not add passwords, API keys");
+    expect((host.querySelector('input[placeholder="e.g. Rahman"]') as HTMLInputElement).value).toBe("Rahman");
+    expect((host.querySelector('textarea[placeholder="Your background, preferences, goals, or working style"]') as HTMLTextAreaElement).value).toBe("Prefers concise answers.");
+
+    const next = [...host.querySelectorAll("button")].find((item) => item.textContent?.trim() === "Continue") as HTMLButtonElement;
+    await act(async () => {
+      next.click();
+    });
+    await waitFor(() => expect(host.querySelector('[data-motion="setup-provider-step"]')).not.toBeNull());
+    expect(bridge.saveUserProfile).toHaveBeenCalledWith({ avatar: "🧑‍💻", name: "Rahman", about: "Prefers concise answers." });
+    expect(host.textContent).toContain("Step 2 of 2");
+    expect(host.textContent).toContain("Connect a provider");
   });
 });

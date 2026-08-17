@@ -97,7 +97,7 @@ test("exposes app-owned preference operations through preload", () => {
   assert.match(app, /window\.piBot\.saveTheme\(next\)/);
   assert.match(app, /Profile/);
   assert.match(app, /About you/);
-  assert.match(app, /passwords, API keys/);
+  assert.doesNotMatch(app, /passwords, API keys/);
 });
 
 test("guards preference writes until the current session key finishes loading", () => {

@@ -30,6 +30,6 @@ test("agent profile tool returns only its own app-owned profile fields", async (
 });
 
 test("interactive and scheduled sessions receive the agent profile tool", () => {
-  assert.match(mainSource, /codingTools = \[[^\]]*agentProfileToolName/);
-  assert.equal(mainSource.match(/customTools: \[createAgentProfileTool\([^)]*\)\]/g)?.length, 2);
+  assert.match(mainSource, /agentTools = \[\.\.\.codingTools, agentProfileToolName, USER_PROFILE_TOOL_NAME\]/);
+  assert.equal(mainSource.match(/customTools: \[createAgentProfileTool\([^)]*\), userProfileTool\]/g)?.length, 2);
 });
