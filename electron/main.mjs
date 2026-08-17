@@ -19,12 +19,21 @@ import {
 import {
   createDatabaseSession,
   createDatabaseSessionManager,
+  createTeamDatabaseSession,
+  createTeamDatabaseSessionManager,
 } from "./session-database-adapter.mjs";
 import { reasoningId, thinkingText } from "./reasoning.mjs";
 import {
   buildScheduledJob,
   ScheduledJobScheduler,
 } from "./scheduled-jobs.mjs";
+import {
+  TEAM_RUN_LIMIT_DEFAULT,
+  TeamOrchestrator,
+  buildTeamPrompt,
+  parseTeamDirective,
+  validateTeamWorkspaceRoots,
+} from "./team-chats.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
@@ -63,6 +72,9 @@ let availableModels = [];
 let storedCredentials = {};
 let appDatabase;
 let scheduledJobScheduler;
+let teamOrchestrator;
+let activeTeamChatId = null;
+const teamRuntimes = new Map();
 const pendingAuthPrompts = new Map();
 let smokeTest;
 
@@ -636,6 +648,7 @@ function setupState() {
 async function bootstrap() {
   const profile = activeProfile();
   const runtime = activeRuntime();
+  const teamChat = activeTeamChatId ? teamChatForClient(activeTeamChatId) : null;
   const workspace = runtime?.workspace;
   return {
     config: currentConfig(runtime),
@@ -647,8 +660,45 @@ async function bootstrap() {
     authenticated: availableModels.length > 0,
     activeAgentId,
     scheduledJobs: appDatabase.listScheduledJobs(),
+    teamChats: listTeamChatsForClient(),
+    teamChat,
+    activeTeamChatId,
     profile,
   };
+}
+
+function teamMemberAvailable(member) {
+  const profile = agentProfiles[member.agentId];
+  try {
+    return Boolean(profile && !profile.archived && profile.workspace && existsSync(profile.workspace) && lstatSync(profile.workspace).isDirectory());
+  } catch {
+    return false;
+  }
+}
+
+function teamChatForClient(teamChatId) {
+  const chat = appDatabase.getTeamChat(teamChatId);
+  if (!chat) return null;
+  return {
+    ...chat,
+    members: chat.members.map((member) => ({ ...member, available: teamMemberAvailable(member) })),
+  };
+}
+
+function listTeamChatsForClient() {
+  return appDatabase.listTeamChats().map((chat) => ({
+    ...chat,
+    members: chat.members.map((member) => ({ ...member, available: teamMemberAvailable(member) })),
+  }));
+}
+
+function sendTeamSync(teamChatId = activeTeamChatId) {
+  send({
+    type: "team-sync",
+    teamChats: listTeamChatsForClient(),
+    teamChat: activeTeamChatId ? teamChatForClient(activeTeamChatId) : null,
+    activeTeamChatId,
+  });
 }
 
 function updateRuntimeTranscript(runtime, event) {
@@ -866,6 +916,188 @@ function selectedModelFor(profile, manager, mode) {
   return undefined;
 }
 
+function selectedTeamModelFor(profile) {
+  if (profile.defaultModelKey) {
+    const configured = availableModels.find((model) => modelKey(model) === profile.defaultModelKey);
+    if (configured) return configured;
+  }
+  return availableModels[0];
+}
+
+function teamRuntimeKey(teamChatId, agentId) {
+  return `${teamChatId}:${agentId}`;
+}
+
+function teamRuntimeDirectory(teamChatId, agentId) {
+  return userDataPath("runtime", "teams", encodeURIComponent(teamChatId), encodeURIComponent(agentId));
+}
+
+function teamLiveProfile(member) {
+  const profile = agentProfiles[member.agentId];
+  if (!profile || profile.archived || !teamMemberAvailable(member)) throw new Error(`${member.name} is unavailable. Restore the agent before continuing this handoff.`);
+  return { ...profile };
+}
+
+function relayTeamRuntime(runtime, event) {
+  if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+    const delta = event.assistantMessageEvent.delta;
+    runtime.liveText = `${runtime.liveText || ""}${delta}`;
+    send({ type: "team-agent-delta", teamChatId: runtime.teamChatId, agentId: runtime.agentId, delta });
+  }
+  if (event.type === "tool_execution_start") {
+    const activity = appDatabase.appendTeamEvent({
+      teamChatId: runtime.teamChatId,
+      runId: runtime.runId,
+      type: "activity",
+      agentId: runtime.agentId,
+      senderName: runtime.member.name,
+      senderInitials: runtime.member.initials,
+      body: stringify(event.args),
+      status: "running",
+      metadata: { activityId: event.toolCallId, toolName: event.toolName, input: stringify(event.args) },
+    });
+    runtime.activities.set(event.toolCallId, activity.id);
+    sendTeamSync(runtime.teamChatId);
+  }
+  if (event.type === "tool_execution_update") {
+    const id = runtime.activities.get(event.toolCallId);
+    if (id) {
+      appDatabase.updateTeamEvent(id, { body: stringify(event.partialResult), status: "running" });
+      sendTeamSync(runtime.teamChatId);
+    }
+  }
+  if (event.type === "tool_execution_end") {
+    const id = runtime.activities.get(event.toolCallId);
+    if (id) {
+      appDatabase.updateTeamEvent(id, { body: stringify(event.result), status: event.isError ? "failed" : "done" });
+      sendTeamSync(runtime.teamChatId);
+    }
+  }
+}
+
+async function ensureTeamRuntime(teamChatId, member, runId) {
+  const key = teamRuntimeKey(teamChatId, member.agentId);
+  if (teamRuntimes.has(key)) await disposeTeamRuntime(key);
+  const profile = teamLiveProfile(member);
+  await refreshRuntime();
+  const runtimeDir = teamRuntimeDirectory(teamChatId, member.agentId);
+  let stored = appDatabase.getTeamSession(teamChatId, member.agentId);
+  if (stored && path.resolve(stored.workspace) !== path.resolve(profile.workspace)) {
+    appDatabase.deleteTeamSession(teamChatId, member.agentId);
+    rmSync(runtimeDir, { recursive: true, force: true });
+    stored = null;
+  }
+  const manager = stored
+    ? createTeamDatabaseSessionManager({ database: appDatabase, profile, teamChatId, agentId: member.agentId, session: stored })
+    : createTeamDatabaseSession({ database: appDatabase, profile, teamChatId, agentId: member.agentId });
+  if (!stored) manager.appendSessionInfo(`Team · ${appDatabase.getTeamChat(teamChatId)?.name || "Connected Team"}`);
+  const selectedModel = selectedTeamModelFor(profile);
+  if (!selectedModel) throw new Error(`${member.name} does not have an available model.`);
+  const resourceLoader = await createResourceLoader(profile, runtimeDir);
+  const result = await createAgentSession({
+    cwd: profile.workspace,
+    agentDir: runtimeDir,
+    modelRuntime,
+    model: selectedModel,
+    thinkingLevel: profile.thinkingLevel,
+    tools: codingTools,
+    sessionManager: manager,
+    settingsManager: SettingsManager.inMemory(),
+    resourceLoader,
+  });
+  const runtime = {
+    key,
+    teamChatId,
+    agentId: member.agentId,
+    member,
+    profile,
+    workspace: profile.workspace,
+    workspaceKind: profile.workspaceKind,
+    workspaceTrusted: profile.workspaceTrusted,
+    session: result.session,
+    sessionManager: manager,
+    runId,
+    liveText: "",
+    activities: new Map(),
+  };
+  runtime.unsubscribe = runtime.session.subscribe((event) => relayTeamRuntime(runtime, event));
+  teamRuntimes.set(key, runtime);
+  return runtime;
+}
+
+async function disposeTeamRuntime(key) {
+  const runtime = teamRuntimes.get(key);
+  if (!runtime) return;
+  runtime.unsubscribe?.();
+  await runtime.session?.abort().catch(() => {});
+  runtime.session?.dispose();
+  teamRuntimes.delete(key);
+}
+
+async function disposeTeamRuntimes(teamChatId) {
+  const keys = [...teamRuntimes.values()].filter((runtime) => runtime.teamChatId === teamChatId).map((runtime) => runtime.key);
+  for (const key of keys) await disposeTeamRuntime(key);
+}
+
+function deleteTeamRuntimeData(teamChatId) {
+  rmSync(userDataPath("runtime", "teams", encodeURIComponent(teamChatId)), { recursive: true, force: true });
+}
+
+async function runTeamTurn({ run, member, members, request }) {
+  const profile = teamLiveProfile(member);
+  const liveMember = { ...member, name: profile.name, initials: profile.initials, workspace: profile.workspace, workspaceKind: profile.workspaceKind, workspaceTrusted: profile.workspaceTrusted };
+  const runtime = await ensureTeamRuntime(run.teamChatId, liveMember, run.id);
+  runtime.runId = run.id;
+  runtime.member = liveMember;
+  runtime.liveText = "";
+  runtime.activities.clear();
+  try {
+    const prompt = buildTeamPrompt({
+      goal: run.goal,
+      member: liveMember,
+      members,
+      events: appDatabase.listTeamEvents(run.teamChatId),
+      runCount: run.turnCount,
+      runLimit: run.runLimit,
+      request,
+    });
+    const before = runtime.sessionManager.getEntries().length;
+    await runtime.session.prompt(prompt);
+    const entries = runtime.sessionManager.getEntries().slice(before);
+    const assistant = [...entries].reverse().find((entry) => entry.type === "message" && entry.message?.role === "assistant");
+    if (!assistant) throw new Error(`${liveMember.name} did not produce a response.`);
+    const text = messageText(assistant.message.content) || assistant.message.errorMessage || "";
+    if (assistant.message.errorMessage) throw new Error(assistant.message.errorMessage);
+    const parsed = parseTeamDirective(text);
+    return { text, body: parsed.body || text, directive: parsed.directive };
+  } finally {
+    await disposeTeamRuntime(runtime.key);
+  }
+}
+
+function initializeTeamOrchestrator() {
+  teamOrchestrator = new TeamOrchestrator({
+    store: appDatabase,
+    getMembers: (teamChatId) => appDatabase.listTeamMembers(teamChatId).map((member) => ({ ...member, available: teamMemberAvailable(member) })),
+    runTurn: runTeamTurn,
+    abortTurn: async (teamChatId) => {
+      for (const runtime of teamRuntimes.values()) if (runtime.teamChatId === teamChatId) await runtime.session?.abort().catch(() => {});
+    },
+    onChange: (teamChatId) => sendTeamSync(teamChatId),
+  });
+}
+
+function teamAgentIsInFlight(agentId) {
+  const active = teamOrchestrator?.active;
+  if (!active) return false;
+  const run = appDatabase.getTeamRun(active.runId);
+  return run?.status === "running" && (run.activeAgentId === agentId || run.pendingAgentId === agentId);
+}
+
+function rejectTeamAgentMutation(agentId) {
+  if (teamAgentIsInFlight(agentId)) throw new Error("Stop the Connected Team run before changing or removing its active agent.");
+}
+
 async function openSession({ mode = "continue", sessionPath, agentId = activeAgentId, workspaceOverride } = {}) {
   if (agentId !== null && !isAgentId(agentId)) throw new Error("Invalid agent.");
   if (!agentId) {
@@ -1024,6 +1256,7 @@ async function executeScheduledJob(job) {
 }
 
 function createSession(options = {}) {
+  activeTeamChatId = null;
   const operation = sessionOperation.then(() => openSession(options), () => openSession(options));
   sessionOperation = operation.catch(() => undefined);
   return operation;
@@ -1116,6 +1349,7 @@ ipcMain.handle("pi:connect", async () => {
 
 ipcMain.handle("pi:select-agent", async (_event, agentId) => {
   if (!isAgentId(agentId) || agentProfiles[agentId].archived) throw new Error("That agent is not available.");
+  activeTeamChatId = null;
   return createSession({ agentId });
 });
 
@@ -1144,6 +1378,7 @@ ipcMain.handle("pi:create-agent", async (_event, draft) => {
 
 ipcMain.handle("pi:update-agent", async (_event, value) => {
   if (!value || typeof value !== "object" || !isAgentId(value.id)) throw new Error("Invalid agent profile.");
+  rejectTeamAgentMutation(value.id);
   if (session?.isStreaming && value.id === activeAgentId) throw new Error("Wait for the response to finish before changing this agent.");
   const current = agentProfiles[value.id];
   const next = normalizeProfile(value.id, {
@@ -1162,6 +1397,7 @@ ipcMain.handle("pi:update-agent", async (_event, value) => {
 
 ipcMain.handle("pi:archive-agent", async (_event, agentId, archived) => {
   if (!isAgentId(agentId)) throw new Error("Invalid agent.");
+  rejectTeamAgentMutation(agentId);
   if (session?.isStreaming && agentId === activeAgentId) throw new Error("Wait for the response to finish first.");
   agentProfiles[agentId].archived = Boolean(archived);
   if (agentProfiles[agentId].archived && activeAgentId === agentId) {
@@ -1177,6 +1413,7 @@ ipcMain.handle("pi:archive-agent", async (_event, agentId, archived) => {
 
 ipcMain.handle("pi:delete-agent", async (_event, agentId, deleteWorkspace = false) => {
   if (!isAgentId(agentId)) throw new Error("Invalid agent.");
+  rejectTeamAgentMutation(agentId);
   if (session?.isStreaming && agentId === activeAgentId) throw new Error("Wait for the response to finish first.");
   const profile = agentProfiles[agentId];
   await closeAgentSessions(agentId);
@@ -1195,6 +1432,7 @@ ipcMain.handle("pi:delete-agent", async (_event, agentId, deleteWorkspace = fals
 
 ipcMain.handle("pi:choose-folder", async (_event, agentId = activeAgentId) => {
   if (!isAgentId(agentId)) throw new Error("Select an agent first.");
+  rejectTeamAgentMutation(agentId);
   if (session?.isStreaming) throw new Error("Wait for the response to finish before changing the workspace.");
   const profile = agentProfiles[agentId];
   const result = await dialog.showOpenDialog(window, {
@@ -1224,19 +1462,24 @@ ipcMain.handle("pi:choose-folder", async (_event, agentId = activeAgentId) => {
 
 ipcMain.handle("pi:trust-workspace", async (_event, agentId) => {
   if (!isAgentId(agentId)) throw new Error("Invalid agent.");
+  rejectTeamAgentMutation(agentId);
   if (session?.isStreaming && agentId === activeAgentId) throw new Error("Wait for the response to finish first.");
   agentProfiles[agentId].workspaceTrusted = true;
   saveSettings();
   return agentId === activeAgentId ? createSession({ agentId }) : bootstrap();
 });
 
-ipcMain.handle("pi:new-session", () => createSession({ mode: "new", agentId: activeAgentId }));
+ipcMain.handle("pi:new-session", () => {
+  activeTeamChatId = null;
+  return createSession({ mode: "new", agentId: activeAgentId });
+});
 
 ipcMain.handle("pi:open-session", async (_event, sessionPath, agentId) => {
   if (typeof sessionPath !== "string" || !sessionPath) throw new Error("Invalid session path.");
   if (!isAgentId(agentId)) throw new Error("Invalid agent.");
   const sessions = await listSessions(agentId);
   if (!sessions.some((entry) => entry.path === sessionPath)) throw new Error("That conversation is not in this workspace.");
+  activeTeamChatId = null;
   return createSession({ mode: "open", sessionPath, agentId });
 });
 
@@ -1248,6 +1491,7 @@ ipcMain.handle("pi:open-scheduled-session", async (_event, jobId) => {
   if (!existsSync(job.workspace) || !lstatSync(job.workspace).isDirectory()) throw new Error("The scheduled job workspace is no longer available.");
   const stored = appDatabase.getSession(job.lastSessionPath);
   if (!stored || stored.agent_id !== job.agentId || stored.workspace !== job.workspace) throw new Error("The scheduled session is no longer available.");
+  activeTeamChatId = null;
   return createSession({ mode: "open", sessionPath: job.lastSessionPath, agentId: job.agentId, workspaceOverride: job.workspace });
 });
 
@@ -1303,8 +1547,113 @@ ipcMain.handle("pi:delete-scheduled-job", async (_event, id) => {
   return bootstrap();
 });
 
+function teamMembersFromAgentIds(agentIds) {
+  if (!Array.isArray(agentIds)) throw new Error("Choose at least two team members.");
+  const ids = [...new Set(agentIds.filter((id) => typeof id === "string" && id))];
+  if (ids.length < 2) throw new Error("A Connected Team needs at least two members.");
+  const members = ids.map((agentId) => {
+    const profile = agentProfiles[agentId];
+    if (!profile || profile.archived) throw new Error("Choose only non-archived agents.");
+    ensureWorkspace(profile);
+    return {
+      agentId,
+      name: profile.name,
+      initials: profile.initials,
+      workspace: profile.workspace,
+      workspaceKind: profile.workspaceKind,
+      workspaceTrusted: profile.workspaceTrusted,
+    };
+  });
+  const roots = validateTeamWorkspaceRoots(members, (workspace) => {
+    try { return realpathSync(workspace); } catch { return path.resolve(workspace); }
+  });
+  return members.map((member) => ({ ...member, workspace: roots.find((root) => root.agentId === member.agentId)?.workspace ?? member.workspace }));
+}
+
+ipcMain.handle("pi:list-team-chats", () => listTeamChatsForClient());
+
+ipcMain.handle("pi:create-team-chat", async (_event, name, agentIds, runLimit) => {
+  const members = teamMembersFromAgentIds(agentIds);
+  const team = appDatabase.createTeamChat({ name: cleanText(name, "Connected Team", 120) || "Connected Team", members, runLimit: Number.isInteger(runLimit) ? runLimit : TEAM_RUN_LIMIT_DEFAULT });
+  activeTeamChatId = team.id;
+  return bootstrap();
+});
+
+ipcMain.handle("pi:open-team-chat", async (_event, teamChatId) => {
+  if (teamChatId === "" || teamChatId === null) {
+    activeTeamChatId = null;
+    return bootstrap();
+  }
+  if (!appDatabase.getTeamChat(teamChatId)) throw new Error("That Connected Team chat is not available.");
+  activeTeamChatId = teamChatId;
+  return bootstrap();
+});
+
+ipcMain.handle("pi:rename-team-chat", async (_event, teamChatId, name) => {
+  const chat = appDatabase.getTeamChat(teamChatId);
+  if (!chat) throw new Error("That Connected Team chat is not available.");
+  if (teamOrchestrator?.isRunning(teamChatId)) throw new Error("Stop the team run before renaming this chat.");
+  appDatabase.updateTeamChat(teamChatId, { name: cleanText(name, "Connected Team", 120) });
+  activeTeamChatId = teamChatId;
+  return bootstrap();
+});
+
+ipcMain.handle("pi:update-team-members", async (_event, teamChatId, agentIds) => {
+  const chat = appDatabase.getTeamChat(teamChatId);
+  if (!chat) throw new Error("That Connected Team chat is not available.");
+  if (teamOrchestrator?.isRunning(teamChatId) || ["running", "queued"].includes(chat.runStatus)) throw new Error("Membership can change only while the team is idle.");
+  const members = teamMembersFromAgentIds(agentIds);
+  appDatabase.replaceTeamMembers(teamChatId, members);
+  appDatabase.appendTeamEvent({ teamChatId, type: "system", body: "Team membership updated.", status: "complete", metadata: { memberIds: members.map((member) => member.agentId) } });
+  activeTeamChatId = teamChatId;
+  return bootstrap();
+});
+
+ipcMain.handle("pi:delete-team-chat", async (_event, teamChatId) => {
+  if (!appDatabase.getTeamChat(teamChatId)) throw new Error("That Connected Team chat is not available.");
+  if (teamOrchestrator?.isRunning(teamChatId)) throw new Error("Stop the team run before deleting this chat.");
+  await disposeTeamRuntimes(teamChatId);
+  appDatabase.deleteTeamChat(teamChatId);
+  deleteTeamRuntimeData(teamChatId);
+  if (activeTeamChatId === teamChatId) activeTeamChatId = null;
+  return bootstrap();
+});
+
+ipcMain.handle("pi:start-team-run", async (_event, teamChatId, goal) => {
+  if (typeof goal !== "string" || !goal.trim()) throw new Error("Enter a team goal first.");
+  const chat = appDatabase.getTeamChat(teamChatId);
+  if (!chat) throw new Error("That Connected Team chat is not available.");
+  if (teamOrchestrator?.active) throw new Error("Another Connected Team run is already active.");
+  if (session?.isStreaming) throw new Error("Stop the single-agent response before starting a team run.");
+  activeTeamChatId = teamChatId;
+  await teamOrchestrator.start({ teamChatId, goal: goal.trim().slice(0, 4000), firstAgentId: chat.members[0]?.agentId });
+  return bootstrap();
+});
+
+ipcMain.handle("pi:stop-team-run", async (_event, teamChatId) => {
+  await teamOrchestrator.stop(teamChatId);
+  activeTeamChatId = teamChatId;
+  return bootstrap();
+});
+
+ipcMain.handle("pi:retry-team-run", async (_event, teamChatId) => {
+  if (session?.isStreaming) throw new Error("Stop the single-agent response before retrying a team run.");
+  activeTeamChatId = teamChatId;
+  await teamOrchestrator.retry(teamChatId);
+  return bootstrap();
+});
+
+ipcMain.handle("pi:resume-team-run", async (_event, teamChatId, direction) => {
+  if (typeof direction !== "string" || !direction.trim()) throw new Error("Enter a direction before resuming the team run.");
+  if (session?.isStreaming) throw new Error("Stop the single-agent response before resuming a team run.");
+  activeTeamChatId = teamChatId;
+  await teamOrchestrator.resume(teamChatId, direction.trim().slice(0, 4000));
+  return bootstrap();
+});
+
 ipcMain.handle("pi:prompt", async (_event, message) => {
   if (typeof message !== "string" || !message.trim()) return;
+  if (teamOrchestrator?.active) throw new Error("Stop the Connected Team run before sending a single-agent message.");
   if (!activeRuntime()?.session) {
     if (!activeProfile() || !currentConfig().modelAvailable) throw new Error("Choose an available model in App Settings before sending a message.");
     await createSession({ mode: "new", agentId: activeAgentId });
@@ -1341,6 +1690,7 @@ ipcMain.handle("pi:abort", () => session?.abort());
 
 ipcMain.handle("pi:set-agent-model", async (_event, agentId, key) => {
   if (!isAgentId(agentId) || typeof key !== "string") throw new Error("Invalid model selection.");
+  rejectTeamAgentMutation(agentId);
   if (!availableModels.some((model) => modelKey(model) === key)) throw new Error("That model is not available.");
   agentProfiles[agentId].defaultModelKey = key;
   saveSettings();
@@ -1349,6 +1699,7 @@ ipcMain.handle("pi:set-agent-model", async (_event, agentId, key) => {
 
 ipcMain.handle("pi:set-session-model", async (_event, agentId, key) => {
   if (!isAgentId(agentId) || typeof key !== "string") throw new Error("Invalid model selection.");
+  rejectTeamAgentMutation(agentId);
   const selectedModel = availableModels.find((model) => modelKey(model) === key);
   if (!selectedModel) throw new Error("That model is not available.");
   if (agentId !== activeAgentId) throw new Error("Select this agent before changing its model.");
@@ -1364,6 +1715,7 @@ ipcMain.handle("pi:set-session-model", async (_event, agentId, key) => {
 
 ipcMain.handle("pi:set-thinking-level", async (_event, agentId, level) => {
   if (!isAgentId(agentId) || !thinkingLevels.includes(level)) throw new Error("Invalid thinking level.");
+  rejectTeamAgentMutation(agentId);
   if (agentId === activeAgentId && session) {
     if (session.isStreaming) throw new Error("Stop the current response before changing reasoning.");
     if (!session.getAvailableThinkingLevels().includes(level)) throw new Error("That reasoning level is not supported by this model.");
@@ -1513,6 +1865,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   appDatabase = createAppDatabase(userDataPath(DATABASE_FILENAME));
+  appDatabase.markActiveTeamRunsInterrupted();
   migrateLegacyStorage(appDatabase, {
     settingsPath: legacySettingsFile(),
     sessionsRoot: userDataPath("sessions"),
@@ -1523,6 +1876,7 @@ app.whenReady().then(() => {
   loadSettings();
   loadCredentials();
   ensureAllWorkspaces();
+  initializeTeamOrchestrator();
   scheduledJobScheduler = new ScheduledJobScheduler({
     database: appDatabase,
     executeJob: executeScheduledJob,
@@ -1542,6 +1896,8 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   scheduledJobScheduler?.stop();
+  appDatabase?.markActiveTeamRunsInterrupted();
+  void teamOrchestrator?.shutdown();
   for (const pending of pendingAuthPrompts.values()) pending.reject(new Error("Authentication was cancelled."));
   pendingAuthPrompts.clear();
   for (const runtime of sessionRuntimes.values()) {
@@ -1549,6 +1905,11 @@ app.on("before-quit", () => {
     runtime.session?.dispose();
   }
   sessionRuntimes.clear();
+  for (const runtime of teamRuntimes.values()) {
+    runtime.unsubscribe?.();
+    runtime.session?.dispose();
+  }
+  teamRuntimes.clear();
   clearActiveRuntime();
   appDatabase?.close();
 });

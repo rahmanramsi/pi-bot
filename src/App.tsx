@@ -44,7 +44,7 @@ import {
   X,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
@@ -82,6 +82,10 @@ import type {
   ScheduledJobDraft,
   ScheduledJobRecurrence,
   SessionSummary,
+  TeamChat,
+  TeamChatSummary,
+  TeamEvent,
+  TeamMember,
   ThinkingLevel,
   TimelineItem,
   WorkspaceFile,
@@ -763,6 +767,168 @@ function AgentAvatar({ agent, className = "" }: { agent: AgentProfile; className
   return <Avatar className={`agent-avatar ${className}`} aria-hidden="true"><AvatarFallback>{agent.initials}</AvatarFallback></Avatar>;
 }
 
+function TeamAvatarGroup({ members, size = "sm" }: { members: TeamMember[]; size?: "sm" | "default" }) {
+  return <AvatarGroup className={`team-avatar-group ${size === "sm" ? "compact" : ""}`} aria-label={`${members.length} team members`}>
+    {members.slice(0, 4).map((member) => <Avatar key={member.agentId} size={size} className={`team-avatar ${member.available === false ? "unavailable" : ""}`}><AvatarFallback>{member.initials}</AvatarFallback></Avatar>)}
+    {members.length > 4 && <AvatarGroupCount className="team-avatar-count">+{members.length - 4}</AvatarGroupCount>}
+  </AvatarGroup>;
+}
+
+function TeamRosterDialog({
+  open,
+  title,
+  description,
+  data,
+  initialIds,
+  nameValue,
+  submitLabel,
+  onOpenChange,
+  onSubmit,
+}: {
+  open: boolean;
+  title: string;
+  description: string;
+  data: PiBootstrap;
+  initialIds: AgentId[];
+  nameValue?: string;
+  submitLabel: string;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (name: string, agentIds: AgentId[]) => Promise<void>;
+}) {
+  const [name, setName] = useState(nameValue ?? "");
+  const [selected, setSelected] = useState<AgentId[]>(initialIds);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string>();
+  const initialSelectionKey = initialIds.join(",");
+  useEffect(() => {
+    if (!open) return;
+    setName(nameValue ?? "");
+    setSelected(initialIds);
+    setSubmitting(false);
+    setFormError(undefined);
+  }, [open, initialSelectionKey, nameValue]);
+  const agents = data.agents.filter((agent) => !agent.archived);
+  const toggle = (agentId: AgentId) => setSelected((current) => current.includes(agentId) ? current.filter((id) => id !== agentId) : [...current, agentId]);
+  const submit = async () => {
+    if (selected.length < 2 || submitting) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(name.trim(), selected);
+      onOpenChange(false);
+    } catch (reason) {
+      setFormError(readableError(reason));
+      setSubmitting(false);
+    }
+  };
+  return <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className="team-roster-dialog" data-motion="team-roster-dialog">
+      <DialogHeader>
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription>{description}</DialogDescription>
+      </DialogHeader>
+      {formError && <p className="team-dialog-error" role="alert">{formError}</p>}
+      {nameValue !== undefined && <label className="form-field"><span>Team name <em>optional</em></span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Connected Team" autoFocus /></label>}
+      <div className="team-member-picker" role="group" aria-label="Team members">
+        {agents.map((agent) => {
+          const checked = selected.includes(agent.id);
+          return <button type="button" className={`team-member-option ${checked ? "selected" : ""}`} key={agent.id} onClick={() => toggle(agent.id)} aria-pressed={checked} data-motion="team-member-option"><AgentAvatar agent={agent} /><span><strong>{agent.name}</strong><small>{agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span><span className="team-member-check" aria-hidden="true">{checked ? <Check /> : null}</span></button>;
+        })}
+        {agents.length < 2 && <p className="muted-copy">Create at least two available agents before starting a team.</p>}
+      </div>
+      <p className={`team-member-count ${selected.length < 2 ? "invalid" : ""}`} aria-live="polite">{selected.length} member{selected.length === 1 ? "" : "s"} selected{selected.length < 2 ? " · choose at least two" : ""}</p>
+      <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>Cancel</Button><Button onClick={() => void submit()} disabled={selected.length < 2 || submitting}>{submitting ? <LoaderCircle className="spin" /> : <Check />}{submitLabel}</Button></DialogFooter>
+    </DialogContent>
+  </Dialog>;
+}
+
+function TeamRenameDialog({ open, currentName, onOpenChange, onRename }: { open: boolean; currentName: string; onOpenChange: (open: boolean) => void; onRename: (name: string) => Promise<void> }) {
+  const [name, setName] = useState(currentName);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { if (open) { setName(currentName); setSaving(false); } }, [open, currentName]);
+  const submit = async () => {
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    try { await onRename(name.trim()); onOpenChange(false); } catch { setSaving(false); }
+  };
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="team-rename-dialog"><DialogHeader><DialogTitle>Rename Connected Team</DialogTitle><DialogDescription>Choose the name shown in the dedicated team area.</DialogDescription></DialogHeader><label className="form-field"><span>Team name</span><Input value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button><Button onClick={() => void submit()} disabled={!name.trim() || saving}><Check /> Save name</Button></DialogFooter></DialogContent></Dialog>;
+}
+
+function TeamEventRow({ event }: { event: TeamEvent }) {
+  if (event.type === "user") return <div className="team-event team-user-event"><Message from="user" className="chat-message user"><MessageContent className="chat-message-main"><span className="user-message-text">{event.body}</span></MessageContent><MessageToolbar className="chat-message-footer"><time>{shortDate(event.createdAt)}</time></MessageToolbar></Message></div>;
+  if (event.type === "agent_message") return <div className="team-event team-agent-event"><div className="team-event-attribution"><Avatar className="team-event-avatar" size="sm"><AvatarFallback>{event.sender?.initials ?? "?"}</AvatarFallback></Avatar><strong>{event.sender?.name ?? "Unavailable agent"}</strong><time>{shortDate(event.createdAt)}</time></div><Message from="assistant" className="chat-message assistant"><MessageContent className="chat-message-main"><MarkdownContent body={event.body || "No response returned."} streaming={false} /></MessageContent></Message></div>;
+  if (event.type === "handoff") return <div className={`team-handoff-event ${event.status ?? "queued"}`} data-motion="team-handoff"><div className="team-event-attribution"><MessagesSquare /><strong>Visible handoff</strong><Badge variant="outline">{event.status === "waiting" ? "Waiting" : "Queued"}</Badge></div><p><strong>{event.sender?.name ?? "Unavailable agent"}</strong> → <strong>{event.recipient?.name ?? "Unavailable teammate"}</strong></p><p className="team-handoff-request">{event.request ?? event.body}</p>{event.reason && <small>Reason: {event.reason}</small>}</div>;
+  if (event.type === "activity") return <div className={`team-activity-event ${event.status ?? "done"}`}><FileText /><span><strong>{event.sender?.name ?? "Agent"}</strong> {event.status === "running" ? "is working…" : "worked"}</span><code>{event.body}</code></div>;
+  return <div className={`team-status-event ${event.status ?? ""}`}><span className="team-status-dot" aria-hidden="true" /><span>{event.body}</span>{event.status && <Badge variant="outline">{event.status}</Badge>}</div>;
+}
+
+function TeamChatTimeline({ chat, liveText, liveAgent }: { chat: TeamChat; liveText: string; liveAgent?: TeamMember }) {
+  return <Conversation className="team-timeline-conversation" aria-label="Connected Team timeline" initial="instant">
+    <ConversationContent className="team-timeline">
+      {chat.events.map((event) => <TeamEventRow key={event.id} event={event} />)}
+      {liveText && liveAgent && <div className="team-event team-agent-event team-live-event"><div className="team-event-attribution"><Avatar className="team-event-avatar" size="sm"><AvatarFallback>{liveAgent.initials}</AvatarFallback></Avatar><strong>{liveAgent.name}</strong><Badge variant="outline">Running</Badge></div><Message from="assistant" className="chat-message assistant"><MessageContent className="chat-message-main"><MarkdownContent body={liveText} streaming /></MessageContent></Message></div>}
+      {chat.events.length === 0 && <ConversationEmptyState className="empty-conversation" title="Start a team run" description="Give your connected team a goal and watch each handoff appear here." />}
+    </ConversationContent>
+    <ConversationScrollButton className="jump-latest" size="sm"><ArrowDown /></ConversationScrollButton>
+  </Conversation>;
+}
+
+function TeamChatWorkspace({
+  data: _data,
+  chat,
+  busy,
+  sidebarOpen,
+  error,
+  liveText,
+  liveAgentId,
+  onGoal,
+  onStop,
+  onRetry,
+  onResume,
+  onRename,
+  onManageMembers,
+  onBack,
+  onDelete,
+}: {
+  data?: PiBootstrap;
+  chat: TeamChat;
+  busy: boolean;
+  sidebarOpen: boolean;
+  error?: string;
+  liveText: string;
+  liveAgentId?: AgentId | null;
+  onGoal: (goal: string) => void;
+  onStop: () => void;
+  onRetry: () => void;
+  onResume: (direction: string) => void;
+  onRename: () => void;
+  onManageMembers: () => void;
+  onBack: () => void;
+  onDelete: () => void;
+}) {
+  const [goal, setGoal] = useState("");
+  const runStatus = chat.latestRun?.status ?? chat.runStatus;
+  const currentRunAgentId = chat.latestRun?.activeAgentId ?? null;
+  const currentMember = chat.members.find((member) => member.agentId === (currentRunAgentId ?? liveAgentId));
+  const pendingMember = chat.members.find((member) => member.agentId === (chat.latestRun?.pendingAgentId ?? chat.pendingAgentId));
+  const running = runStatus === "running" || busy;
+  const resumable = ["failed", "waiting", "stopped", "cancelled", "interrupted", "limit"].includes(runStatus);
+  const canManageMembers = !busy && !["running", "queued"].includes(runStatus);
+  const submit = () => { if (!goal.trim() || running) return; if (resumable) onResume(goal.trim()); else onGoal(goal.trim()); setGoal(""); };
+  return <main className="team-chat-pane" data-motion="team-chat-view">
+    <header className="section-topbar team-chat-topbar" aria-label="Connected Team toolbar">
+      {!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle" title="Show sidebar" aria-label="Show sidebar" data-motion="sidebar-toggle"><PanelLeftOpen data-icon="inline-start" /></SidebarTrigger>}
+      <Button variant="ghost" size="sm" onClick={onBack} aria-label="Back to agents"><ArrowLeft /> <span>Agents</span></Button>
+      <TeamAvatarGroup members={chat.members} />
+      <div className="team-chat-heading"><strong>{chat.name}</strong><small>{chat.members.length} members</small></div>
+      <div className="team-chat-actions"><Button variant="ghost" size="icon-sm" onClick={onRename} aria-label="Rename team chat" title="Rename team chat"><Pencil /></Button><Button variant="ghost" size="icon-sm" onClick={onManageMembers} aria-label="Manage team members" title="Manage team members" disabled={!canManageMembers}><Plus /></Button><Button variant="ghost" size="icon-sm" onClick={onDelete} aria-label="Delete team chat" title="Delete team chat"><Trash2 /></Button></div>
+    </header>
+    <ErrorBanner message={error} />
+    <div className="team-run-strip" aria-live="polite"><span className={`team-run-state ${runStatus}`}><span className="team-status-dot" /><span>{runStatus === "running" ? `Active: ${currentMember?.name ?? "agent"}` : runStatus === "waiting" ? `Waiting: ${pendingMember?.name ?? "user input"}` : runStatus === "complete" ? "Complete" : runStatus === "interrupted" ? "Interrupted on restart" : runStatus === "limit" ? "Visible run limit reached" : runStatus === "idle" ? "Ready" : runStatus}</span></span><span className="team-run-limit">Run limit: {chat.latestRun?.runLimit ?? chat.runLimit} turns</span>{pendingMember && runStatus === "running" && <span className="team-pending-chain">Next: {pendingMember.name}</span>}{chat.latestRun?.stopReason && runStatus !== "running" && <small>{chat.latestRun.stopReason}</small>}</div>
+    <TeamChatTimeline chat={chat} liveText={liveText} liveAgent={currentMember} />
+    <form className="team-composer" onSubmit={(event) => { event.preventDefault(); submit(); }}><Textarea value={goal} onChange={(event) => setGoal(event.target.value)} placeholder={resumable ? "Type direction for the team…" : `Message ${chat.name}`} aria-label={resumable ? "Team direction" : "Team goal"} disabled={running} /><div className="team-composer-footer"><span className="muted-copy">One bot at a time · handoffs are visible</span>{running ? <Button type="button" variant="outline" onClick={onStop}><Pause /> Stop run</Button> : resumable ? <><Button type="submit" disabled={!goal.trim()}><ArrowDown /> Send direction</Button><Button type="button" variant="outline" onClick={onRetry}><RotateCcw /> Retry same goal</Button></> : <Button type="submit" disabled={!goal.trim()}><ArrowDown /> Run team goal</Button>}</div></form>
+  </main>;
+}
+
 function AvatarEmojiPicker({ value, onChange, disabled }: { value: string; onChange: (emoji: string) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger render={<Button type="button" variant="outline" className="avatar-picker-trigger" disabled={disabled} aria-label="Choose avatar emoji" />}>{value || defaultAvatarEmoji}</PopoverTrigger><PopoverContent className="avatar-emoji-picker" align="end"><EmojiPicker.Root columns={8} onEmojiSelect={({ emoji }) => { onChange(emoji); setOpen(false); }}><EmojiPicker.Search aria-label="Search emoji" placeholder="Search emoji" /><EmojiPicker.Viewport><EmojiPicker.Loading>Loading…</EmojiPicker.Loading><EmojiPicker.Empty>No emoji found.</EmojiPicker.Empty><EmojiPicker.List /></EmojiPicker.Viewport></EmojiPicker.Root></PopoverContent></Popover>;
@@ -779,6 +945,10 @@ function AgentSidebarSection({
   onCreateAgent,
   onToggleTheme,
   onSettings,
+  teamChats,
+  onCreateTeam,
+  onOpenTeam,
+  onDeleteTeam,
 }: {
   data: PiBootstrap;
   theme: Theme;
@@ -790,6 +960,10 @@ function AgentSidebarSection({
   onCreateAgent: () => void;
   onToggleTheme: () => void;
   onSettings: () => void;
+  teamChats?: TeamChatSummary[];
+  onCreateTeam: () => void;
+  onOpenTeam: (teamChatId: string) => void;
+  onDeleteTeam: (team: TeamChatSummary) => void;
 }) {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const latestSessionFor = (agent: AgentProfile) => [...(data.sessionsByAgent[agent.id] ?? [])]
@@ -839,6 +1013,13 @@ function AgentSidebarSection({
           {agents.length === 0 && <li className="muted-copy agent-list-empty">{normalizedQuery ? "No agents match your search." : "No agents yet."}</li>}
         </SidebarMenu>
       </SidebarGroup>
+      <section className="team-sidebar-section" aria-label="Connected Teams">
+        <div className="team-sidebar-heading"><span>Connected Teams</span><Button variant="ghost" size="icon-sm" onClick={onCreateTeam} aria-label="Create Connected Team" title="Create Connected Team" disabled={busy}><Plus /></Button></div>
+        <div className="team-sidebar-list">
+          {(teamChats ?? []).map((team) => <ContextMenu key={team.id}><ContextMenuTrigger className="team-sidebar-context"><button type="button" className="team-sidebar-item" onClick={() => onOpenTeam(team.id)} data-motion="team-chat-select"><TeamAvatarGroup members={team.members} /><span><strong>{team.name}</strong><small>{team.runStatus === "running" ? "Running" : `${team.members.length} members`}</small></span><span className={`team-sidebar-state ${team.runStatus}`} aria-label={team.runStatus} /></button></ContextMenuTrigger><ContextMenuContent className="team-context-menu-content"><ContextMenuGroup><ContextMenuItem variant="destructive" disabled={busy || team.runStatus === "running"} onClick={() => onDeleteTeam(team)}><Trash2 /> Delete team chat</ContextMenuItem></ContextMenuGroup></ContextMenuContent></ContextMenu>)}
+          {(teamChats ?? []).length === 0 && <span className="muted-copy team-sidebar-empty">Create a team to connect agents.</span>}
+        </div>
+      </section>
       <div className="agent-inbox-footer">
         <Button className="agent-theme-button" variant="ghost" size="icon-sm" onClick={onToggleTheme} title={theme === "dark" ? "Use light mode" : "Use dark mode"} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>{theme === "dark" ? <Sun data-icon="inline-start" /> : <Moon data-icon="inline-start" />}</Button>
         <Button className="agent-settings-button" variant="ghost" size="icon-sm" onClick={onSettings} title="App settings" aria-label="App settings"><Settings2 data-icon="inline-start" /></Button>
@@ -935,6 +1116,9 @@ function AppSidebar({
   onOpenSession,
   onDeleteSession,
   onBackFromHistory,
+  onCreateTeam,
+  onOpenTeam,
+  onDeleteTeam,
 }: {
   data: PiBootstrap;
   theme: Theme;
@@ -949,6 +1133,9 @@ function AppSidebar({
   onOpenSession: (session: SessionSummary) => void;
   onDeleteSession: (session: SessionSummary) => void;
   onBackFromHistory: () => void;
+  onCreateTeam: () => void;
+  onOpenTeam: (teamChatId: string) => void;
+  onDeleteTeam: (team: TeamChatSummary) => void;
 }) {
   const [query, setQuery] = useState("");
   return (
@@ -957,7 +1144,7 @@ function AppSidebar({
         <SidebarTrigger className="sidebar-window-toggle" title="Hide sidebar" aria-label="Hide sidebar" data-motion="sidebar-toggle"><PanelLeftClose data-icon="inline-start" /></SidebarTrigger>
       </SidebarHeader>
       <SidebarContent className="app-sidebar-main">
-        {historyAgentId ? <HistorySidebar data={{ ...data, activeAgentId: historyAgentId }} theme={theme} busy={busy} onBack={onBackFromHistory} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} onToggleTheme={onToggleTheme} onSettings={onSettings} /> : <AgentSidebarSection data={data} theme={theme} busy={busy} query={query} onQueryChange={setQuery} onSelect={onSelectAgent} onTogglePin={onTogglePin} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} />}
+        {historyAgentId ? <HistorySidebar data={{ ...data, activeAgentId: historyAgentId }} theme={theme} busy={busy} onBack={onBackFromHistory} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} onToggleTheme={onToggleTheme} onSettings={onSettings} /> : <AgentSidebarSection data={data} theme={theme} busy={busy} query={query} onQueryChange={setQuery} onSelect={onSelectAgent} onTogglePin={onTogglePin} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} teamChats={data.teamChats} onCreateTeam={onCreateTeam} onOpenTeam={onOpenTeam} onDeleteTeam={onDeleteTeam} />}
       </SidebarContent>
     </Sidebar>
   );
@@ -1603,6 +1790,12 @@ export function App() {
   const [view, setView] = useState<View>("chat");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [historyAgentId, setHistoryAgentId] = useState<AgentId | null>(null);
+  const [teamDialogOpen, setTeamDialogOpen] = useState(false);
+  const [teamMembersDialogOpen, setTeamMembersDialogOpen] = useState(false);
+  const [teamRenameDialogOpen, setTeamRenameDialogOpen] = useState(false);
+  const [teamLiveText, setTeamLiveText] = useState("");
+  const [teamLiveAgentId, setTeamLiveAgentId] = useState<AgentId | null>(null);
+  const teamLiveAgentRef = useRef<AgentId | null>(null);
   const [createNewAgent, setCreateNewAgent] = useState(false);
   const [authPrompt, setAuthPrompt] = useState<{ id: string; prompt: AuthPrompt }>();
   const [authNotice, setAuthNotice] = useState<string>();
@@ -1646,6 +1839,29 @@ export function App() {
         else if (event.type === "auth-notify") setAuthNotice(event.event.message || event.event.instructions || (event.event.url ? `Continue in your browser: ${event.event.url}` : undefined));
         else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId, scheduledJobs: event.scheduledJobs } : previous);
         else if (event.type === "scheduled-jobs-sync") setData((previous) => previous ? { ...previous, scheduledJobs: event.scheduledJobs } : previous);
+        else if (event.type === "team-agent-delta") {
+          const switchedAgent = teamLiveAgentRef.current !== event.agentId;
+          teamLiveAgentRef.current = event.agentId;
+          setTeamLiveAgentId(event.agentId);
+          setTeamLiveText((previous) => switchedAgent ? event.delta : `${previous}${event.delta}`);
+          setBusy(true);
+        } else if (event.type === "team-sync") {
+          setData((previous) => previous ? { ...previous, teamChats: event.teamChats, teamChat: event.teamChat, activeTeamChatId: event.activeTeamChatId } : previous);
+          if (event.activeTeamChatId && event.teamChat?.runStatus !== "running") {
+            teamLiveAgentRef.current = null;
+            setTeamLiveAgentId(null);
+            setTeamLiveText("");
+            setBusy(false);
+          }
+        } else if (event.type === "team-event-sync") {
+          setData((previous) => previous ? { ...previous, teamChats: event.teamChat ? (previous.teamChats ?? []).map((team) => team.id === event.teamChat.id ? { ...team, ...event.teamChat } : team) : previous.teamChats, teamChat: event.teamChat } : previous);
+          if (event.teamChat.runStatus !== "running") {
+            teamLiveAgentRef.current = null;
+            setTeamLiveAgentId(null);
+            setTeamLiveText("");
+            setBusy(false);
+          }
+        }
       }
     });
     Promise.all([window.piBot.connect(), window.piBot.getTheme()]).then(([result, savedTheme]) => { setData(result); setTheme(savedTheme); setConnecting(false); }).catch((reason) => { setError(readableError(reason)); setConnecting(false); });
@@ -1718,6 +1934,7 @@ export function App() {
   if (data.setup.required) return <><SetupPage data={data} busy={busy} error={error} onContinue={(accepted) => void authenticate(() => window.piBot.completeSetup(accepted))} onImport={(accepted) => void authenticate(() => window.piBot.importPiAuth(accepted))} onApiKey={(providerId, apiKey, accepted) => void authenticate(() => window.piBot.setProviderApiKey(providerId, apiKey, accepted))} onOAuth={(provider, accepted) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth", accepted))} /><AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence></>;
 
   const activeId = data.activeAgentId;
+  const activeTeam = data.teamChat;
   const updateWith = (action: () => Promise<PiBootstrap | null>) => void perform(action);
   function navigateToChat(action: () => Promise<PiBootstrap | null>) {
     setError(undefined);
@@ -1726,7 +1943,70 @@ export function App() {
   }
   function selectAgent(agentId: AgentId) {
     setHistoryAgentId(null);
+    teamLiveAgentRef.current = null;
+    setTeamLiveText("");
+    setTeamLiveAgentId(null);
     navigateToChat(() => window.piBot.selectAgent(agentId));
+  }
+  function openTeam(teamChatId: string) {
+    setHistoryAgentId(null);
+    teamLiveAgentRef.current = null;
+    setTeamLiveText("");
+    setTeamLiveAgentId(null);
+    navigateToChat(() => window.piBot.openTeamChat(teamChatId));
+  }
+  async function createTeam(name: string, agentIds: AgentId[]) {
+    await perform(() => window.piBot.createTeamChat(name, agentIds));
+  }
+  async function manageTeamMembers(_name: string, agentIds: AgentId[]) {
+    const teamId = data?.activeTeamChatId;
+    if (!teamId) return;
+    await perform(() => window.piBot.updateTeamMembers(teamId, agentIds));
+  }
+  async function renameTeam(name: string) {
+    const teamId = data?.activeTeamChatId;
+    if (!teamId) return;
+    await perform(() => window.piBot.renameTeamChat(teamId, name));
+  }
+  function deleteTeam(team: TeamChatSummary) {
+    if (!window.confirm(`Delete “${team.name}” permanently? Agents and workspaces will stay.`)) return;
+    updateWith(() => window.piBot.deleteTeamChat(team.id));
+  }
+  function startTeamGoal(goal: string) {
+    const teamId = data?.activeTeamChatId;
+    if (!teamId) return;
+    setTeamLiveText("");
+    setTeamLiveAgentId(null);
+    teamLiveAgentRef.current = null;
+    void perform(() => window.piBot.startTeamRun(teamId, goal)).catch(() => undefined);
+  }
+  function stopTeamGoal() {
+    const teamId = data?.activeTeamChatId;
+    if (!teamId) return;
+    void perform(() => window.piBot.stopTeamRun(teamId)).catch(() => undefined);
+  }
+  function retryTeamGoal() {
+    const teamId = data?.activeTeamChatId;
+    if (!teamId) return;
+    setTeamLiveText("");
+    setTeamLiveAgentId(null);
+    teamLiveAgentRef.current = null;
+    void perform(() => window.piBot.retryTeamRun(teamId)).catch(() => undefined);
+  }
+  function resumeTeamGoal(direction: string) {
+    const teamId = data?.activeTeamChatId;
+    if (!teamId) return;
+    setTeamLiveText("");
+    setTeamLiveAgentId(null);
+    teamLiveAgentRef.current = null;
+    void perform(() => window.piBot.resumeTeamRun(teamId, direction)).catch(() => undefined);
+  }
+  function setActiveTeamChatId(teamChatId: string | null) {
+    setError(undefined);
+    teamLiveAgentRef.current = null;
+    setTeamLiveText("");
+    setTeamLiveAgentId(null);
+    void perform(() => window.piBot.openTeamChat(teamChatId ?? "")).catch(() => undefined);
   }
   function showHistory(agentId: AgentId) {
     setHistoryAgentId(agentId);
@@ -1783,10 +2063,13 @@ export function App() {
 
       return <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen} className="app-sidebar-provider">
         <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
-          <AppSidebar data={data} theme={theme} busy={busy} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
+          <AppSidebar data={data} theme={theme} busy={busy} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} onCreateTeam={() => { setTeamDialogOpen(true); setError(undefined); }} onOpenTeam={openTeam} onDeleteTeam={deleteTeam} />
           <AnimatePresence initial={false} mode="wait">
-            {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
+            {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}>{activeTeam ? <TeamChatWorkspace data={data} chat={activeTeam} busy={busy} sidebarOpen={sidebarOpen} error={error} liveText={teamLiveText} liveAgentId={teamLiveAgentId} onGoal={startTeamGoal} onStop={stopTeamGoal} onRetry={retryTeamGoal} onResume={resumeTeamGoal} onRename={() => setTeamRenameDialogOpen(true)} onManageMembers={() => setTeamMembersDialogOpen(true)} onBack={() => { setActiveTeamChatId?.(null); setError(undefined); }} onDelete={() => deleteTeam(activeTeam)} /> : <ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} />}</motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
       </AnimatePresence>
+      <TeamRosterDialog open={teamDialogOpen} title="Create Connected Team" description="Choose two or more active agents. Their existing avatars and workspaces stay independent while the team timeline is shared." data={data} initialIds={data.agents.filter((agent) => !agent.archived).slice(0, 2).map((agent) => agent.id)} nameValue="" submitLabel="Create team" onOpenChange={setTeamDialogOpen} onSubmit={createTeam} />
+      {activeTeam && <TeamRosterDialog open={teamMembersDialogOpen} title="Manage team members" description="Membership changes are available only while this team is idle. Existing timeline attribution stays intact." data={data} initialIds={activeTeam.members.map((member) => member.agentId)} submitLabel="Save members" onOpenChange={setTeamMembersDialogOpen} onSubmit={manageTeamMembers} />}
+      {activeTeam && <TeamRenameDialog open={teamRenameDialogOpen} currentName={activeTeam.name} onOpenChange={setTeamRenameDialogOpen} onRename={renameTeam} />}
       <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
     </div>
   </SidebarProvider>;

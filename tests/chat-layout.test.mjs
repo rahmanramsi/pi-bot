@@ -23,7 +23,7 @@ test("chat topbar identifies the active agent instead of the session title", asy
   assert.match(app, /<Conversation key=\{sessionId\} className="conversation-scroll" aria-label="Conversation" initial="instant">/);
 
   const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
-  const agentAvatar = app.match(/function AgentAvatar[\s\S]*?(?:function|const) (?:AgentInbox|AgentSidebarSection)/)?.[0] ?? "";
+  const agentAvatar = app.match(/function AgentAvatar[\s\S]*?\n}\n/)?.[0] ?? "";
   const avatar = styles.match(/\.agent-avatar\s*\{([^}]*)\}/)?.[1] ?? "";
   assert.match(avatar, /width:\s*38px/);
   assert.match(avatar, /height:\s*38px/);

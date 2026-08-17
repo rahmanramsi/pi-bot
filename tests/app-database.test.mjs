@@ -80,7 +80,7 @@ test("creates a versioned SQLite store with explicit durability pragmas", () => 
   const database = createAppDatabase(databasePath);
 
   assert.equal(existsSync(databasePath), true);
-  assert.equal(database.schemaVersion(), 5);
+  assert.equal(database.schemaVersion(), 6);
   assert.equal(database.pragma("foreign_keys"), 1);
   assert.equal(database.pragma("busy_timeout"), 5000);
   assert.equal(database.pragma("journal_mode"), "wal");
@@ -228,7 +228,7 @@ test("upgrades older schema markers and rejects unsupported newer versions", () 
   database.close();
 
   const upgraded = createAppDatabase(databasePath);
-  assert.equal(upgraded.schemaVersion(), 5);
+  assert.equal(upgraded.schemaVersion(), 6);
   upgraded.db.exec("DROP TABLE preferences");
   upgraded.db.exec("ALTER TABLE agents DROP COLUMN description");
   upgraded.db.exec("ALTER TABLE agents DROP COLUMN pinned");
@@ -240,7 +240,7 @@ test("upgrades older schema markers and rejects unsupported newer versions", () 
   upgraded.close();
 
   const migrated = createAppDatabase(databasePath);
-  assert.equal(migrated.schemaVersion(), 5);
+  assert.equal(migrated.schemaVersion(), 6);
   assert.equal(migrated.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'preferences'").get()?.name, "preferences");
   assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 2").get()?.version, 2);
   assert.equal(migrated.db.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'description'").get()?.name, "description");
@@ -248,6 +248,7 @@ test("upgrades older schema markers and rejects unsupported newer versions", () 
   assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 4").get()?.version, 4);
   assert.equal(migrated.db.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'pinned'").get()?.name, "pinned");
   assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 5").get()?.version, 5);
+  assert.equal(migrated.db.prepare("SELECT version FROM schema_migrations WHERE version = 6").get()?.version, 6);
   migrated.db.prepare("UPDATE schema_meta SET value = ? WHERE key = 'schema_version'").run("999");
   migrated.close();
 
@@ -265,11 +266,12 @@ test("creates scheduled jobs and agent pins when upgrading a description-only sc
   database.close();
 
   const upgraded = createAppDatabase(databasePath);
-  assert.equal(upgraded.schemaVersion(), 5);
+  assert.equal(upgraded.schemaVersion(), 6);
   assert.equal(upgraded.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_jobs'").get()?.name, "scheduled_jobs");
   assert.equal(upgraded.db.prepare("SELECT version FROM schema_migrations WHERE version = 4").get()?.version, 4);
   assert.equal(upgraded.db.prepare("SELECT name FROM pragma_table_info('agents') WHERE name = 'pinned'").get()?.name, "pinned");
   assert.equal(upgraded.db.prepare("SELECT version FROM schema_migrations WHERE version = 5").get()?.version, 5);
+  assert.equal(upgraded.db.prepare("SELECT version FROM schema_migrations WHERE version = 6").get()?.version, 6);
   upgraded.close();
 }));
 
