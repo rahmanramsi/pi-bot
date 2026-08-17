@@ -14,7 +14,6 @@ import {
   ExternalLink,
   FileText,
   Files,
-  Folder,
   FolderOpen,
   Globe2,
   KeyRound,
@@ -55,6 +54,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Context, ContextContent, ContextContentHeader, ContextTrigger } from "@/components/ai-elements/context";
+import { FileTree, FileTreeFile, FileTreeFolder } from "@/components/ai-elements/file-tree";
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse, MessageToolbar } from "@/components/ai-elements/message";
 import { PromptInput, PromptInputBody, PromptInputFooter, PromptInputSubmit, PromptInputTextarea, PromptInputTools, type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent } from "@/components/ai-elements/reasoning";
@@ -1009,63 +1009,99 @@ function makeFileTree(files: WorkspaceFile[]) {
     const parts = file.path.split("/").filter(Boolean);
     const name = parts.at(-1);
     if (!name) continue;
-    const node: FileTreeNode = { ...file, name, children: [] };
-    nodes.set(file.path, node);
-    const parent = nodes.get(parts.slice(0, -1).join("/"));
+    nodes.set(file.path, { ...file, name, children: [] });
+  }
+  for (const node of nodes.values()) {
+    const parentPath = node.path.split("/").slice(0, -1).join("/");
+    const parent = nodes.get(parentPath);
     if (parent) parent.children.push(node);
     else roots.push(node);
   }
   return roots;
 }
 
-function treeMatches(node: FileTreeNode, query: string): boolean {
-  return !query || node.name.toLocaleLowerCase().includes(query) || node.children.some((child) => treeMatches(child, query));
+function filterFileTree(nodes: FileTreeNode[], query: string): FileTreeNode[] {
+  if (!query) return nodes;
+  return nodes.flatMap((node) => {
+    const children = filterFileTree(node.children, query);
+    const matches = node.name.toLocaleLowerCase().includes(query);
+    if (!matches && children.length === 0) return [];
+    return [{ ...node, children }];
+  });
 }
 
-function FilesSidebar({ workspace }: { workspace: string }) {
+function matchingFolderPaths(nodes: FileTreeNode[], query: string) {
+  const paths = new Set<string>();
+  const visit = (node: FileTreeNode): boolean => {
+    const matches = node.name.toLocaleLowerCase().includes(query);
+    let childMatches = false;
+    node.children.forEach((child) => {
+      if (visit(child)) childMatches = true;
+    });
+    if (node.kind === "folder" && (matches || childMatches)) paths.add(node.path);
+    return matches || childMatches;
+  };
+  nodes.forEach(visit);
+  return paths;
+}
+
+export function FilesSidebar({ workspace }: { workspace: string }) {
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selectedPath, setSelectedPath] = useState<string>();
+  const loadRequest = useRef(0);
 
-  const loadFiles = async () => {
+  const loadFiles = useCallback(async () => {
+    const request = ++loadRequest.current;
     setLoading(true);
     setError(undefined);
     try {
-      setFiles(await window.piBot.listWorkspaceFiles());
+      const nextFiles = await window.piBot.listWorkspaceFiles();
+      if (request === loadRequest.current) setFiles(nextFiles);
     } catch (reason) {
-      setFiles([]);
-      setError(readableError(reason));
+      if (request === loadRequest.current) {
+        setFiles([]);
+        setError(readableError(reason));
+      }
     } finally {
-      setLoading(false);
+      if (request === loadRequest.current) setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { void loadFiles(); }, [workspace]);
+  useEffect(() => {
+    setFiles([]);
+    setExpanded(new Set());
+    setSelectedPath(undefined);
+    setQuery("");
+    void loadFiles();
+  }, [workspace, loadFiles]);
 
   const roots = useMemo(() => makeFileTree(files), [files]);
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const selectFile = (file: FileTreeNode) => {
-    if (file.kind === "folder") {
-      setExpanded((current) => {
-        const next = new Set(current);
-        if (next.has(file.path)) next.delete(file.path);
-        else next.add(file.path);
-        return next;
-      });
-      return;
-    }
+  const filteredRoots = useMemo(() => filterFileTree(roots, normalizedQuery), [normalizedQuery, roots]);
+  const expandedForDisplay = useMemo(() => {
+    if (!normalizedQuery) return expanded;
+    const next = new Set(expanded);
+    matchingFolderPaths(roots, normalizedQuery).forEach((path) => next.add(path));
+    return next;
+  }, [expanded, normalizedQuery, roots]);
+  const selectFile = useCallback((path: string) => {
+    setSelectedPath(path);
+    const file = files.find((entry) => entry.path === path);
+    if (!file || file.kind !== "file") return;
     setError(undefined);
-    void window.piBot.openWorkspaceFile(file.path).catch((reason) => setError(readableError(reason)));
-  };
-  const renderTree = (items: FileTreeNode[], depth = 0): ReactNode => items.filter((item) => treeMatches(item, normalizedQuery)).map((item) => {
-    const isFolder = item.kind === "folder";
-    const isOpen = expanded.has(item.path) || Boolean(normalizedQuery);
-    return <motion.div key={item.path} layout data-motion="file-tree-item"><motion.button type="button" className="file-tree-row" style={{ "--tree-indent": `${depth * 16}px` } as CSSProperties} onClick={() => selectFile(item)} title={item.path} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="file-tree-row">{isFolder ? <motion.span className="file-tree-arrow" animate={{ rotate: isOpen ? 90 : 0 }} transition={motionTransitions.micro}><ChevronRight /></motion.span> : <span className="file-tree-spacer" />}{isFolder ? <Folder /> : <FileText />}<span>{item.name}</span></motion.button><AnimatePresence initial={false}>{isFolder && isOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={motionTransitions.standard} layout>{renderTree(item.children, depth + 1)}</motion.div>}</AnimatePresence></motion.div>;
-  });
+    void window.piBot.openWorkspaceFile(path).catch((reason) => setError(readableError(reason)));
+  }, [files]);
+  const renderFileTreeNodes = (items: FileTreeNode[]): ReactNode[] => items.map((item) => item.kind === "folder"
+    ? <FileTreeFolder key={item.path} path={item.path} name={item.name} title={item.path} data-path={item.path}>{renderFileTreeNodes(item.children)}</FileTreeFolder>
+    : <FileTreeFile key={item.path} path={item.path} name={item.name} title={item.path} data-path={item.path} icon={<FileText aria-hidden="true" />} />);
+  const showEmpty = !loading && !error && files.length === 0;
+  const showNoMatches = !loading && !error && files.length > 0 && filteredRoots.length === 0;
 
-  return <div className="workspace-files"><AnimatePresence initial={false}>{error && <motion.div className="workspace-panel-error" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={motionTransitions.standard}><CircleAlert /><span>{error}</span></motion.div>}</AnimatePresence><div className="files-filter"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter files…" aria-label="Filter files" /><Button variant="ghost" size="icon-sm" onClick={() => void loadFiles()} disabled={loading} aria-label="Refresh files"><RefreshCw className={loading ? "spin" : ""} /></Button></div>{!loading && !error && files.length === 0 ? <Empty className="workspace-empty"><EmptyMedia variant="icon"><Files /></EmptyMedia><EmptyTitle>No files yet</EmptyTitle><EmptyDescription>Files created by your assistant will appear here.</EmptyDescription></Empty> : <div className="files-tree-list">{renderTree(roots)}</div>}</div>;
+  return <div className="workspace-files" aria-busy={loading}><AnimatePresence initial={false}>{error && <motion.div className="workspace-panel-error" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={motionTransitions.standard}><CircleAlert /><span>{error}</span></motion.div>}</AnimatePresence><div className="files-filter"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter files…" aria-label="Filter files" /><Button variant="ghost" size="icon-sm" onClick={() => void loadFiles()} disabled={loading} aria-label="Refresh files"><RefreshCw className={loading ? "spin" : ""} /></Button></div>{showEmpty ? <Empty className="workspace-empty"><EmptyMedia variant="icon"><Files /></EmptyMedia><EmptyTitle>No files yet</EmptyTitle><EmptyDescription>Files created by your assistant will appear here.</EmptyDescription></Empty> : showNoMatches ? <div className="files-tree-empty" role="status">No matching files.</div> : <FileTree className="files-tree-list" aria-label="Workspace files" expanded={expandedForDisplay} onExpandedChange={setExpanded} selectedPath={selectedPath} onSelect={selectFile}>{renderFileTreeNodes(filteredRoots)}</FileTree>}</div>;
 }
 
 export function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; partition: string; onChange: (next: Pick<WorkspaceTab, "url" | "title">) => void }) {
