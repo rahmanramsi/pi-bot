@@ -45,10 +45,39 @@ test("agent navigation is a full-width inbox with search and create action", asy
   assert.doesNotMatch(sidebar, /app-sidebar-columns/);
   assert.doesNotMatch(sidebar, /<SessionSidebar\b/);
 
-  const openShell = styles.match(/\.app-shell\.sidebar-open\s*\{([^}]*)\}/)?.[1] ?? "";
-  const sidebarWidth = Number(openShell.match(/grid-template-columns:\s*(\d+)px\s+minmax\(0,\s*1fr\)/)?.[1]);
-  assert.ok(Number.isFinite(sidebarWidth), "open sidebar must declare a fixed layout width");
-  assert.ok(sidebarWidth >= 300 && sidebarWidth <= 340, `sidebar width ${sidebarWidth}px must stay in the approved 300–340px range`);
+  assert.match(app, /<ResizablePanelGroup orientation="horizontal"/);
+  assert.match(app, /<ResizablePanel id="agent-sidebar" data-sidebar-panel[^>]*defaultSize=\{sidebarWidth\}[^>]*minSize=\{sidebarMinWidth\}[^>]*maxSize=\{sidebarMaxWidth\}[^>]*collapsedSize=\{sidebarCollapsedWidth\}[^>]*collapsible/);
+  assert.match(app, /onLayoutChanged=\{onLayoutChanged\}/);
+  assert.match(app, /onResize=\{onResize\}/);
+  assert.match(styles, /\.app-shell > \[data-panel\]/);
+  assert.doesNotMatch(styles, /grid-template-columns:\s*332px\s+minmax\(0,\s*1fr\)/);
+});
+
+test("collapsed agent navigation keeps an avatar-only rail and hides list-only content", async () => {
+  const { app, styles } = await readLayoutSources();
+  const sidebar = appSidebarSource(app);
+  const inbox = agentInboxSource(app);
+
+  assert.match(sidebar, /collapsible="icon"/);
+  assert.match(inbox, /tooltip=\{agent\.name\}/);
+  assert.match(inbox, /aria-label=\{agent\.name\}/);
+  assert.match(styles, /\.app-sidebar\[data-state="collapsed"\][^}]*\.agent-search/);
+  assert.match(styles, /\.app-sidebar\[data-state="collapsed"\] \.agent-list-copy/);
+  assert.match(styles, /\.app-sidebar\[data-state="collapsed"\] \.agent-inbox-footer\s*\{\s*display:\s*none/);
+  assert.match(app, /historyAgentId && sidebarOpen \? <HistorySidebar/);
+});
+
+test("expanded footer uses labeled theme and settings rows", async () => {
+  const { app, styles } = await readLayoutSources();
+  const inbox = agentInboxSource(app);
+  const history = historySource(app);
+
+  assert.match(inbox, /<SidebarFooter className="agent-inbox-footer"/);
+  assert.match(inbox, /Switch to light mode/);
+  assert.match(inbox, /Switch to dark mode/);
+  assert.match(inbox, /<span className="sidebar-label">App settings<\/span>/);
+  assert.match(history, /<SidebarFooter className="agent-inbox-footer"/);
+  assert.match(styles, /\.agent-footer-button/);
 });
 
 test("agent rows show the latest response preview and a selected state", async () => {
@@ -76,7 +105,7 @@ test("agents are ordered by pins and latest chat activity", async () => {
   assert.match(inbox, /agent\.pinned \? "Unpin agent" : "Pin agent"/);
   assert.match(inbox, /onTogglePin\(agent\)/);
   assert.match(inbox, /agent-pin-indicator/);
-  assert.match(inbox, /<ContextMenu>[\s\S]*?<ContextMenuTrigger[\s\S]*?<SidebarMenuButton[\s\S]*?<ContextMenuContent/);
+  assert.match(inbox, /<ContextMenu>[\s\S]*?<ContextMenuTrigger[\s\S]*?(?:<SidebarMenuButton|\{button\})[\s\S]*?<ContextMenuContent/);
   assert.doesNotMatch(inbox, /<DropdownMenu/);
   assert.doesNotMatch(inbox, /agent-list-menu/);
   assert.match(styles, /\.agent-context-menu-content/);
@@ -110,8 +139,9 @@ test("sidebar toggle keeps the main view placed and clear of window controls", a
 
   assert.match(sidebar, /TooltipProvider/);
   assert.match(sidebar, /<TooltipProvider>[\s\S]*?<SidebarContext\.Provider/);
-  assert.match(styles, /\.app-shell\.sidebar-open\s*>\s*\.app-view\s*\{[^}]*grid-column:\s*2/);
-  assert.match(styles, /\.app-shell\.sidebar-closed\s*>\s*\.app-view\s*\{[^}]*grid-column:\s*1/);
+  assert.match(app, /<ResizableHandle withHandle className="sidebar-resize-handle"[^>]*aria-label="Resize agent sidebar"/);
+  assert.doesNotMatch(app, /<ResizableHandle[^>]*onKeyDown/);
+  assert.match(styles, /\.sidebar-resize-handle/);
 
   const toggle = styles.match(/\.sidebar-window-toggle\s*\{([^}]*)\}/)?.[1] ?? "";
   const appSidebarStyles = styles.match(/^\.app-sidebar\s*\{([^}]*)\}/m)?.[1] ?? "";
@@ -122,8 +152,9 @@ test("sidebar toggle keeps the main view placed and clear of window controls", a
   assert.match(toggle, /-webkit-app-region:\s*no-drag/);
   assert.match(appSidebarStyles, /-webkit-app-region:\s*no-drag/);
   assert.match(chatTopbar, /-webkit-app-region:\s*drag/);
-  assert.match(app, /combined-sidebar-topbar section-topbar[\s\S]*?<SidebarTrigger className="sidebar-window-toggle"/);
-  assert.match(app, /!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle"/);
+  assert.match(app, /app-shell-frame[\s\S]*?<SidebarTrigger className="sidebar-window-toggle"/);
+  assert.equal([...app.matchAll(/<SidebarTrigger className="sidebar-window-toggle"/g)].length, 1);
+  assert.doesNotMatch(app, /!sidebarOpen && <SidebarTrigger/);
 });
 
 test("primary sections share one 46px topbar contract", async () => {

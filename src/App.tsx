@@ -62,11 +62,13 @@ import { Task, TaskContent, TaskTrigger } from "@/components/ai-elements/task";
 import { Terminal } from "@/components/ai-elements/terminal";
 import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput, type ToolStatus } from "@/components/ai-elements/tool";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Separator } from "@/components/ui/separator";
-import { Sidebar, SidebarContent, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AnimatePresence, motion, motionSprings, motionTimings, motionTransitions, useReducedMotion } from "./lib/motion";
+import { sidebarCollapsedWidth, sidebarMaxWidth, sidebarMinWidth, useSidebarPanelController } from "./lib/sidebar-layout";
 import { createStreamDeltaBatcher, type StreamDeltaBatcher } from "./lib/streaming";
 import { scheduledDateFromWallClock } from "./scheduled-time";
 import type {
@@ -791,6 +793,7 @@ function AgentSidebarSection({
   onToggleTheme: () => void;
   onSettings: () => void;
 }) {
+  const { state } = useSidebar();
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const latestSessionFor = (agent: AgentProfile) => [...(data.sessionsByAgent[agent.id] ?? [])]
     .sort((a, b) => new Date(b.modified ?? b.created ?? 0).getTime() - new Date(a.modified ?? a.created ?? 0).getTime())[0];
@@ -803,47 +806,56 @@ function AgentSidebarSection({
     .filter((agent) => !normalizedQuery || `${agent.name} ${agent.description}`.toLocaleLowerCase().includes(normalizedQuery))
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || latestTimestampFor(b) - latestTimestampFor(a) || a.name.localeCompare(b.name));
   return (
-    <section className="agent-sidebar-section">
-      <header className="agent-inbox-header">
+    <>
+      <SidebarHeader className="agent-inbox-header">
         <div className="agent-inbox-brand" title="Pi Bot">
           <img src={theme === "dark" ? "./branding/pi-bot-logo-dark.png" : "./branding/pi-bot-logo.png"} alt="Pi Bot" />
           <strong>Pi Bot</strong>
         </div>
         <Button className="agent-create-button" variant="ghost" size="icon" onClick={onCreateAgent} title="Create agent" aria-label="Create agent" disabled={busy}><Plus /></Button>
-      </header>
-      <label className="agent-search">
-        <Search aria-hidden="true" />
-        <Input value={query} onChange={(event) => onQueryChange(event.target.value)} className="agent-search-input" placeholder="Search" aria-label="Search agents" />
-      </label>
-      <SidebarGroup className="agent-sidebar-group">
-        <SidebarMenu className="agent-list" aria-label="Agents">
-          {agents.map((agent) => {
-            const latest = latestSessionFor(agent);
-            return <SidebarMenuItem key={agent.id}>
-              <ContextMenu>
-                <ContextMenuTrigger className="agent-list-context">
-                  <SidebarMenuButton className={`agent-list-item ${agent.id === data.activeAgentId ? "selected" : ""}`} isActive={agent.id === data.activeAgentId} onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} tooltip={agent.name} data-motion="agent-select">
-                    <AgentAvatar agent={agent} />
-                    <span className="agent-list-copy">
-                      <span className="agent-list-heading"><strong>{agent.name}</strong><span className="agent-list-meta">{agent.pinned && <span className="agent-pin-indicator" title="Pinned"><Pin aria-hidden="true" /></span>}<time>{shortDate(latest?.modified ?? latest?.created)}</time></span></span>
-                      <small>{latest?.preview ?? "Start a conversation"}</small>
-                    </span>
-                  </SidebarMenuButton>
-                </ContextMenuTrigger>
-                <ContextMenuContent className="agent-context-menu-content"><ContextMenuGroup>
-                  <ContextMenuItem disabled={busy} onClick={() => onTogglePin(agent)}>{agent.pinned ? <PinOff /> : <Pin />} {agent.pinned ? "Unpin agent" : "Pin agent"}</ContextMenuItem>
-                </ContextMenuGroup></ContextMenuContent>
-              </ContextMenu>
-            </SidebarMenuItem>;
-          })}
-          {agents.length === 0 && <li className="muted-copy agent-list-empty">{normalizedQuery ? "No agents match your search." : "No agents yet."}</li>}
+      </SidebarHeader>
+      <SidebarContent className="agent-sidebar-content">
+        <label className="agent-search">
+          <Search aria-hidden="true" />
+          <Input value={query} onChange={(event) => onQueryChange(event.target.value)} className="agent-search-input" placeholder="Search" aria-label="Search agents" />
+        </label>
+        <SidebarGroup className="agent-sidebar-group">
+          <SidebarMenu className="agent-list" aria-label="Agents">
+            {agents.map((agent) => {
+              const latest = latestSessionFor(agent);
+              const button = <SidebarMenuButton className={`agent-list-item ${agent.id === data.activeAgentId ? "selected" : ""}`} isActive={agent.id === data.activeAgentId} onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} tooltip={agent.name} data-motion="agent-select">
+                <AgentAvatar agent={agent} />
+                <span className="agent-list-copy">
+                  <span className="agent-list-heading"><strong>{agent.name}</strong><span className="agent-list-meta">{agent.pinned && <span className="agent-pin-indicator" title="Pinned"><Pin aria-hidden="true" /></span>}<time>{shortDate(latest?.modified ?? latest?.created)}</time></span></span>
+                  <small>{latest?.preview ?? "Start a conversation"}</small>
+                </span>
+              </SidebarMenuButton>;
+              return <SidebarMenuItem key={agent.id}>
+                {state === "collapsed" ? button : <ContextMenu>
+                  <ContextMenuTrigger className="agent-list-context">{button}</ContextMenuTrigger>
+                  <ContextMenuContent className="agent-context-menu-content"><ContextMenuGroup>
+                    <ContextMenuItem disabled={busy} onClick={() => onTogglePin(agent)}>{agent.pinned ? <PinOff /> : <Pin />} {agent.pinned ? "Unpin agent" : "Pin agent"}</ContextMenuItem>
+                  </ContextMenuGroup></ContextMenuContent>
+                </ContextMenu>}
+              </SidebarMenuItem>;
+            })}
+            {agents.length === 0 && <li className="muted-copy agent-list-empty">{normalizedQuery ? "No agents match your search." : "No agents yet."}</li>}
+          </SidebarMenu>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarFooter className="agent-inbox-footer">
+        <SidebarMenu className="agent-footer-menu">
+          <SidebarMenuItem>
+            <SidebarMenuButton className="agent-footer-button" onClick={onToggleTheme} title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} tooltip={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+              {theme === "dark" ? <Sun data-icon="inline-start" /> : <Moon data-icon="inline-start" />}<span className="sidebar-label">{theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton className="agent-footer-button" onClick={onSettings} title="App settings" aria-label="App settings" tooltip="App settings"><Settings2 data-icon="inline-start" /><span className="sidebar-label">App settings</span></SidebarMenuButton>
+          </SidebarMenuItem>
         </SidebarMenu>
-      </SidebarGroup>
-      <div className="agent-inbox-footer">
-        <Button className="agent-theme-button" variant="ghost" size="icon-sm" onClick={onToggleTheme} title={theme === "dark" ? "Use light mode" : "Use dark mode"} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>{theme === "dark" ? <Sun data-icon="inline-start" /> : <Moon data-icon="inline-start" />}</Button>
-        <Button className="agent-settings-button" variant="ghost" size="icon-sm" onClick={onSettings} title="App settings" aria-label="App settings"><Settings2 data-icon="inline-start" /></Button>
-      </div>
-    </section>
+      </SidebarFooter>
+    </>
   );
 }
 
@@ -885,39 +897,49 @@ function HistorySidebar({
   const sessions = agent ? data.sessionsByAgent[agent.id] ?? [] : [];
   const groups = groupSessions(sessions);
   return (
-    <section className="history-sidebar" data-motion="history-sidebar">
-      <header className="history-sidebar-header">
+    <>
+      <SidebarContent className="history-sidebar" data-motion="history-sidebar">
+        <header className="history-sidebar-header">
         <Button className="history-back-button" variant="ghost" size="sm" onClick={onBack} aria-label="Back to agents"><ArrowLeft /> <span>All agents</span></Button>
         {agent && <AgentAvatar agent={agent} />}
         <div className="history-sidebar-agent">
           <strong>{agent?.name ?? "No active agent"}</strong>
           {agent?.description && <small>{agent.description}</small>}
         </div>
-      </header>
-      <Button className="new-chat-button" onClick={onNewChat} disabled={!data.activeAgentId || busy}><MessageSquarePlus /> New conversation <Plus /></Button>
-      {agent && sessions.length === 0 && <Empty className="session-empty"><EmptyMedia variant="icon"><MessagesSquare /></EmptyMedia><EmptyHeader><EmptyTitle>No sessions yet</EmptyTitle><EmptyDescription>Start a new session with {agent.name}.</EmptyDescription></EmptyHeader></Empty>}
-      {!agent && <Empty className="session-empty"><EmptyMedia variant="icon"><Bot /></EmptyMedia><EmptyHeader><EmptyTitle>No active agents</EmptyTitle><EmptyDescription>Create an agent from the Agents section to begin.</EmptyDescription></EmptyHeader></Empty>}
-      <div className="session-groups">
-        {groups.map(([label, items]) => (
-          <section className="session-group" key={label}>
-            <h2>{label}</h2>
-            {items.map((chat) => (
-              <div className={`session-row ${chat.path === data.config.session?.path ? "selected" : ""}`} key={chat.path}>
-                <motion.button className="session-main" type="button" onClick={() => onOpenSession(chat)} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="session-select">
-                  <strong>{chat.name}</strong>
-                  <span><time>{shortDate(chat.modified)}</time>{typeof chat.messageCount === "number" && <small>{chat.messageCount} msg{chat.messageCount === 1 ? "" : "s"}</small>}</span>
-                </motion.button>
-                <SessionMenu chat={chat} busy={busy} onDeleteSession={onDeleteSession} />
-              </div>
-            ))}
-          </section>
-        ))}
-      </div>
-      <div className="agent-inbox-footer">
-        <Button className="agent-theme-button" variant="ghost" size="icon-sm" onClick={onToggleTheme} title={theme === "dark" ? "Use light mode" : "Use dark mode"} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>{theme === "dark" ? <Sun data-icon="inline-start" /> : <Moon data-icon="inline-start" />}</Button>
-        <Button className="agent-settings-button" variant="ghost" size="icon-sm" onClick={onSettings} title="App settings" aria-label="App settings"><Settings2 data-icon="inline-start" /></Button>
-      </div>
-    </section>
+        </header>
+        <Button className="new-chat-button" onClick={onNewChat} disabled={!data.activeAgentId || busy}><MessageSquarePlus /> New conversation <Plus /></Button>
+        {agent && sessions.length === 0 && <Empty className="session-empty"><EmptyMedia variant="icon"><MessagesSquare /></EmptyMedia><EmptyHeader><EmptyTitle>No sessions yet</EmptyTitle><EmptyDescription>Start a new session with {agent.name}.</EmptyDescription></EmptyHeader></Empty>}
+        {!agent && <Empty className="session-empty"><EmptyMedia variant="icon"><Bot /></EmptyMedia><EmptyHeader><EmptyTitle>No active agents</EmptyTitle><EmptyDescription>Create an agent from the Agents section to begin.</EmptyDescription></EmptyHeader></Empty>}
+        <div className="session-groups">
+          {groups.map(([label, items]) => (
+            <section className="session-group" key={label}>
+              <h2>{label}</h2>
+              {items.map((chat) => (
+                <div className={`session-row ${chat.path === data.config.session?.path ? "selected" : ""}`} key={chat.path}>
+                  <motion.button className="session-main" type="button" onClick={() => onOpenSession(chat)} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="session-select">
+                    <strong>{chat.name}</strong>
+                    <span><time>{shortDate(chat.modified)}</time>{typeof chat.messageCount === "number" && <small>{chat.messageCount} msg{chat.messageCount === 1 ? "" : "s"}</small>}</span>
+                  </motion.button>
+                  <SessionMenu chat={chat} busy={busy} onDeleteSession={onDeleteSession} />
+                </div>
+              ))}
+            </section>
+          ))}
+        </div>
+      </SidebarContent>
+      <SidebarFooter className="agent-inbox-footer">
+        <SidebarMenu className="agent-footer-menu">
+          <SidebarMenuItem>
+            <SidebarMenuButton className="agent-footer-button" onClick={onToggleTheme} title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} tooltip={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+              {theme === "dark" ? <Sun data-icon="inline-start" /> : <Moon data-icon="inline-start" />}<span className="sidebar-label">{theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton className="agent-footer-button" onClick={onSettings} title="App settings" aria-label="App settings" tooltip="App settings"><Settings2 data-icon="inline-start" /><span className="sidebar-label">App settings</span></SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+    </>
   );
 }
 
@@ -925,6 +947,7 @@ function AppSidebar({
   data,
   theme,
   busy,
+  sidebarOpen,
   historyAgentId,
   onSelectAgent,
   onTogglePin,
@@ -939,6 +962,7 @@ function AppSidebar({
   data: PiBootstrap;
   theme: Theme;
   busy: boolean;
+  sidebarOpen: boolean;
   historyAgentId: AgentId | null;
   onSelectAgent: (agentId: AgentId) => void;
   onTogglePin: (agent: AgentProfile) => void;
@@ -952,13 +976,9 @@ function AppSidebar({
 }) {
   const [query, setQuery] = useState("");
   return (
-    <Sidebar className="app-sidebar" collapsible="offcanvas" data-motion="app-sidebar">
-      <SidebarHeader className="combined-sidebar-topbar section-topbar" aria-label="Sidebar toolbar">
-        <SidebarTrigger className="sidebar-window-toggle" title="Hide sidebar" aria-label="Hide sidebar" data-motion="sidebar-toggle"><PanelLeftClose data-icon="inline-start" /></SidebarTrigger>
-      </SidebarHeader>
-      <SidebarContent className="app-sidebar-main">
-        {historyAgentId ? <HistorySidebar data={{ ...data, activeAgentId: historyAgentId }} theme={theme} busy={busy} onBack={onBackFromHistory} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} onToggleTheme={onToggleTheme} onSettings={onSettings} /> : <AgentSidebarSection data={data} theme={theme} busy={busy} query={query} onQueryChange={setQuery} onSelect={onSelectAgent} onTogglePin={onTogglePin} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} />}
-      </SidebarContent>
+    <Sidebar className="app-sidebar" collapsible="icon" data-motion="app-sidebar">
+      <SidebarHeader className="combined-sidebar-topbar section-topbar" aria-label="Sidebar toolbar" />
+      {historyAgentId && sidebarOpen ? <HistorySidebar data={{ ...data, activeAgentId: historyAgentId }} theme={theme} busy={busy} onBack={onBackFromHistory} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} onToggleTheme={onToggleTheme} onSettings={onSettings} /> : <AgentSidebarSection data={data} theme={theme} busy={busy} query={query} onQueryChange={setQuery} onSelect={onSelectAgent} onTogglePin={onTogglePin} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} />}
     </Sidebar>
   );
 }
@@ -1311,7 +1331,6 @@ function ChatView({
   return (
     <motion.main className="chat-pane" layout="position" data-motion="chat-view">
       <header className="section-topbar chat-section-topbar" aria-label="Conversation toolbar">
-        {!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle" title="Show sidebar" aria-label="Show sidebar" data-motion="sidebar-toggle"><PanelLeftOpen data-icon="inline-start" /></SidebarTrigger>}
         <div className="chat-agent-title">
           {agent && <AgentAvatar agent={agent} />}
           <span><strong>{agent?.name ?? "No active agent"}</strong></span>
@@ -1540,7 +1559,6 @@ function SettingsPage({
   return (
     <motion.main className="settings-page" layout data-motion="settings-page">
       <header className="section-topbar settings-section-topbar" aria-label="Settings toolbar">
-        {!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle" title="Show sidebar" aria-label="Show sidebar" data-motion="sidebar-toggle"><PanelLeftOpen data-icon="inline-start" /></SidebarTrigger>}
       </header>
       <header className="settings-header"><Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to chat"><ArrowLeft /></Button><div><span className="eyebrow">Pi Bot</span><h1>App Settings</h1></div></header>
       <div className="settings-layout">
@@ -1606,6 +1624,7 @@ export function App() {
   const [createNewAgent, setCreateNewAgent] = useState(false);
   const [authPrompt, setAuthPrompt] = useState<{ id: string; prompt: AuthPrompt }>();
   const [authNotice, setAuthNotice] = useState<string>();
+  const { sidebarWidth, sidebarPanelRef, onLayoutChanged, onResize } = useSidebarPanelController(sidebarOpen, setSidebarOpen);
   const streamBatcherRef = useRef<StreamDeltaBatcher | null>(null);
   if (!streamBatcherRef.current) {
     streamBatcherRef.current = createStreamDeltaBatcher((delta) => {
@@ -1782,12 +1801,20 @@ export function App() {
   }
 
       return <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen} className="app-sidebar-provider">
-        <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
-          <AppSidebar data={data} theme={theme} busy={busy} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
-          <AnimatePresence initial={false} mode="wait">
-            {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
-      </AnimatePresence>
-      <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
-    </div>
+        <div className="app-shell-frame">
+          <SidebarTrigger className="sidebar-window-toggle" title={sidebarOpen ? "Hide sidebar" : "Show sidebar"} aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"} data-motion="sidebar-toggle">{sidebarOpen ? <PanelLeftClose data-icon="inline-start" /> : <PanelLeftOpen data-icon="inline-start" />}</SidebarTrigger>
+          <ResizablePanelGroup orientation="horizontal" className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} id="app-layout" resizeTargetMinimumSize={{ coarse: 28, fine: 16 }} onLayoutChanged={onLayoutChanged} data-motion="app-shell">
+          <ResizablePanel id="agent-sidebar" data-sidebar-panel defaultSize={sidebarWidth} minSize={sidebarMinWidth} maxSize={sidebarMaxWidth} collapsedSize={sidebarCollapsedWidth} collapsible panelRef={sidebarPanelRef} onResize={onResize} className="app-sidebar-panel">
+          <AppSidebar data={data} theme={theme} busy={busy} sidebarOpen={sidebarOpen} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
+          </ResizablePanel>
+          <ResizableHandle withHandle className="sidebar-resize-handle" aria-label="Resize agent sidebar" />
+          <ResizablePanel id="app-view" data-app-view-panel className="app-view-panel">
+            <AnimatePresence initial={false} mode="wait">
+              {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
+            </AnimatePresence>
+            <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
+          </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
   </SidebarProvider>;
 }
