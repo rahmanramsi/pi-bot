@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, session as electronSession, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session as electronSession, shell, webContents as electronWebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,16 @@ import {
 } from "./session-database-adapter.mjs";
 import { reasoningId, thinkingText } from "./reasoning.mjs";
 import {
+  BrowserAutomationError,
+  browserGuestMatchesHost,
+  createBrowserAutomationService,
+  createBrowserTool,
+  browserPartitionForTab,
+  isAllowedBrowserUrl,
+  protectBrowserSessionManager,
+  summarizeBrowserToolCall,
+} from "./browser-automation.mjs";
+import {
   buildScheduledJob,
   ScheduledJobScheduler,
 } from "./scheduled-jobs.mjs";
@@ -29,9 +39,11 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
 const codingTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const enabledTools = [...codingTools, "browser"];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const browserPartitionPrefix = "persist:pi-bot-browser-";
 const configuredBrowserPartitions = new Set();
+const browserPartitionBySession = new WeakMap();
 const maxWorkspaceFiles = 500;
 const defaultAgentId = "assistant";
 const developmentServerUrl = process.env.PI_BOT_DEV_SERVER_URL;
@@ -58,6 +70,10 @@ let unsubscribe;
 let activeRuntimeKey;
 let sessionOperation = Promise.resolve();
 const sessionRuntimes = new Map();
+const browserAutomation = createBrowserAutomationService();
+const issuedBrowserPartitions = new Map();
+const pendingBrowserGuestPartitions = new Set();
+const pendingBrowserRegistrations = [];
 let modelRuntime;
 let availableModels = [];
 let storedCredentials = {};
@@ -110,23 +126,15 @@ function cleanAvatar(value, fallback) {
     .join("") || fallback;
 }
 
-function isAllowedBrowserUrl(value) {
-  try {
-    const url = new URL(value);
-    return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password;
-  } catch {
-    return false;
-  }
-}
-
 function isPiBotBrowserPartition(value) {
   return typeof value === "string" && value.startsWith(browserPartitionPrefix);
 }
 
 function configureBrowserSession(partition) {
+  const browserSession = electronSession.fromPartition(partition);
+  browserPartitionBySession.set(browserSession, partition);
   if (configuredBrowserPartitions.has(partition)) return;
   configuredBrowserPartitions.add(partition);
-  const browserSession = electronSession.fromPartition(partition);
   browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   browserSession.setPermissionCheckHandler(() => false);
   browserSession.on("will-download", (event) => event.preventDefault());
@@ -327,6 +335,10 @@ function stringify(value) {
   }
 }
 
+function toolActivityDetail(name, args) {
+  return name === "browser" ? summarizeBrowserToolCall(args) : stringify(args);
+}
+
 function messageText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -444,7 +456,7 @@ function transcriptFromManager(manager, profile = activeProfile()) {
       }
       for (const part of message.content ?? []) {
         if (part?.type !== "toolCall") continue;
-        const input = stringify(part.arguments);
+        const input = toolActivityDetail(part.name, part.arguments);
         const tool = { id: part.id, kind: "tool", label: `Tool · ${part.name}`, body: input, input, timestamp, timestampMs, status: "done" };
         items.push(tool);
         toolRows.set(part.id, tool);
@@ -520,18 +532,26 @@ function activeRuntime() {
 }
 
 function activateRuntime(runtime) {
+  if (activeRuntimeKey !== runtime.key) {
+    issuedBrowserPartitions.clear();
+    pendingBrowserGuestPartitions.clear();
+  }
   activeAgentId = runtime.agentId;
   activeRuntimeKey = runtime.key;
   session = runtime.session;
   sessionManager = runtime.sessionManager;
   unsubscribe = runtime.unsubscribe;
+  browserAutomation.activateScope({ agentId: runtime.agentId, sessionKey: runtime.key });
 }
 
 function clearActiveRuntime() {
+  issuedBrowserPartitions.clear();
+  pendingBrowserGuestPartitions.clear();
   activeRuntimeKey = undefined;
   session = undefined;
   sessionManager = undefined;
   unsubscribe = undefined;
+  browserAutomation.clearActiveScope();
 }
 
 function transcriptForRuntime(runtime) {
@@ -586,7 +606,7 @@ function currentConfig(runtime = activeRuntime()) {
       percent: contextUsage?.percent ?? null,
     },
     models: availableModels.map(modelOption),
-    tools: codingTools,
+    tools: enabledTools,
     session: currentSessionSummary(runtime),
   };
 }
@@ -705,8 +725,8 @@ function updateRuntimeTranscript(runtime, event) {
       id: event.toolCallId,
       kind: "tool",
       label: `Tool · ${event.toolName}`,
-      body: stringify(event.args),
-      input: stringify(event.args),
+      body: toolActivityDetail(event.toolName, event.args),
+      input: toolActivityDetail(event.toolName, event.args),
       status: "running",
       timestamp: displayTime(timestampMs),
       timestampMs,
@@ -769,7 +789,7 @@ function relay(runtime, event) {
     send({ type: "assistant-delta", delta: event.assistantMessageEvent.delta });
   }
   if (event.type === "tool_execution_start") {
-    send({ type: "tool-start", id: event.toolCallId, name: event.toolName, detail: stringify(event.args) });
+    send({ type: "tool-start", id: event.toolCallId, name: event.toolName, detail: toolActivityDetail(event.toolName, event.args) });
   }
   if (event.type === "tool_execution_update") {
     send({ type: "tool-update", id: event.toolCallId, detail: stringify(event.partialResult) });
@@ -784,6 +804,17 @@ function relay(runtime, event) {
   if (event.type === "agent_start") send({ type: "agent-start" });
   if (event.type === "agent_end") send({ type: "agent-end", retrying: event.willRetry });
   if (event.type === "agent_settled") send({ type: "agent-settled" });
+}
+
+function relayBrowserActivity(event) {
+  if (!event?.scope || event.scope.sessionKey !== activeRuntimeKey || event.scope.agentId !== activeAgentId) return;
+  send({
+    type: "browser-operation",
+    tabId: event.tabId,
+    action: event.action,
+    status: event.phase === "start" ? "running" : event.failed ? "failed" : "done",
+    detail: summarizeBrowserToolCall(event),
+  });
 }
 
 function updatePendingSession(_runtime, _event) {
@@ -915,6 +946,7 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
       })
       : createDatabaseSession({ database: appDatabase, profile, agentId });
   }
+  protectBrowserSessionManager(manager);
 
   const sessionFile = manager.getSessionFile();
   if (sessionFile) {
@@ -931,19 +963,22 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
   }
 
   const resourceLoader = await createResourceLoader(profile);
+  const runtimeKey = sessionFile ?? `${agentId}:${manager.getSessionId()}`;
+  const browserTool = createBrowserTool(browserAutomation, { agentId, sessionKey: runtimeKey }, relayBrowserActivity);
   const result = await createAgentSession({
     cwd: profile.workspace,
     agentDir: isolatedRuntimeDir(profile.id),
     modelRuntime,
     model: selectedModel,
     thinkingLevel: profile.thinkingLevel,
-    tools: codingTools,
+    tools: enabledTools,
+    customTools: [browserTool],
     sessionManager: manager,
     settingsManager: SettingsManager.inMemory(),
     resourceLoader,
   });
   const runtime = {
-    key: sessionFile ?? `${agentId}:${manager.getSessionId()}`,
+    key: runtimeKey,
     agentId,
     workspace: profile.workspace,
     workspaceTrusted: profile.workspaceTrusted,
@@ -1337,7 +1372,10 @@ ipcMain.handle("pi:prompt", async (_event, message) => {
   }
 });
 
-ipcMain.handle("pi:abort", () => session?.abort());
+ipcMain.handle("pi:abort", async () => {
+  browserAutomation.stop();
+  await session?.abort();
+});
 
 ipcMain.handle("pi:set-agent-model", async (_event, agentId, key) => {
   if (!isAgentId(agentId) || typeof key !== "string") throw new Error("Invalid model selection.");
@@ -1423,6 +1461,85 @@ ipcMain.handle("pi:get-theme", () => appDatabase.getTheme());
 ipcMain.handle("pi:save-theme", (_event, theme) => appDatabase.saveTheme(theme));
 ipcMain.handle("pi:get-workspace-preferences", (_event, key) => appDatabase.getWorkspacePreferences(key));
 ipcMain.handle("pi:save-workspace-preferences", (_event, key, preferences) => appDatabase.saveWorkspacePreferences(key, preferences));
+function rejectPendingBrowserRegistration(tabId, sessionKey) {
+  for (let index = pendingBrowserRegistrations.length - 1; index >= 0; index -= 1) {
+    const pending = pendingBrowserRegistrations[index];
+    if (pending.tabId !== tabId || pending.sessionKey !== sessionKey) continue;
+    pendingBrowserRegistrations.splice(index, 1);
+    pending.reject(new BrowserAutomationError("closed", "The browser tab or session is closed."));
+  }
+}
+
+function wakePendingBrowserRegistration(partition) {
+  const index = pendingBrowserRegistrations.findIndex((pending) => pending.partition === partition);
+  if (index === -1) return;
+  const [pending] = pendingBrowserRegistrations.splice(index, 1);
+  pending.resolve();
+}
+
+function recoverAttachedBrowserGuest(partition) {
+  const hostWebContents = window?.webContents;
+  const browserSession = electronSession.fromPartition(partition);
+  const contents = electronWebContents.getAllWebContents().find((candidate) => (
+    !candidate.isDestroyed?.()
+    && candidate.session === browserSession
+    && candidate.getType?.() === "webview"
+    && browserGuestMatchesHost(candidate, hostWebContents)
+  ));
+  if (!contents) return false;
+  browserAutomation.attachWebContents(contents, partition);
+  return true;
+}
+
+async function registerBrowserTabWhenAttached(tabId, sessionKey) {
+  const partition = browserPartitionForTab(sessionKey, tabId);
+  try {
+    return browserAutomation.registerTab({ tabId, sessionKey, partition });
+  } catch (error) {
+    if (!(error instanceof BrowserAutomationError) || error.code !== "tab-missing") throw error;
+    recoverAttachedBrowserGuest(partition);
+    try {
+      return browserAutomation.registerTab({ tabId, sessionKey, partition });
+    } catch (retryError) {
+      if (!(retryError instanceof BrowserAutomationError) || retryError.code !== "tab-missing") throw retryError;
+    }
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const index = pendingBrowserRegistrations.indexOf(pending);
+        if (index !== -1) pendingBrowserRegistrations.splice(index, 1);
+        reject(new BrowserAutomationError("tab-missing", "The browser tab is not attached for this chat session."));
+      }, 10_000);
+      const pending = {
+        tabId,
+        sessionKey,
+        partition,
+        resolve: () => { clearTimeout(timer); resolve(); },
+        reject: (reason) => { clearTimeout(timer); reject(reason); },
+      };
+      pendingBrowserRegistrations.push(pending);
+    });
+    return browserAutomation.registerTab({ tabId, sessionKey, partition });
+  }
+}
+
+ipcMain.handle("pi:get-browser-tab-partition", (event, tabId, sessionKey) => {
+  if (!window || event.sender.id !== window.webContents.id) throw new Error("Browser registration is unavailable.");
+  if (typeof tabId !== "string" || tabId.length > 160 || typeof sessionKey !== "string" || sessionKey.length > 2000 || activeRuntimeKey !== sessionKey) throw new Error("The browser session is unavailable.");
+  const partition = browserPartitionForTab(sessionKey, tabId);
+  issuedBrowserPartitions.set(partition, { tabId, sessionKey, hostWebContents: event.sender });
+  return partition;
+});
+ipcMain.handle("pi:browser-register-tab", (event, tabId, sessionKey) => {
+  if (!window || event.sender.id !== window.webContents.id) throw new Error("Browser registration is unavailable.");
+  if (typeof tabId !== "string" || tabId.length > 160 || typeof sessionKey !== "string" || sessionKey.length > 2000) throw new Error("Invalid browser tab registration.");
+  return registerBrowserTabWhenAttached(tabId, sessionKey);
+});
+ipcMain.handle("pi:browser-unregister-tab", (event, tabId, sessionKey) => {
+  if (!window || event.sender.id !== window.webContents.id) throw new Error("Browser registration is unavailable.");
+  if (typeof tabId !== "string" || typeof sessionKey !== "string") return;
+  rejectPendingBrowserRegistration(tabId, sessionKey);
+  browserAutomation.unregisterTab({ tabId, sessionKey });
+});
 ipcMain.handle("pi:list-workspace-files", () => listWorkspaceFiles());
 ipcMain.handle("pi:open-workspace-file", async (_event, relativePath) => {
   const target = resolveWorkspaceFile(relativePath);
@@ -1465,17 +1582,32 @@ function createWindow() {
     preferences.webSecurity = true;
     preferences.allowRunningInsecureContent = false;
     preferences.webviewTag = false;
-    if (!isPiBotBrowserPartition(params.partition) || !isAllowedBrowserUrl(params.src)) {
+    const issued = issuedBrowserPartitions.get(params.partition);
+    if (!isPiBotBrowserPartition(params.partition) || !issued || issued.hostWebContents !== window.webContents || issued.sessionKey !== activeRuntimeKey || !isAllowedBrowserUrl(params.src)) {
       event.preventDefault();
       return;
     }
     configureBrowserSession(params.partition);
+    pendingBrowserGuestPartitions.add(params.partition);
   });
   window.webContents.on("did-attach-webview", (_event, contents) => {
+    const hostWebContents = window?.webContents;
+    const partition = browserPartitionBySession.get(contents.session);
+    const issued = partition ? issuedBrowserPartitions.get(partition) : undefined;
+    if (!partition || !browserGuestMatchesHost(contents, hostWebContents) || !pendingBrowserGuestPartitions.delete(partition) || !issued || issued.hostWebContents !== hostWebContents || issued.sessionKey !== activeRuntimeKey) {
+      contents.destroy?.();
+      return;
+    }
+    browserAutomation.attachWebContents(contents, partition);
+    wakePendingBrowserRegistration(partition);
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
     contents.on("will-navigate", (event, url) => { if (!isAllowedBrowserUrl(url)) event.preventDefault(); });
     contents.on("will-redirect", (event, url) => { if (!isAllowedBrowserUrl(url)) event.preventDefault(); });
-    contents.on("will-frame-navigate", (event, url) => { if (!isAllowedBrowserUrl(url)) event.preventDefault(); });
+    contents.on("will-frame-navigate", (details) => { if (!isAllowedBrowserUrl(details.url)) details.preventDefault(); });
+  });
+  window.webContents.once("destroyed", () => {
+    issuedBrowserPartitions.clear();
+    pendingBrowserGuestPartitions.clear();
   });
   const isSmokeTest = existsSync(userDataPath(".smoke-test"));
   if (isSmokeTest) {

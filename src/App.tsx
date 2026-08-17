@@ -153,6 +153,12 @@ function workspacePanelSessionKey(data: PiBootstrap) {
   return data.config.session?.path ?? data.config.session?.id ?? data.activeAgentId ?? "no-session";
 }
 
+function newWorkspaceTabId(kind: WorkspaceTabKind) {
+  return `${kind}-${crypto.randomUUID()}`;
+}
+
+let mermaidDiagramId = 0;
+
 function compactWorkspace(workspace: string) {
   if (!workspace) return "No workspace";
   const parts = workspace.split("/").filter(Boolean);
@@ -984,12 +990,6 @@ function browserTabLabel(tab: Pick<WorkspaceTab, "url" | "title">) {
   }
 }
 
-function browserPartitionForSession(storageKey: string) {
-  let hash = 5381;
-  for (const character of storageKey) hash = (hash * 33) ^ character.charCodeAt(0);
-  return `persist:pi-bot-browser-${(hash >>> 0).toString(36)}`;
-}
-
 type BrowserView = HTMLElement & {
   loadURL: (url: string) => Promise<void>;
   getURL: () => string;
@@ -1068,9 +1068,12 @@ function FilesSidebar({ workspace }: { workspace: string }) {
   return <div className="workspace-files"><AnimatePresence initial={false}>{error && <motion.div className="workspace-panel-error" initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={motionTransitions.standard}><CircleAlert /><span>{error}</span></motion.div>}</AnimatePresence><div className="files-filter"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter files…" aria-label="Filter files" /><Button variant="ghost" size="icon-sm" onClick={() => void loadFiles()} disabled={loading} aria-label="Refresh files"><RefreshCw className={loading ? "spin" : ""} /></Button></div>{!loading && !error && files.length === 0 ? <Empty className="workspace-empty"><EmptyMedia variant="icon"><Files /></EmptyMedia><EmptyTitle>No files yet</EmptyTitle><EmptyDescription>Files created by your assistant will appear here.</EmptyDescription></Empty> : <div className="files-tree-list">{renderTree(roots)}</div>}</div>;
 }
 
-export function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; partition: string; onChange: (next: Pick<WorkspaceTab, "url" | "title">) => void }) {
+export function BrowserPanel({ tab, sessionKey, agentOperating, onChange }: { tab: WorkspaceTab; sessionKey: string; agentOperating: boolean; onChange: (next: Pick<WorkspaceTab, "url" | "title">) => void }) {
   const viewRef = useRef<BrowserView | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
+  const partitionKey = `${sessionKey}\u0000${tab.id}`;
+  const [partitionState, setPartitionState] = useState<{ key: string; value: string }>();
+  const partition = partitionState?.key === partitionKey ? partitionState.value : undefined;
   const [view, setView] = useState<BrowserView | null>(null);
   const initialUrl = useRef(tab.url || defaultBrowserUrl).current;
   const [address, setAddress] = useState(initialUrl);
@@ -1083,6 +1086,30 @@ export function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; 
     viewRef.current = node;
     setView(node);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.piBot.getBrowserTabPartition(tab.id, sessionKey).then((value) => {
+      if (!cancelled) setPartitionState({ key: partitionKey, value });
+    }).catch(() => {
+      if (!cancelled) setPartitionState(undefined);
+    });
+    return () => { cancelled = true; };
+  }, [partitionKey, sessionKey, tab.id]);
+
+  useEffect(() => {
+    if (!view || !partition) return;
+    let cancelled = false;
+    void window.piBot.registerBrowserTab(tab.id, sessionKey).then(() => {
+      if (!cancelled) setLoadError(undefined);
+    }).catch(() => {
+      if (!cancelled) setLoadError(undefined);
+    });
+    return () => {
+      cancelled = true;
+      void window.piBot.unregisterBrowserTab(tab.id, sessionKey).catch(() => undefined);
+    };
+  }, [partition, sessionKey, tab.id, view]);
 
   const sync = () => {
     const view = viewRef.current;
@@ -1103,7 +1130,7 @@ export function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; 
     const url = normalizeBrowserUrl(value);
     setAddress(url);
     setLoadError(undefined);
-    void viewRef.current?.loadURL(url).catch(() => undefined);
+    void viewRef.current?.loadURL(url).catch(() => setLoadError("This page could not be loaded."));
   };
 
   useEffect(() => {
@@ -1111,10 +1138,10 @@ export function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; 
     const start = () => { setLoading(true); setLoadError(undefined); };
     const stop = () => { setLoading(false); sync(); };
     const navigate = () => sync();
-    const failed = (event: Event & { errorCode?: number; errorDescription?: string }) => {
+    const failed = (event: Event & { errorCode?: number }) => {
       if (event.errorCode === -3) return;
       setLoading(false);
-      setLoadError(event.errorDescription || "This page could not be loaded.");
+      setLoadError("This page could not be loaded.");
     };
     view.addEventListener("did-start-loading", start);
     view.addEventListener("did-stop-loading", stop);
@@ -1144,16 +1171,18 @@ export function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; 
     return () => observer.disconnect();
   }, [view]);
 
-  const webview = createElement("webview" as never, {
+  const webview = partition ? createElement("webview" as never, {
+    key: partition,
     ref: setBrowserView,
     src: initialUrl,
     className: "workspace-browser-view",
     partition,
     webpreferences: "contextIsolation=yes,sandbox=yes,nodeIntegration=no",
-  });
+  }) : null;
 
   return <div className="workspace-browser">
     <div className="browser-toolbar">
+      {agentOperating && <span className="browser-agent-status" role="status">Agent operating</span>}
       <Button variant="ghost" size="icon-sm" disabled={!canBack} onClick={() => viewRef.current?.goBack()} aria-label="Back" title="Back"><ChevronLeft /></Button>
       <Button variant="ghost" size="icon-sm" disabled={!canForward} onClick={() => viewRef.current?.goForward()} aria-label="Forward" title="Forward"><ChevronRight /></Button>
       <Button variant="ghost" size="icon-sm" onClick={() => loading ? viewRef.current?.stop() : viewRef.current?.reload()} aria-label={loading ? "Stop loading" : "Reload"} title={loading ? "Stop loading" : "Reload"}>{loading ? <X /> : <RefreshCw />}</Button>
@@ -1164,14 +1193,29 @@ export function BrowserPanel({ tab, partition, onChange }: { tab: WorkspaceTab; 
   </div>;
 }
 
-type RightWorkspacePanelProps = { data: PiBootstrap; open: boolean; storageKey: string; preferences: WorkspacePanelPreferences; onChange: (preferences: WorkspacePanelPreferences) => void; onClose: () => void };
+type RightWorkspacePanelProps = { data: PiBootstrap; open: boolean; storageKey: string; sessionKey: string; preferences: WorkspacePanelPreferences; onChange: (preferences: WorkspacePanelPreferences) => void; onClose: () => void };
 
-const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(function RightWorkspacePanel({ data, open, storageKey, preferences, onChange, onClose }, ref) {
+const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(function RightWorkspacePanel({ data, open, storageKey, sessionKey, preferences, onChange, onClose }, ref) {
   const tabs = preferences.tabs;
   const activeTabId = preferences.activeTabId;
-  const browserPartition = browserPartitionForSession(storageKey);
+  const [operatingTabIds, setOperatingTabIds] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    const unsubscribe = window.piBot.onEvent((event) => {
+      if (event.type !== "browser-operation") return;
+      setOperatingTabIds((current) => {
+        const next = new Set(current);
+        if (event.status === "running") next.add(event.tabId);
+        else next.delete(event.tabId);
+        return next;
+      });
+    });
+    return () => {
+      unsubscribe();
+      setOperatingTabIds(new Set());
+    };
+  }, []);
   const addTab = (kind: WorkspaceTabKind) => {
-    const id = `${kind}-${Date.now()}`;
+    const id = newWorkspaceTabId(kind);
     onChange({ ...preferences, tabs: [...tabs, { id, kind, ...(kind === "browser" ? { url: defaultBrowserUrl } : {}) }], activeTabId: id });
   };
   const closeTab = (id: string) => {
@@ -1186,6 +1230,7 @@ const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(fu
           <TabsList className="workspace-tab-list" aria-label="Workspace tabs">
             {tabs.map((tab) => <div className={`workspace-tab ${activeTabId === tab.id ? "selected" : ""}`} key={tab.id}>
               <TabsTrigger className="workspace-tab-main" value={tab.id} title={tab.kind === "browser" ? browserTabLabel(tab) : "Files"} data-motion="workspace-tab">{tab.kind === "files" ? "Files" : browserTabLabel(tab)}</TabsTrigger>
+              {operatingTabIds.has(tab.id) && <span className="workspace-tab-status" role="status" aria-label="Agent operating"><LoaderCircle className="spin" /></span>}
               <Button variant="ghost" size="icon-sm" className="workspace-tab-close" onClick={() => closeTab(tab.id)} aria-label={`Close ${tab.kind} tab`} data-motion="workspace-tab-close"><X /></Button>
             </div>)}
             <DropdownMenu>
@@ -1200,7 +1245,7 @@ const RightWorkspacePanel = forwardRef<HTMLElement, RightWorkspacePanelProps>(fu
           </TabsList>
           <Button className="workspace-panel-close" variant="ghost" size="icon-sm" onClick={onClose} title="Hide workspace" aria-label="Hide workspace"><PanelRightClose /></Button>
         </header>
-        <section className="workspace-panel-content">{tabs.map((tab) => <TabsContent key={tab.id} value={tab.id} keepMounted>{tab.kind === "files" ? <FilesSidebar workspace={data.config.workspace} /> : <BrowserPanel tab={tab} partition={browserPartition} onChange={(next) => updateBrowserTab(tab.id, next)} />}</TabsContent>)}</section>
+        <section className="workspace-panel-content">{tabs.map((tab) => <TabsContent key={tab.id} value={tab.id} keepMounted>{tab.kind === "files" ? <FilesSidebar workspace={data.config.workspace} /> : <BrowserPanel tab={tab} sessionKey={sessionKey} agentOperating={operatingTabIds.has(tab.id)} onChange={(next) => updateBrowserTab(tab.id, next)} />}</TabsContent>)}</section>
       </Tabs>
     </motion.aside>
   );
@@ -1287,7 +1332,7 @@ function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onMo
     window.addEventListener("mouseup", end);
   };
   const workspaceFiles = workspaceFileState.workspace && workspaceFileState.workspace === data.config.workspace ? workspaceFileState.paths : undefined;
-  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${preferences.open ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${preferences.width}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} workspaceFiles={workspaceFiles} onShowHistory={onShowHistory} workspaceOpen={preferences.open} onShowWorkspace={() => setPreferences((current) => ({ ...current, open: true }))} />{preferences.open && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<AnimatePresence initial={false} mode="popLayout">{preferences.open && <RightWorkspacePanel key="workspace-panel" data={data} open={preferences.open} storageKey={storageKey} preferences={preferences} onChange={setPreferences} onClose={() => setPreferences((current) => ({ ...current, open: false }))} />}</AnimatePresence></motion.section>;
+  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${preferences.open ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${preferences.width}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} workspaceFiles={workspaceFiles} onShowHistory={onShowHistory} workspaceOpen={preferences.open} onShowWorkspace={() => setPreferences((current) => ({ ...current, open: true }))} />{preferences.open && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<AnimatePresence initial={false} mode="popLayout">{preferences.open && <RightWorkspacePanel key="workspace-panel" data={data} open={preferences.open} storageKey={storageKey} sessionKey={workspacePanelSessionKey(data)} preferences={preferences} onChange={setPreferences} onClose={() => setPreferences((current) => ({ ...current, open: false }))} />}</AnimatePresence></motion.section>;
 }
 
 function ChatView({

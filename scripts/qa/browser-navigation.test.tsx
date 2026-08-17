@@ -9,7 +9,7 @@ const navigatedUrl = "https://www.google.com/?zx=123";
 
 function BrowserPanelHarness() {
   const [tab, setTab] = React.useState({ id: "browser", kind: "browser" as const, url: initialUrl });
-  return <BrowserPanel tab={tab} partition="persist:browser-test" onChange={(next) => setTab((current) => ({ ...current, ...next }))} />;
+  return <BrowserPanel tab={tab} sessionKey="browser-test-session" agentOperating={false} onChange={(next) => setTab((current) => ({ ...current, ...next }))} />;
 }
 
 describe("BrowserPanel navigation", () => {
@@ -18,6 +18,11 @@ describe("BrowserPanel navigation", () => {
 
   beforeEach(() => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    window.piBot = {
+      getBrowserTabPartition: vi.fn(async () => "persist:browser-test"),
+      registerBrowserTab: vi.fn(async () => ({ tabId: "browser" })),
+      unregisterBrowserTab: vi.fn(async () => undefined),
+    } as unknown as typeof window.piBot;
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
     host = document.createElement("div");
     document.body.append(host);
@@ -31,8 +36,9 @@ describe("BrowserPanel navigation", () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
-  it("keeps the webview source stable when a same-page navigation updates the saved tab", () => {
+  it("keeps the webview source stable when a same-page navigation updates the saved tab", async () => {
     act(() => root.render(<BrowserPanelHarness />));
+    await act(async () => { await Promise.resolve(); });
     const webview = host.querySelector("webview");
     if (!webview) throw new Error("BrowserPanel did not render a webview.");
     Object.assign(webview, {

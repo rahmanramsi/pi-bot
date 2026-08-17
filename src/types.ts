@@ -172,6 +172,7 @@ export type PiEvent =
   | { type: "tool-start"; id: string; name: string; detail: string }
   | { type: "tool-update"; id: string; detail: string }
   | { type: "tool-end"; id: string; failed: boolean; detail: string }
+  | { type: "browser-operation"; tabId: string; action: string; status: "running" | "done" | "failed"; detail: string }
   | { type: "agent-start" }
   | { type: "agent-end"; retrying: boolean }
   | { type: "agent-settled" }
@@ -219,6 +220,9 @@ export type PiBotBridge = {
   saveTheme: (theme: "dark" | "light") => Promise<"dark" | "light">;
   getWorkspacePreferences: (key: string) => Promise<WorkspacePanelPreferences | null>;
   saveWorkspacePreferences: (key: string, preferences: WorkspacePanelPreferences) => Promise<WorkspacePanelPreferences>;
+  getBrowserTabPartition: (tabId: string, sessionKey: string) => Promise<string>;
+  registerBrowserTab: (tabId: string, sessionKey: string) => Promise<{ tabId: string }>;
+  unregisterBrowserTab: (tabId: string, sessionKey: string) => Promise<void>;
   listWorkspaceFiles: () => Promise<WorkspaceFile[]>;
   openWorkspaceFile: (path: string) => Promise<void>;
   revealWorkspaceFile: (path: string) => Promise<void>;
