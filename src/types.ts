@@ -116,7 +116,46 @@ export type PiConfig = {
   };
   models: PiModelOption[];
   tools: string[];
-  session: { path?: string; id?: string; name?: string } | null;
+  session: { path?: string; id?: string; name?: string; attachments?: ComposerAttachment[] } | null;
+};
+
+export type ComposerAttachment = {
+  id: string;
+  sessionId?: string;
+  name: string;
+  mimeType: string;
+  kind: "text" | "image";
+  size: number;
+  cleanupToken: string;
+  status?: "pending" | "sent";
+  createdAt?: string;
+  sentAt?: string | null;
+};
+
+export type ComposerWorkspaceMention = {
+  kind: "workspace";
+  path: string;
+  type: "file" | "folder";
+};
+
+export type ComposerSkillMention = {
+  kind: "skill";
+  id: string;
+  name: string;
+  description?: string;
+};
+
+export type ComposerContextOptions = {
+  sessionId?: string;
+  workspace: WorkspaceFile[];
+  skills: Array<{ id: string; name: string; description: string }>;
+};
+
+export type ComposerPromptRequest = {
+  text: string;
+  sessionId?: string;
+  attachmentIds?: string[];
+  mentions?: Array<ComposerWorkspaceMention | ComposerSkillMention>;
 };
 
 export type TimelineItem = {
@@ -128,6 +167,13 @@ export type TimelineItem = {
   status?: "running" | "done" | "failed";
   timestamp: string;
   timestampMs?: number;
+  metadata?: {
+    version: number;
+    originalText?: string;
+    attachments: Array<Pick<ComposerAttachment, "id" | "name" | "mimeType" | "kind" | "size">>;
+    workspace: Array<{ kind: "file" | "folder"; path: string }>;
+    skills: Array<{ kind: "skill"; id: string }>;
+  };
 };
 
 export type WorkspaceFile = {
@@ -214,7 +260,7 @@ export type PiBotBridge = {
   setScheduledJobPaused: (id: string, paused: boolean) => Promise<PiBootstrap>;
   runScheduledJob: (id: string) => Promise<PiBootstrap>;
   deleteScheduledJob: (id: string) => Promise<PiBootstrap>;
-  prompt: (message: string) => Promise<void>;
+  prompt: (request: ComposerPromptRequest | string) => Promise<void>;
   abort: () => Promise<void>;
   completeSetup: (accepted: boolean) => Promise<PiBootstrap>;
   setAgentModel: (agentId: AgentId, key: string) => Promise<PiBootstrap>;
@@ -233,6 +279,10 @@ export type PiBotBridge = {
   getWorkspacePreferences: (key: string) => Promise<WorkspacePanelPreferences | null>;
   saveWorkspacePreferences: (key: string, preferences: WorkspacePanelPreferences) => Promise<WorkspacePanelPreferences>;
   listWorkspaceFiles: () => Promise<WorkspaceFile[]>;
+  listComposerContext: () => Promise<ComposerContextOptions>;
+  pickAttachments: (sessionId: string) => Promise<ComposerAttachment[]>;
+  stageAttachment: (input: { sessionId: string; name: string; mimeType?: string; data: ArrayBuffer | Uint8Array }) => Promise<ComposerAttachment>;
+  removeAttachment: (attachmentId: string, sessionId: string, cleanupToken: string) => Promise<void>;
   openWorkspaceFile: (path: string) => Promise<void>;
   revealWorkspaceFile: (path: string) => Promise<void>;
   openExternal: (url: string) => Promise<void>;
