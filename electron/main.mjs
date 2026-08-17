@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, session as electronSession, shell } from "electron";
 import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
@@ -25,6 +25,7 @@ import {
   buildScheduledJob,
   ScheduledJobScheduler,
 } from "./scheduled-jobs.mjs";
+import { listWorkspaceFiles as listWorkspaceFilesInWorkspace } from "./workspace-files.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
@@ -32,7 +33,6 @@ const codingTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const browserPartitionPrefix = "persist:pi-bot-browser-";
 const configuredBrowserPartitions = new Set();
-const maxWorkspaceFiles = 500;
 const defaultAgentId = "assistant";
 const developmentServerUrl = process.env.PI_BOT_DEV_SERVER_URL;
 const developmentUserDataDir = process.env.PI_BOT_USER_DATA_DIR;
@@ -152,31 +152,7 @@ function resolveWorkspaceFile(relativePath) {
 }
 
 function listWorkspaceFiles() {
-  const workspace = activeWorkspaceRoot();
-  const items = [];
-  const skippedNames = new Set([".git", "node_modules", "dist", "build", "release", "coverage", ".next", ".venv"]);
-  const visit = (directory, depth) => {
-    if (items.length >= maxWorkspaceFiles || depth > 4) return;
-    let entries;
-    try {
-      entries = readdirSync(directory, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    entries.sort((left, right) => Number(right.isDirectory()) - Number(left.isDirectory()) || left.name.localeCompare(right.name));
-    for (const entry of entries) {
-      if (items.length >= maxWorkspaceFiles || skippedNames.has(entry.name) || entry.isSymbolicLink()) continue;
-      const absolutePath = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        items.push({ path: path.relative(workspace, absolutePath), kind: "folder" });
-        visit(absolutePath, depth + 1);
-      } else if (entry.isFile()) {
-        items.push({ path: path.relative(workspace, absolutePath), kind: "file" });
-      }
-    }
-  };
-  visit(workspace, 0);
-  return items;
+  return listWorkspaceFilesInWorkspace(activeWorkspaceRoot());
 }
 
 function initialsFor(name) {
