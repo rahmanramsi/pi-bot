@@ -66,11 +66,23 @@ test("agent rows show the latest response preview and a selected state", async (
   assert.match(inbox, /isActive|agent\.id === data\.activeAgentId/);
 });
 
+test("the active agent shows an accessible working indicator while a response is running", async () => {
+  const { app, styles } = await readLayoutSources();
+  const inbox = agentInboxSource(app);
+
+  assert.match(inbox, /runningAgentIds\.has\(agent\.id\)/);
+  assert.match(inbox, /agent-running-indicator/);
+  assert.match(inbox, /role="status"/);
+  assert.match(inbox, />Working</);
+  assert.match(styles, /\.agent-running-indicator\s*\{[^}]*align-items:\s*center[^}]*font-size:\s*var\(--text-caption\)/);
+});
+
 test("agents are ordered by pins and latest chat activity", async () => {
   const { app, styles } = await readLayoutSources();
   const inbox = agentInboxSource(app);
 
   assert.match(inbox, /latestTimestampFor/);
+  assert.match(inbox, /latestResponseAt/);
   assert.match(inbox, /Number\(b\.pinned\) - Number\(a\.pinned\)/);
   assert.match(inbox, /latestTimestampFor\(b\) - latestTimestampFor\(a\)/);
   assert.match(inbox, /agent\.pinned \? "Unpin agent" : "Pin agent"/);

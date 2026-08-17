@@ -40,6 +40,7 @@ export type SessionSummary = {
   workspace?: string;
   created?: string;
   modified?: string;
+  latestResponseAt?: string;
   messageCount?: number;
 };
 
@@ -172,6 +173,7 @@ export type PiEvent =
   | { type: "tool-start"; id: string; name: string; detail: string }
   | { type: "tool-update"; id: string; detail: string }
   | { type: "tool-end"; id: string; failed: boolean; detail: string }
+  | { type: "agent-status"; agentId: AgentId; running: boolean }
   | { type: "agent-start" }
   | { type: "agent-end"; retrying: boolean }
   | { type: "agent-settled" }

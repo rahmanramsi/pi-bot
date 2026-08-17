@@ -249,6 +249,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .agent-pin-indicator { display: inline-flex; color: var(--muted-foreground); }
 .agent-pin-indicator svg { width: 12px; height: 12px; }
 .agent-list-heading time { flex: 0 0 auto; color: var(--muted-foreground); font-size: var(--text-caption); font-variant-numeric: tabular-nums; }
+.agent-running-indicator { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; color: var(--foreground); font-size: var(--text-caption); font-weight: 550; }
+.agent-running-indicator svg { width: 12px; height: 12px; }
+.agent-unread-indicator { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; color: var(--foreground); font-size: var(--text-caption); font-weight: 550; }
+.agent-unread-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--foreground); }
 .agent-context-menu-content { width: 152px; }
 .agent-list-empty { padding: 12px 10px; }
 .agent-avatar {

@@ -772,6 +772,8 @@ function AgentSidebarSection({
   data,
   theme,
   busy,
+  runningAgentIds,
+  unreadAgentIds,
   query,
   onQueryChange,
   onSelect,
@@ -783,6 +785,8 @@ function AgentSidebarSection({
   data: PiBootstrap;
   theme: Theme;
   busy: boolean;
+  runningAgentIds: ReadonlySet<AgentId>;
+  unreadAgentIds: ReadonlySet<AgentId>;
   query: string;
   onQueryChange: (query: string) => void;
   onSelect: (agentId: AgentId) => void;
@@ -793,10 +797,10 @@ function AgentSidebarSection({
 }) {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const latestSessionFor = (agent: AgentProfile) => [...(data.sessionsByAgent[agent.id] ?? [])]
-    .sort((a, b) => new Date(b.modified ?? b.created ?? 0).getTime() - new Date(a.modified ?? a.created ?? 0).getTime())[0];
+    .sort((a, b) => new Date(b.latestResponseAt ?? 0).getTime() - new Date(a.latestResponseAt ?? 0).getTime())[0];
   const latestTimestampFor = (agent: AgentProfile) => {
     const latest = latestSessionFor(agent);
-    return new Date(latest?.modified ?? latest?.created ?? 0).getTime();
+    return new Date(latest?.latestResponseAt ?? 0).getTime();
   };
   const agents = data.agents
     .filter((agent) => !agent.archived)
@@ -819,13 +823,15 @@ function AgentSidebarSection({
         <SidebarMenu className="agent-list" aria-label="Agents">
           {agents.map((agent) => {
             const latest = latestSessionFor(agent);
+            const isAgentWorking = runningAgentIds.has(agent.id) || (agent.id === data.activeAgentId && data.config.streaming);
+            const isAgentUnread = unreadAgentIds.has(agent.id);
             return <SidebarMenuItem key={agent.id}>
               <ContextMenu>
                 <ContextMenuTrigger className="agent-list-context">
                   <SidebarMenuButton className={`agent-list-item ${agent.id === data.activeAgentId ? "selected" : ""}`} isActive={agent.id === data.activeAgentId} onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} tooltip={agent.name} data-motion="agent-select">
                     <AgentAvatar agent={agent} />
                     <span className="agent-list-copy">
-                      <span className="agent-list-heading"><strong>{agent.name}</strong><span className="agent-list-meta">{agent.pinned && <span className="agent-pin-indicator" title="Pinned"><Pin aria-hidden="true" /></span>}<time>{shortDate(latest?.modified ?? latest?.created)}</time></span></span>
+                      <span className="agent-list-heading"><strong>{agent.name}</strong><span className="agent-list-meta">{agent.pinned && <span className="agent-pin-indicator" title="Pinned"><Pin aria-hidden="true" /></span>}{isAgentWorking ? <span className="agent-running-indicator" role="status" title={`${agent.name} is working`}><LoaderCircle className="spin" aria-hidden="true" /><span>Working</span></span> : isAgentUnread ? <span className="agent-unread-indicator" role="status" title={`${agent.name} has an unread response`}><span className="agent-unread-dot" aria-hidden="true" /><span>Unread</span></span> : <time>{shortDate(latest?.modified ?? latest?.created)}</time>}</span></span>
                       <small>{latest?.preview ?? "Start a conversation"}</small>
                     </span>
                   </SidebarMenuButton>
@@ -925,6 +931,8 @@ function AppSidebar({
   data,
   theme,
   busy,
+  runningAgentIds,
+  unreadAgentIds,
   historyAgentId,
   onSelectAgent,
   onTogglePin,
@@ -939,6 +947,8 @@ function AppSidebar({
   data: PiBootstrap;
   theme: Theme;
   busy: boolean;
+  runningAgentIds: ReadonlySet<AgentId>;
+  unreadAgentIds: ReadonlySet<AgentId>;
   historyAgentId: AgentId | null;
   onSelectAgent: (agentId: AgentId) => void;
   onTogglePin: (agent: AgentProfile) => void;
@@ -957,7 +967,7 @@ function AppSidebar({
         <SidebarTrigger className="sidebar-window-toggle" title="Hide sidebar" aria-label="Hide sidebar" data-motion="sidebar-toggle"><PanelLeftClose data-icon="inline-start" /></SidebarTrigger>
       </SidebarHeader>
       <SidebarContent className="app-sidebar-main">
-        {historyAgentId ? <HistorySidebar data={{ ...data, activeAgentId: historyAgentId }} theme={theme} busy={busy} onBack={onBackFromHistory} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} onToggleTheme={onToggleTheme} onSettings={onSettings} /> : <AgentSidebarSection data={data} theme={theme} busy={busy} query={query} onQueryChange={setQuery} onSelect={onSelectAgent} onTogglePin={onTogglePin} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} />}
+        {historyAgentId ? <HistorySidebar data={{ ...data, activeAgentId: historyAgentId }} theme={theme} busy={busy} onBack={onBackFromHistory} onNewChat={onNewChat} onOpenSession={onOpenSession} onDeleteSession={onDeleteSession} onToggleTheme={onToggleTheme} onSettings={onSettings} /> : <AgentSidebarSection data={data} theme={theme} busy={busy} runningAgentIds={runningAgentIds} unreadAgentIds={unreadAgentIds} query={query} onQueryChange={setQuery} onSelect={onSelectAgent} onTogglePin={onTogglePin} onCreateAgent={onCreateAgent} onToggleTheme={onToggleTheme} onSettings={onSettings} />}
       </SidebarContent>
     </Sidebar>
   );
@@ -1606,6 +1616,9 @@ export function App() {
   const [createNewAgent, setCreateNewAgent] = useState(false);
   const [authPrompt, setAuthPrompt] = useState<{ id: string; prompt: AuthPrompt }>();
   const [authNotice, setAuthNotice] = useState<string>();
+  const [runningAgentIds, setRunningAgentIds] = useState<Set<AgentId>>(() => new Set());
+  const [unreadAgentIds, setUnreadAgentIds] = useState<Set<AgentId>>(() => new Set());
+  const activeAgentIdRef = useRef<AgentId | null>(null);
   const streamBatcherRef = useRef<StreamDeltaBatcher | null>(null);
   if (!streamBatcherRef.current) {
     streamBatcherRef.current = createStreamDeltaBatcher((delta) => {
@@ -1638,17 +1651,29 @@ export function App() {
           });
         } else if (event.type === "tool-end") {
           setData((previous) => previous ? { ...previous, transcript: previous.transcript.map((item) => item.id === event.id ? { ...item, body: event.detail, status: event.failed ? "failed" : "done" } : item) } : previous);
-        } else if (event.type === "agent-start") setBusy(true);
+        } else if (event.type === "agent-status") {
+          setRunningAgentIds((previous) => {
+            const next = new Set(previous);
+            if (event.running) next.add(event.agentId);
+            else next.delete(event.agentId);
+            return next;
+          });
+          if (!event.running && activeAgentIdRef.current !== event.agentId) setUnreadAgentIds((previous) => new Set(previous).add(event.agentId));
+        }
+        else if (event.type === "agent-start") setBusy(true);
         else if (event.type === "agent-settled" || event.type === "aborted") setBusy(false);
         else if (event.type === "agent-end" && !event.retrying) setBusy(false);
         else if (event.type === "error") { setBusy(false); setError(event.message); }
         else if (event.type === "auth-prompt") setAuthPrompt({ id: event.id, prompt: event.prompt });
         else if (event.type === "auth-notify") setAuthNotice(event.event.message || event.event.instructions || (event.event.url ? `Continue in your browser: ${event.event.url}` : undefined));
-        else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId, scheduledJobs: event.scheduledJobs } : previous);
+        else if (event.type === "session-sync") {
+          activeAgentIdRef.current = event.activeAgentId;
+          setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId, scheduledJobs: event.scheduledJobs } : previous);
+        }
         else if (event.type === "scheduled-jobs-sync") setData((previous) => previous ? { ...previous, scheduledJobs: event.scheduledJobs } : previous);
       }
     });
-    Promise.all([window.piBot.connect(), window.piBot.getTheme()]).then(([result, savedTheme]) => { setData(result); setTheme(savedTheme); setConnecting(false); }).catch((reason) => { setError(readableError(reason)); setConnecting(false); });
+    Promise.all([window.piBot.connect(), window.piBot.getTheme()]).then(([result, savedTheme]) => { activeAgentIdRef.current = result.activeAgentId; setData(result); setTheme(savedTheme); setConnecting(false); }).catch((reason) => { setError(readableError(reason)); setConnecting(false); });
     return () => {
       streamBatcherRef.current?.cancel();
       unsubscribe();
@@ -1687,9 +1712,19 @@ export function App() {
   async function prompt(message: string) {
     setError(undefined);
     setBusy(true);
+    const agentId = data?.activeAgentId;
+    if (agentId) setRunningAgentIds((previous) => new Set(previous).add(agentId));
     const timestampMs = Date.now();
     setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: `user-${timestampMs}`, kind: "user", label: "You", body: message, timestamp: timeNow(), timestampMs }] } : previous);
-    try { await window.piBot.prompt(message); } catch (reason) { setError(readableError(reason)); setBusy(false); }
+    try { await window.piBot.prompt(message); } catch (reason) {
+      setError(readableError(reason));
+      setBusy(false);
+      if (agentId) setRunningAgentIds((previous) => {
+        const next = new Set(previous);
+        next.delete(agentId);
+        return next;
+      });
+    }
   }
 
   async function authenticate(action: () => Promise<PiBootstrap | null>) {
@@ -1726,6 +1761,12 @@ export function App() {
   }
   function selectAgent(agentId: AgentId) {
     setHistoryAgentId(null);
+    activeAgentIdRef.current = agentId;
+    setUnreadAgentIds((previous) => {
+      const next = new Set(previous);
+      next.delete(agentId);
+      return next;
+    });
     navigateToChat(() => window.piBot.selectAgent(agentId));
   }
   function showHistory(agentId: AgentId) {
@@ -1738,6 +1779,12 @@ export function App() {
   }
   function openConversation(chat: SessionSummary) {
     setHistoryAgentId(null);
+    activeAgentIdRef.current = chat.agentId;
+    setUnreadAgentIds((previous) => {
+      const next = new Set(previous);
+      next.delete(chat.agentId);
+      return next;
+    });
     navigateToChat(() => window.piBot.openSession(chat.path, chat.agentId));
   }
   function deleteSession(chat: SessionSummary) {
@@ -1783,7 +1830,7 @@ export function App() {
 
       return <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen} className="app-sidebar-provider">
         <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
-          <AppSidebar data={data} theme={theme} busy={busy} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
+          <AppSidebar data={data} theme={theme} busy={busy} runningAgentIds={runningAgentIds} unreadAgentIds={unreadAgentIds} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
           <AnimatePresence initial={false} mode="wait">
             {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
       </AnimatePresence>

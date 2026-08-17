@@ -485,6 +485,7 @@ function sessionSummary(info, agentId, workspace) {
     workspace,
     name: named?.name || titleFromPrompt(firstUser ? messageText(firstUser.message.content) : "New conversation"),
     preview: latestResponse ? messageText(latestResponse.message.content) || latestResponse.message.errorMessage : undefined,
+    latestResponseAt: latestResponse?.timestamp,
     created: info.created,
     modified: info.modified,
     messageCount: info.messageCount,
@@ -755,6 +756,8 @@ function sendScheduledJobsSync() {
 function relay(runtime, event) {
   updateRuntimeTranscript(runtime, event);
   updatePendingSession(runtime, event);
+  if (event.type === "agent_start") send({ type: "agent-status", agentId: runtime.agentId, running: true });
+  if (event.type === "agent_settled" || event.type === "aborted" || (event.type === "agent_end" && !event.willRetry)) send({ type: "agent-status", agentId: runtime.agentId, running: false });
   if (runtime.key !== activeRuntimeKey) return;
   if (event.type === "message_update" && event.assistantMessageEvent?.type === "thinking_start") {
     send({ type: "reasoning-start", id: reasoningId(event.message) });
