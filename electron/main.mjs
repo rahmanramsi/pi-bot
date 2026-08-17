@@ -17,6 +17,12 @@ import {
   migrateLegacyStorage,
 } from "./app-database.mjs";
 import {
+  createMemoryContextExtension,
+  createMemoryTool,
+  memoryScopeForProfile,
+  memoryToolName,
+} from "./memory.mjs";
+import {
   createDatabaseSession,
   createDatabaseSessionManager,
 } from "./session-database-adapter.mjs";
@@ -29,6 +35,7 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
 const codingTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const allAgentTools = [...codingTools, memoryToolName];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const browserPartitionPrefix = "persist:pi-bot-browser-";
 const configuredBrowserPartitions = new Set();
@@ -586,9 +593,20 @@ function currentConfig(runtime = activeRuntime()) {
       percent: contextUsage?.percent ?? null,
     },
     models: availableModels.map(modelOption),
-    tools: codingTools,
+    tools: allAgentTools,
     session: currentSessionSummary(runtime),
   };
+}
+
+function memoryScopeForAgent(agentId = activeAgentId) {
+  if (!isAgentId(agentId)) throw new Error("Select an agent first.");
+  return memoryScopeForProfile(agentProfiles[agentId]);
+}
+
+function listAgentMemories(agentId = activeAgentId) {
+  if (!isAgentId(agentId)) return [];
+  const scope = memoryScopeForAgent(agentId);
+  return appDatabase.listMemories(scope.agentId, scope.workspace);
 }
 
 function authProviders() {
@@ -643,6 +661,7 @@ async function bootstrap() {
     sessions: await listSessions(activeAgentId, workspace),
     sessionsByAgent: await sessionsByAgent(workspace),
     agents: listAgents(),
+    memories: listAgentMemories(activeAgentId),
     setup: setupState(),
     authenticated: availableModels.length > 0,
     activeAgentId,
@@ -741,6 +760,7 @@ async function sendSessionSync(runtime) {
     sessionsByAgent: grouped,
     config: currentConfig(runtime),
     agents: listAgents(),
+    memories: listAgentMemories(runtime.agentId),
     setup: setupState(),
     authenticated: availableModels.length > 0,
     activeAgentId: runtime.agentId,
@@ -845,6 +865,7 @@ async function createResourceLoader(profile, runtimeDir = isolatedRuntimeDir(pro
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
+    extensionFactories: [{ name: "pi-bot-memory", hidden: true, factory: createMemoryContextExtension({ database: appDatabase, profile }) }],
     systemPrompt: "You are a helpful coding teammate. Work directly in the selected agent workspace using the available tools. Be clear and concise.",
     skillsOverride: () => skillResult,
     agentsFilesOverride: () => ({
@@ -937,7 +958,8 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
     modelRuntime,
     model: selectedModel,
     thinkingLevel: profile.thinkingLevel,
-    tools: codingTools,
+    tools: allAgentTools,
+    customTools: [createMemoryTool({ database: appDatabase, profile, sessionManager: manager })],
     sessionManager: manager,
     settingsManager: SettingsManager.inMemory(),
     resourceLoader,
@@ -992,7 +1014,8 @@ async function executeScheduledJob(job) {
       modelRuntime,
       model: selectedModel,
       thinkingLevel: job.thinkingLevel,
-      tools: codingTools,
+      tools: allAgentTools,
+      customTools: [createMemoryTool({ database: appDatabase, profile: scheduledProfile, sessionManager: manager })],
       sessionManager: manager,
       settingsManager: SettingsManager.inMemory(),
       resourceLoader,
@@ -1252,6 +1275,26 @@ ipcMain.handle("pi:open-scheduled-session", async (_event, jobId) => {
 });
 
 ipcMain.handle("pi:get-sessions", (_event, agentId = activeAgentId) => listSessions(agentId));
+
+ipcMain.handle("pi:get-memories", (_event, agentId = activeAgentId) => listAgentMemories(agentId));
+
+ipcMain.handle("pi:create-memory", (_event, agentId, content) => {
+  const scope = memoryScopeForAgent(agentId);
+  appDatabase.createMemory({ id: randomUUID(), ...scope, content });
+  return appDatabase.listMemories(scope.agentId, scope.workspace);
+});
+
+ipcMain.handle("pi:update-memory", (_event, agentId, memoryId, content) => {
+  const scope = memoryScopeForAgent(agentId);
+  appDatabase.updateMemory(memoryId, { ...scope, content });
+  return appDatabase.listMemories(scope.agentId, scope.workspace);
+});
+
+ipcMain.handle("pi:delete-memory", (_event, agentId, memoryId) => {
+  const scope = memoryScopeForAgent(agentId);
+  if (!appDatabase.deleteMemory(memoryId, scope.agentId, scope.workspace)) throw new Error("Memory was not found in this agent and workspace.");
+  return appDatabase.listMemories(scope.agentId, scope.workspace);
+});
 
 ipcMain.handle("pi:delete-session", async (_event, sessionPath) => {
   const sessions = await listSessions(activeAgentId);

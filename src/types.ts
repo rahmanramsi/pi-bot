@@ -22,6 +22,16 @@ export type AgentDraft = {
   description?: string;
 };
 
+export type MemoryEntry = {
+  id: string;
+  agentId: AgentId;
+  workspace: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  sourceSessionId: string | null;
+};
+
 export type PiModelOption = {
   key: string;
   id: string;
@@ -157,6 +167,7 @@ export type PiBootstrap = {
   sessions: SessionSummary[];
   sessionsByAgent: Record<AgentId, SessionSummary[]>;
   agents: AgentProfile[];
+  memories?: MemoryEntry[];
   setup: PiSetup;
   authenticated: boolean;
   activeAgentId: AgentId | null;
@@ -179,7 +190,7 @@ export type PiEvent =
   | { type: "error"; message: string }
   | { type: "auth-prompt"; id: string; prompt: AuthPrompt }
   | { type: "auth-notify"; event: { type: string; message?: string; url?: string; instructions?: string; userCode?: string; verificationUri?: string } }
-  | { type: "session-sync"; transcript: TimelineItem[]; sessions: SessionSummary[]; sessionsByAgent: Record<AgentId, SessionSummary[]>; config: PiConfig; agents: AgentProfile[]; setup: PiSetup; authenticated: boolean; activeAgentId: AgentId | null; scheduledJobs: ScheduledJob[] }
+  | { type: "session-sync"; transcript: TimelineItem[]; sessions: SessionSummary[]; sessionsByAgent: Record<AgentId, SessionSummary[]>; config: PiConfig; agents: AgentProfile[]; memories: MemoryEntry[]; setup: PiSetup; authenticated: boolean; activeAgentId: AgentId | null; scheduledJobs: ScheduledJob[] }
   | { type: "scheduled-jobs-sync"; scheduledJobs: ScheduledJob[] };
 
 export type PiBotBridge = {
@@ -197,6 +208,10 @@ export type PiBotBridge = {
   openScheduledSession: (jobId: string) => Promise<PiBootstrap>;
   deleteSession: (sessionPath: string) => Promise<PiBootstrap>;
   getSessions: (agentId?: AgentId | null) => Promise<SessionSummary[]>;
+  getMemories: (agentId?: AgentId | null) => Promise<MemoryEntry[]>;
+  createMemory: (agentId: AgentId, content: string) => Promise<MemoryEntry[]>;
+  updateMemory: (agentId: AgentId, memoryId: string, content: string) => Promise<MemoryEntry[]>;
+  deleteMemory: (agentId: AgentId, memoryId: string) => Promise<MemoryEntry[]>;
   getScheduledJobs: () => Promise<ScheduledJob[]>;
   createScheduledJob: (draft: ScheduledJobDraft) => Promise<PiBootstrap>;
   updateScheduledJob: (id: string, draft: ScheduledJobDraft) => Promise<PiBootstrap>;
