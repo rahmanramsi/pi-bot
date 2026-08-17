@@ -326,6 +326,88 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .agent-inbox-footer { display: flex; align-items: center; justify-content: flex-end; gap: 4px; flex: 0 0 auto; margin-top: auto; padding: 12px 14px 8px; border-top: 1px solid var(--border); }
 .agent-theme-button, .agent-settings-button { color: var(--muted-foreground); }
 .agent-theme-button:hover, .agent-settings-button:hover { color: var(--foreground); }
+.team-sidebar-section { flex: 0 0 auto; margin: 10px 8px 0; padding-top: 9px; border-top: 1px solid var(--border); }
+.team-sidebar-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 5px; color: var(--muted-foreground); font-size: var(--text-caption); font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
+.team-sidebar-heading button { width: 26px; height: 26px; color: var(--muted-foreground); }
+.team-sidebar-list { display: grid; gap: 2px; max-height: 148px; overflow-y: auto; }
+.team-sidebar-context { display: block; }
+.team-sidebar-item { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 48px; padding: 6px 8px; border: 0; border-radius: 9px; color: var(--foreground); background: transparent; cursor: pointer; text-align: left; }
+.team-sidebar-item:hover, .team-sidebar-item:focus-visible { background: var(--surface-raised); outline: 0; }
+.team-sidebar-item > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; flex: 1 1 auto; }
+.team-sidebar-item strong, .team-sidebar-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-sidebar-item strong { font-size: var(--text-label); font-weight: 650; }
+.team-sidebar-item small { color: var(--muted-foreground); font-size: var(--text-caption); }
+.team-sidebar-state { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: var(--muted-foreground); }
+.team-sidebar-state.running { background: var(--primary); box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 20%, transparent); }
+.team-sidebar-state.failed, .team-sidebar-state.waiting, .team-sidebar-state.interrupted { background: var(--destructive); }
+.team-sidebar-empty { display: block; padding: 7px 8px 10px; font-size: var(--text-caption); }
+.team-avatar-group.compact { transform: scale(.84); transform-origin: left center; margin-right: -5px; }
+.team-avatar [data-slot="avatar-fallback"] { color: var(--foreground); font-size: var(--text-caption); font-weight: 700; }
+.team-avatar.unavailable { opacity: .48; filter: grayscale(1); }
+.team-avatar-count { width: 24px; height: 24px; font-size: var(--text-caption); }
+.team-context-menu-content { width: 172px; }
+
+.team-chat-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 0 28px 22px; background: var(--background); }
+.team-chat-topbar { justify-content: flex-start; gap: 9px; padding: 0 8px; }
+.team-chat-topbar > button:first-child { flex: 0 0 auto; color: var(--muted-foreground); }
+.team-chat-heading { display: grid; min-width: 0; gap: 1px; }
+.team-chat-heading strong { overflow: hidden; font-size: var(--text-body); font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.team-chat-heading small { color: var(--muted-foreground); font-size: var(--text-caption); }
+.team-chat-actions { display: flex; gap: 2px; margin-left: auto; }
+.team-chat-actions button { color: var(--muted-foreground); }
+.team-chat-actions button:hover { color: var(--foreground); }
+.team-run-strip { display: flex; align-items: center; gap: 12px; min-height: 38px; padding: 7px 4px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: var(--text-caption); }
+.team-run-state { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground); font-weight: 620; }
+.team-run-limit { color: var(--muted-foreground); white-space: nowrap; }
+.team-run-state.waiting, .team-run-state.failed, .team-run-state.interrupted, .team-run-state.limit { color: var(--destructive); }
+.team-run-state.complete { color: var(--primary); }
+.team-pending-chain { padding-left: 12px; border-left: 1px solid var(--border); }
+.team-run-strip small { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
+.team-run-state.running .team-status-dot { animation: team-pulse 1.2s ease-in-out infinite; }
+@keyframes team-pulse { 50% { opacity: .35; transform: scale(.8); } }
+.team-timeline-conversation { min-width: 0; }
+.team-timeline { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; gap: 15px; padding: 20px 0 18px; }
+.team-event { min-width: 0; }
+.team-user-event { align-self: flex-end; width: min(76%, 720px); }
+.team-agent-event { width: min(82%, 820px); }
+.team-event-attribution { display: flex; align-items: center; gap: 7px; min-height: 25px; margin-bottom: 5px; color: var(--muted-foreground); font-size: var(--text-caption); }
+.team-event-attribution strong { color: var(--foreground); font-size: var(--text-label); }
+.team-event-attribution time { margin-left: auto; font-variant-numeric: tabular-nums; }
+.team-event-avatar { width: 25px; height: 25px; }
+.team-event-avatar [data-slot="avatar-fallback"] { font-size: 13px; }
+.team-agent-event .chat-message-main { padding: 0; }
+.team-handoff-event { width: min(82%, 820px); padding: 12px 14px; border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 10px; background: var(--surface-raised); }
+.team-handoff-event.waiting { border-left-color: var(--destructive); }
+.team-handoff-event p { margin: 5px 0 0; font-size: var(--text-label); line-height: var(--leading-body); }
+.team-handoff-event .team-handoff-request { color: var(--foreground); }
+.team-handoff-event small { display: block; margin-top: 5px; color: var(--muted-foreground); line-height: var(--leading-body); }
+.team-handoff-event [data-slot="badge"] { margin-left: auto; }
+.team-activity-event { display: flex; align-items: center; gap: 7px; width: min(82%, 820px); padding: 8px 11px; border-radius: 8px; color: var(--muted-foreground); background: var(--surface-raised); font-size: var(--text-caption); }
+.team-activity-event > svg { width: 14px; flex: 0 0 auto; }
+.team-activity-event code { margin-left: auto; max-width: 50%; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
+.team-status-event { display: flex; align-items: center; gap: 8px; width: min(82%, 820px); padding: 4px 3px; color: var(--muted-foreground); font-size: var(--text-caption); }
+.team-status-event.failed, .team-status-event.waiting, .team-status-event.cancelled { color: var(--destructive); }
+.team-status-event.complete { color: var(--primary); }
+.team-status-event [data-slot="badge"] { margin-left: auto; }
+.team-composer { display: grid; flex: 0 0 auto; gap: 8px; padding: 12px 0 0; border-top: 1px solid var(--border); }
+.team-composer textarea { min-height: 76px; resize: vertical; color: var(--foreground); background: var(--input); }
+.team-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.team-composer-footer .muted-copy { font-size: var(--text-caption); }
+.team-roster-dialog { max-width: 560px; }
+.team-dialog-error { margin: -4px 0 2px; color: var(--destructive); font-size: var(--text-caption); line-height: var(--leading-body); }
+.team-member-picker { display: grid; gap: 5px; max-height: 320px; overflow-y: auto; padding: 2px; }
+.team-member-option { position: relative; display: flex; align-items: center; gap: 10px; min-height: 54px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 9px; color: var(--foreground); background: transparent; cursor: pointer; text-align: left; }
+.team-member-option:hover, .team-member-option.selected { border-color: var(--ring); background: var(--surface-raised); }
+.team-member-option > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
+.team-member-option strong { font-size: var(--text-body); }
+.team-member-option small { color: var(--muted-foreground); font-size: var(--text-caption); }
+.team-member-check { display: grid; place-items: center; width: 22px; height: 22px; margin-left: auto; border: 1px solid var(--border); border-radius: 6px; color: var(--primary-foreground); background: transparent; }
+.team-member-option.selected .team-member-check { border-color: var(--primary); background: var(--primary); }
+.team-member-check svg { width: 14px; height: 14px; }
+.team-member-count { margin: 0; color: var(--muted-foreground); font-size: var(--text-caption); }
+.team-member-count.invalid { color: var(--destructive); }
+.team-rename-dialog { max-width: 430px; }
 
 .chat-pane {
   display: flex;

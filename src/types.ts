@@ -142,6 +142,70 @@ export type WorkspacePanelPreferences = {
   width: number;
 };
 
+export type TeamRunStatus = "idle" | "running" | "complete" | "waiting" | "failed" | "cancelled" | "stopped" | "interrupted" | "limit";
+
+export type TeamMember = {
+  teamChatId?: string;
+  agentId: AgentId;
+  position: number;
+  name: string;
+  initials: string;
+  workspace: string;
+  workspaceKind: string;
+  workspaceTrusted: boolean;
+  available?: boolean;
+};
+
+export type TeamEvent = {
+  id: string;
+  teamChatId: string;
+  ordinal: number;
+  runId?: string | null;
+  type: "user" | "agent_message" | "activity" | "handoff" | "status" | "system" | string;
+  agentId?: AgentId | null;
+  sender?: { agentId?: AgentId | null; name: string; initials: string } | null;
+  recipient?: { agentId: AgentId; name: string; initials: string } | null;
+  body: string;
+  request?: string | null;
+  reason?: string | null;
+  status?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+export type TeamRun = {
+  id: string;
+  teamChatId: string;
+  status: TeamRunStatus;
+  goal: string;
+  activeAgentId?: AgentId | null;
+  pendingAgentId?: AgentId | null;
+  turnCount: number;
+  runLimit: number;
+  stopReason?: string | null;
+  startedAt: string;
+  finishedAt?: string | null;
+  updatedAt: string;
+};
+
+export type TeamChatSummary = {
+  id: string;
+  name: string;
+  runStatus: TeamRunStatus;
+  activeRunId?: string | null;
+  activeAgentId?: AgentId | null;
+  pendingAgentId?: AgentId | null;
+  runLimit: number;
+  createdAt: string;
+  updatedAt: string;
+  members: TeamMember[];
+};
+
+export type TeamChat = TeamChatSummary & {
+  events: TeamEvent[];
+  latestRun?: TeamRun | null;
+};
+
 export type PiSetup = {
   required: boolean;
   canContinue: boolean;
@@ -161,6 +225,9 @@ export type PiBootstrap = {
   authenticated: boolean;
   activeAgentId: AgentId | null;
   scheduledJobs: ScheduledJob[];
+  teamChats?: TeamChatSummary[];
+  teamChat?: TeamChat | null;
+  activeTeamChatId?: string | null;
   profile?: AgentProfile;
 };
 
@@ -180,7 +247,10 @@ export type PiEvent =
   | { type: "auth-prompt"; id: string; prompt: AuthPrompt }
   | { type: "auth-notify"; event: { type: string; message?: string; url?: string; instructions?: string; userCode?: string; verificationUri?: string } }
   | { type: "session-sync"; transcript: TimelineItem[]; sessions: SessionSummary[]; sessionsByAgent: Record<AgentId, SessionSummary[]>; config: PiConfig; agents: AgentProfile[]; setup: PiSetup; authenticated: boolean; activeAgentId: AgentId | null; scheduledJobs: ScheduledJob[] }
-  | { type: "scheduled-jobs-sync"; scheduledJobs: ScheduledJob[] };
+  | { type: "scheduled-jobs-sync"; scheduledJobs: ScheduledJob[] }
+  | { type: "team-agent-delta"; teamChatId: string; agentId: AgentId; delta: string }
+  | { type: "team-sync"; teamChats: TeamChatSummary[]; teamChat: TeamChat | null; activeTeamChatId: string | null }
+  | { type: "team-event-sync"; teamChat: TeamChat };
 
 export type PiBotBridge = {
   reportRendererStage: (stage: string) => void;
@@ -203,6 +273,16 @@ export type PiBotBridge = {
   setScheduledJobPaused: (id: string, paused: boolean) => Promise<PiBootstrap>;
   runScheduledJob: (id: string) => Promise<PiBootstrap>;
   deleteScheduledJob: (id: string) => Promise<PiBootstrap>;
+  listTeamChats: () => Promise<TeamChatSummary[]>;
+  createTeamChat: (name: string, agentIds: AgentId[], runLimit?: number) => Promise<PiBootstrap>;
+  openTeamChat: (teamChatId: string) => Promise<PiBootstrap>;
+  renameTeamChat: (teamChatId: string, name: string) => Promise<PiBootstrap>;
+  updateTeamMembers: (teamChatId: string, agentIds: AgentId[]) => Promise<PiBootstrap>;
+  deleteTeamChat: (teamChatId: string) => Promise<PiBootstrap>;
+  startTeamRun: (teamChatId: string, goal: string) => Promise<PiBootstrap>;
+  stopTeamRun: (teamChatId: string) => Promise<PiBootstrap>;
+  retryTeamRun: (teamChatId: string) => Promise<PiBootstrap>;
+  resumeTeamRun: (teamChatId: string, direction: string) => Promise<PiBootstrap>;
   prompt: (message: string) => Promise<void>;
   abort: () => Promise<void>;
   completeSetup: (accepted: boolean) => Promise<PiBootstrap>;

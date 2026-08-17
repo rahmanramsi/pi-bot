@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -15,8 +16,9 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { recoverPendingSessions } from "./session-persistence.mjs";
 
 export const DATABASE_FILENAME = "pi-bot.sqlite";
-export const DATABASE_SCHEMA_VERSION = 5;
+export const DATABASE_SCHEMA_VERSION = 6;
 export const SESSION_PATH_PREFIX = "pi-session://";
+export const TEAM_SESSION_PATH_PREFIX = "pi-team-session://";
 
 const migrationKey = "legacy-jsonl";
 const themePreferenceKey = "pi-bot.theme";
@@ -39,6 +41,11 @@ function integerToBool(value) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+export function teamSessionPathForId(teamChatId, agentId) {
+  if (typeof teamChatId !== "string" || !teamChatId || typeof agentId !== "string" || !agentId) throw new Error("Team session ids are required.");
+  return `${TEAM_SESSION_PATH_PREFIX}${encodeURIComponent(teamChatId)}/${encodeURIComponent(agentId)}`;
 }
 
 function normalizedPath(value) {
@@ -249,6 +256,91 @@ function migrateSchemaV5(database) {
   if (!columns.some((column) => column.name === "pinned")) database.exec("ALTER TABLE agents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
 }
 
+function migrateSchemaV6(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS team_chats (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      run_status TEXT NOT NULL DEFAULT 'idle',
+      active_run_id TEXT,
+      active_agent_id TEXT,
+      pending_agent_id TEXT,
+      run_limit INTEGER NOT NULL DEFAULT 12,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS team_chat_members (
+      team_chat_id TEXT NOT NULL REFERENCES team_chats(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      name_snapshot TEXT NOT NULL,
+      initials_snapshot TEXT NOT NULL,
+      workspace_snapshot TEXT NOT NULL,
+      workspace_kind_snapshot TEXT NOT NULL,
+      workspace_trusted_snapshot INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (team_chat_id, agent_id),
+      UNIQUE (team_chat_id, position)
+    );
+    CREATE TABLE IF NOT EXISTS team_chat_events (
+      id TEXT PRIMARY KEY,
+      team_chat_id TEXT NOT NULL REFERENCES team_chats(id) ON DELETE CASCADE,
+      ordinal INTEGER NOT NULL,
+      run_id TEXT,
+      type TEXT NOT NULL,
+      agent_id TEXT,
+      sender_name TEXT,
+      sender_initials TEXT,
+      recipient_agent_id TEXT,
+      recipient_name TEXT,
+      recipient_initials TEXT,
+      body TEXT NOT NULL DEFAULT '',
+      request TEXT,
+      reason TEXT,
+      status TEXT,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE (team_chat_id, ordinal)
+    );
+    CREATE INDEX IF NOT EXISTS team_chat_events_order_idx ON team_chat_events (team_chat_id, ordinal);
+    CREATE TABLE IF NOT EXISTS team_chat_runs (
+      id TEXT PRIMARY KEY,
+      team_chat_id TEXT NOT NULL REFERENCES team_chats(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      goal TEXT NOT NULL,
+      active_agent_id TEXT,
+      pending_agent_id TEXT,
+      turn_count INTEGER NOT NULL DEFAULT 0,
+      run_limit INTEGER NOT NULL,
+      stop_reason TEXT,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS team_chat_runs_chat_idx ON team_chat_runs (team_chat_id, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS team_member_sessions (
+      team_chat_id TEXT NOT NULL REFERENCES team_chats(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      session_path TEXT NOT NULL UNIQUE,
+      workspace TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (team_chat_id, agent_id)
+    );
+    CREATE TABLE IF NOT EXISTS team_session_entries (
+      team_chat_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      ordinal INTEGER NOT NULL,
+      entry_id TEXT NOT NULL,
+      entry_json TEXT NOT NULL,
+      PRIMARY KEY (team_chat_id, agent_id, ordinal),
+      UNIQUE (team_chat_id, agent_id, entry_id),
+      FOREIGN KEY (team_chat_id, agent_id) REFERENCES team_member_sessions(team_chat_id, agent_id) ON DELETE CASCADE
+    );
+  `);
+}
+
 function normalizeWorkspacePreferences(value) {
   const record = asRecord(value);
   const tabs = Array.isArray(record.tabs)
@@ -320,6 +412,10 @@ export class AppDatabase {
       if (storedVersion < 5) {
         migrateSchemaV5(this.db);
         this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(5, nowIso());
+      }
+      if (storedVersion < 6) {
+        migrateSchemaV6(this.db);
+        this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(6, nowIso());
       }
       this.db.prepare("INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(DATABASE_SCHEMA_VERSION));
     });
@@ -740,6 +836,334 @@ export class AppDatabase {
       for (const session of paths) deletePreferences.run(`pi-bot.workspace-panel:${session.path}`, `pi-bot.workspace-panel:${session.id}`);
       return this.db.prepare("DELETE FROM agents WHERE id = ?").run(agentId).changes > 0;
     });
+  }
+
+  createTeamChat({ id = randomUUID(), name = "Connected Team", members, runLimit = 12 }) {
+    if (!Array.isArray(members) || members.length < 2) throw new Error("A Connected Team needs at least two members.");
+    const uniqueMembers = members.filter((member, index, list) => member && typeof member.agentId === "string" && list.findIndex((item) => item?.agentId === member.agentId) === index);
+    if (uniqueMembers.length !== members.length) throw new Error("A Connected Team cannot contain duplicate members.");
+    const createdAt = nowIso();
+    const safeLimit = Number.isInteger(runLimit) ? Math.min(50, Math.max(1, runLimit)) : 12;
+    this.transaction(() => {
+      this.db.prepare("INSERT INTO team_chats (id, name, run_status, run_limit, created_at, updated_at) VALUES (?, ?, 'idle', ?, ?, ?)").run(id, String(name || "Connected Team").trim().slice(0, 120) || "Connected Team", safeLimit, createdAt, createdAt);
+      const insert = this.db.prepare(`
+        INSERT INTO team_chat_members (
+          team_chat_id, agent_id, position, name_snapshot, initials_snapshot,
+          workspace_snapshot, workspace_kind_snapshot, workspace_trusted_snapshot
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      uniqueMembers.forEach((member, position) => insert.run(
+        id,
+        member.agentId,
+        position,
+        String(member.name ?? "Unavailable agent").slice(0, 120),
+        String(member.initials ?? "?").slice(0, 16),
+        String(member.workspace ?? ""),
+        String(member.workspaceKind ?? "external"),
+        boolToInteger(member.workspaceTrusted),
+      ));
+    });
+    return this.getTeamChat(id);
+  }
+
+  listTeamChats() {
+    return readRows(this.db.prepare(`
+      SELECT id, name, run_status, active_run_id, active_agent_id, pending_agent_id,
+        run_limit, created_at, updated_at
+      FROM team_chats ORDER BY updated_at DESC, name
+    `)).map((row) => ({
+      id: row.id,
+      name: row.name,
+      runStatus: row.run_status,
+      activeRunId: row.active_run_id,
+      activeAgentId: row.active_agent_id,
+      pendingAgentId: row.pending_agent_id,
+      runLimit: Number(row.run_limit),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      members: this.listTeamMembers(row.id),
+    }));
+  }
+
+  getTeamChat(id) {
+    const row = this.db.prepare(`
+      SELECT id, name, run_status, active_run_id, active_agent_id, pending_agent_id,
+        run_limit, created_at, updated_at
+      FROM team_chats WHERE id = ?
+    `).get(id);
+    if (!row) return null;
+    const chat = {
+      id: row.id,
+      name: row.name,
+      runStatus: row.run_status,
+      activeRunId: row.active_run_id,
+      activeAgentId: row.active_agent_id,
+      pendingAgentId: row.pending_agent_id,
+      runLimit: Number(row.run_limit),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      members: this.listTeamMembers(id),
+      events: this.listTeamEvents(id),
+      latestRun: this.getLatestTeamRun(id),
+    };
+    return chat;
+  }
+
+  updateTeamChat(id, changes = {}) {
+    const current = this.getTeamChat(id);
+    if (!current) throw new Error("Team chat was not found.");
+    const name = typeof changes.name === "string" ? changes.name.trim().slice(0, 120) : current.name;
+    const runLimit = Number.isInteger(changes.runLimit) ? Math.min(50, Math.max(1, changes.runLimit)) : current.runLimit;
+    this.transaction(() => {
+      this.db.prepare("UPDATE team_chats SET name = ?, run_limit = ?, updated_at = ? WHERE id = ?").run(name || "Connected Team", runLimit, nowIso(), id);
+    });
+    return this.getTeamChat(id);
+  }
+
+  listTeamMembers(teamChatId) {
+    return readRows(this.db.prepare(`
+      SELECT team_chat_id, agent_id, position, name_snapshot, initials_snapshot,
+        workspace_snapshot, workspace_kind_snapshot, workspace_trusted_snapshot
+      FROM team_chat_members WHERE team_chat_id = ? ORDER BY position
+    `), teamChatId).map((row) => ({
+      teamChatId: row.team_chat_id,
+      agentId: row.agent_id,
+      position: Number(row.position),
+      name: row.name_snapshot,
+      initials: row.initials_snapshot,
+      workspace: row.workspace_snapshot,
+      workspaceKind: row.workspace_kind_snapshot,
+      workspaceTrusted: integerToBool(row.workspace_trusted_snapshot),
+    }));
+  }
+
+  replaceTeamMembers(teamChatId, members) {
+    if (!Array.isArray(members) || members.length < 2) throw new Error("A Connected Team needs at least two members.");
+    const uniqueMembers = members.filter((member, index, list) => member && typeof member.agentId === "string" && list.findIndex((item) => item?.agentId === member.agentId) === index);
+    if (uniqueMembers.length !== members.length) throw new Error("A Connected Team cannot contain duplicate members.");
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM team_chat_members WHERE team_chat_id = ?").run(teamChatId);
+      const insert = this.db.prepare(`
+        INSERT INTO team_chat_members (
+          team_chat_id, agent_id, position, name_snapshot, initials_snapshot,
+          workspace_snapshot, workspace_kind_snapshot, workspace_trusted_snapshot
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      members.forEach((member, position) => insert.run(
+        teamChatId,
+        member.agentId,
+        position,
+        String(member.name ?? "Unavailable agent").slice(0, 120),
+        String(member.initials ?? "?").slice(0, 16),
+        String(member.workspace ?? ""),
+        String(member.workspaceKind ?? "external"),
+        boolToInteger(member.workspaceTrusted),
+      ));
+      this.db.prepare("UPDATE team_chats SET updated_at = ? WHERE id = ?").run(nowIso(), teamChatId);
+    });
+    return this.listTeamMembers(teamChatId);
+  }
+
+  appendTeamEvent(event) {
+    const id = event.id || randomUUID();
+    const createdAt = event.createdAt || nowIso();
+    return this.transaction(() => {
+      const next = this.db.prepare("SELECT COALESCE(MAX(ordinal), -1) + 1 AS ordinal FROM team_chat_events WHERE team_chat_id = ?").get(event.teamChatId);
+      const ordinal = Number(next?.ordinal ?? 0);
+      this.db.prepare(`
+        INSERT INTO team_chat_events (
+          id, team_chat_id, ordinal, run_id, type, agent_id, sender_name, sender_initials,
+          recipient_agent_id, recipient_name, recipient_initials, body, request, reason,
+          status, metadata_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        event.teamChatId,
+        ordinal,
+        event.runId ?? null,
+        event.type || "system",
+        event.agentId ?? null,
+        event.senderName ?? null,
+        event.senderInitials ?? null,
+        event.recipientAgentId ?? null,
+        event.recipientName ?? null,
+        event.recipientInitials ?? null,
+        typeof event.body === "string" ? event.body : "",
+        event.request ?? null,
+        event.reason ?? null,
+        event.status ?? null,
+        event.metadata ? JSON.stringify(event.metadata) : null,
+        createdAt,
+      );
+      this.db.prepare("UPDATE team_chats SET updated_at = ? WHERE id = ?").run(createdAt, event.teamChatId);
+      return this.getTeamEvent(id);
+    });
+  }
+
+  getTeamEvent(id) {
+    const row = this.db.prepare("SELECT * FROM team_chat_events WHERE id = ?").get(id);
+    return row ? this.mapTeamEvent(row) : null;
+  }
+
+  updateTeamEvent(id, changes = {}) {
+    const current = this.getTeamEvent(id);
+    if (!current) return null;
+    this.transaction(() => {
+      this.db.prepare(`
+        UPDATE team_chat_events SET body = ?, status = ?, metadata_json = ? WHERE id = ?
+      `).run(
+        typeof changes.body === "string" ? changes.body : current.body,
+        changes.status ?? current.status,
+        changes.metadata ? JSON.stringify(changes.metadata) : (current.metadata ? JSON.stringify(current.metadata) : null),
+        id,
+      );
+      this.db.prepare("UPDATE team_chats SET updated_at = ? WHERE id = ?").run(nowIso(), current.teamChatId);
+    });
+    return this.getTeamEvent(id);
+  }
+
+  mapTeamEvent(row) {
+    let metadata = null;
+    try { metadata = row.metadata_json ? JSON.parse(row.metadata_json) : null; } catch { metadata = null; }
+    return {
+      id: row.id,
+      teamChatId: row.team_chat_id,
+      ordinal: Number(row.ordinal),
+      runId: row.run_id,
+      type: row.type,
+      agentId: row.agent_id,
+      sender: row.sender_name ? { agentId: row.agent_id, name: row.sender_name, initials: row.sender_initials ?? "?" } : null,
+      recipient: row.recipient_agent_id ? { agentId: row.recipient_agent_id, name: row.recipient_name ?? "Unavailable agent", initials: row.recipient_initials ?? "?" } : null,
+      body: row.body,
+      request: row.request,
+      reason: row.reason,
+      status: row.status,
+      metadata,
+      createdAt: row.created_at,
+    };
+  }
+
+  listTeamEvents(teamChatId) {
+    return readRows(this.db.prepare("SELECT * FROM team_chat_events WHERE team_chat_id = ? ORDER BY ordinal"), teamChatId).map((row) => this.mapTeamEvent(row));
+  }
+
+  createTeamRun({ id = randomUUID(), teamChatId, goal, runLimit = 12, firstAgentId = null }) {
+    const startedAt = nowIso();
+    const safeLimit = Number.isInteger(runLimit) ? Math.min(50, Math.max(1, runLimit)) : 12;
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO team_chat_runs (
+          id, team_chat_id, status, goal, active_agent_id, pending_agent_id,
+          turn_count, run_limit, stop_reason, started_at, finished_at, updated_at
+        ) VALUES (?, ?, 'running', ?, ?, ?, 0, ?, NULL, ?, NULL, ?)
+      `).run(id, teamChatId, String(goal), firstAgentId, firstAgentId, safeLimit, startedAt, startedAt);
+      this.db.prepare(`
+        UPDATE team_chats SET run_status = 'running', active_run_id = ?, active_agent_id = ?, pending_agent_id = ?, run_limit = ?, updated_at = ? WHERE id = ?
+      `).run(id, firstAgentId, firstAgentId, safeLimit, startedAt, teamChatId);
+    });
+    return this.getTeamRun(id);
+  }
+
+  updateTeamRun(id, changes = {}) {
+    const current = this.getTeamRun(id);
+    if (!current) throw new Error("Team run was not found.");
+    const next = { ...current, ...changes, updatedAt: nowIso() };
+    const finishedAt = ["running", "queued"].includes(next.status) ? null : (next.finishedAt || next.updatedAt);
+    this.transaction(() => {
+      this.db.prepare(`
+        UPDATE team_chat_runs SET status = ?, goal = ?, active_agent_id = ?, pending_agent_id = ?,
+          turn_count = ?, run_limit = ?, stop_reason = ?, started_at = ?, finished_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(next.status, next.goal, next.activeAgentId, next.pendingAgentId, next.turnCount, next.runLimit, next.stopReason, next.startedAt, finishedAt, next.updatedAt, id);
+      this.db.prepare(`
+        UPDATE team_chats SET run_status = ?, active_run_id = ?, active_agent_id = ?, pending_agent_id = ?, updated_at = ? WHERE id = ?
+      `).run(next.status, ["running", "queued"].includes(next.status) ? id : null, next.activeAgentId, next.pendingAgentId, next.updatedAt, next.teamChatId);
+    });
+    return this.getTeamRun(id);
+  }
+
+  getTeamRun(id) {
+    const row = this.db.prepare("SELECT * FROM team_chat_runs WHERE id = ?").get(id);
+    return row ? this.mapTeamRun(row) : null;
+  }
+
+  getLatestTeamRun(teamChatId) {
+    const row = this.db.prepare("SELECT * FROM team_chat_runs WHERE team_chat_id = ? ORDER BY updated_at DESC LIMIT 1").get(teamChatId);
+    return row ? this.mapTeamRun(row) : null;
+  }
+
+  mapTeamRun(row) {
+    return {
+      id: row.id,
+      teamChatId: row.team_chat_id,
+      status: row.status,
+      goal: row.goal,
+      activeAgentId: row.active_agent_id,
+      pendingAgentId: row.pending_agent_id,
+      turnCount: Number(row.turn_count),
+      runLimit: Number(row.run_limit),
+      stopReason: row.stop_reason,
+      startedAt: row.started_at,
+      finishedAt: row.finished_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  createTeamSession({ teamChatId, agentId, sessionId, workspace, entries }) {
+    const sessionPath = teamSessionPathForId(teamChatId, agentId);
+    const createdAt = nowIso();
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO team_member_sessions (team_chat_id, agent_id, session_id, session_path, workspace, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(teamChatId, agentId, sessionId, sessionPath, workspace, createdAt, createdAt);
+      const insertEntry = this.db.prepare("INSERT INTO team_session_entries (team_chat_id, agent_id, session_id, ordinal, entry_id, entry_json) VALUES (?, ?, ?, ?, ?, ?)");
+      (entries ?? []).forEach((entry, ordinal) => insertEntry.run(teamChatId, agentId, sessionId, ordinal, entry.id, JSON.stringify(entry)));
+    });
+    return { teamChatId, agentId, sessionId, sessionPath, workspace };
+  }
+
+  getTeamSession(teamChatId, agentId) {
+    const row = this.db.prepare("SELECT team_chat_id, agent_id, session_id, session_path, workspace, created_at, updated_at FROM team_member_sessions WHERE team_chat_id = ? AND agent_id = ?").get(teamChatId, agentId);
+    return row ? { teamChatId: row.team_chat_id, agentId: row.agent_id, sessionId: row.session_id, sessionPath: row.session_path, workspace: row.workspace, createdAt: row.created_at, updatedAt: row.updated_at } : null;
+  }
+
+  deleteTeamSession(teamChatId, agentId) {
+    return this.transaction(() => this.db.prepare("DELETE FROM team_member_sessions WHERE team_chat_id = ? AND agent_id = ?").run(teamChatId, agentId).changes > 0);
+  }
+
+  listTeamSessions(teamChatId) {
+    return readRows(this.db.prepare("SELECT team_chat_id, agent_id, session_id, session_path, workspace, created_at, updated_at FROM team_member_sessions WHERE team_chat_id = ? ORDER BY agent_id"), teamChatId).map((row) => ({ teamChatId: row.team_chat_id, agentId: row.agent_id, sessionId: row.session_id, sessionPath: row.session_path, workspace: row.workspace, createdAt: row.created_at, updatedAt: row.updated_at }));
+  }
+
+  getTeamSessionEntries(teamChatId, agentId) {
+    return readRows(this.db.prepare("SELECT entry_json FROM team_session_entries WHERE team_chat_id = ? AND agent_id = ? ORDER BY ordinal"), teamChatId, agentId).map((row) => JSON.parse(row.entry_json));
+  }
+
+  appendTeamSessionEntry(teamChatId, agentId, entry) {
+    return this.transaction(() => {
+      const session = this.getTeamSession(teamChatId, agentId);
+      if (!session) throw new Error("Team member session does not exist.");
+      const next = this.db.prepare("SELECT COALESCE(MAX(ordinal), -1) + 1 AS ordinal FROM team_session_entries WHERE team_chat_id = ? AND agent_id = ?").get(teamChatId, agentId);
+      const inserted = this.db.prepare("INSERT OR IGNORE INTO team_session_entries (team_chat_id, agent_id, session_id, ordinal, entry_id, entry_json) VALUES (?, ?, ?, ?, ?, ?)").run(teamChatId, agentId, session.sessionId, Number(next?.ordinal ?? 0), entry.id, JSON.stringify(entry));
+      if (inserted.changes > 0) this.db.prepare("UPDATE team_member_sessions SET updated_at = ? WHERE team_chat_id = ? AND agent_id = ?").run(entry.timestamp || nowIso(), teamChatId, agentId);
+      return inserted.changes > 0;
+    });
+  }
+
+  markActiveTeamRunsInterrupted() {
+    const runs = readRows(this.db.prepare("SELECT id, team_chat_id FROM team_chat_runs WHERE status IN ('running', 'queued')"));
+    if (runs.length === 0) return 0;
+    this.transaction(() => {
+      const timestamp = nowIso();
+      this.db.prepare("UPDATE team_chat_runs SET status = 'interrupted', stop_reason = 'Pi Bot closed before the run finished.', finished_at = ?, updated_at = ? WHERE status IN ('running', 'queued')").run(timestamp, timestamp);
+      this.db.prepare("UPDATE team_chats SET run_status = 'interrupted', active_run_id = NULL, active_agent_id = NULL, updated_at = ? WHERE run_status IN ('running', 'queued')").run(timestamp);
+    });
+    return runs.length;
+  }
+
+  deleteTeamChat(teamChatId) {
+    return this.transaction(() => this.db.prepare("DELETE FROM team_chats WHERE id = ?").run(teamChatId).changes > 0);
   }
 }
 
