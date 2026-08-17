@@ -309,6 +309,33 @@ export function finishReasoning(previous: PiBootstrap | null, id: string) {
   return { ...previous, transcript: previous.transcript.map((entry) => entry.id === id ? { ...entry, status: "done" as const } : entry) };
 }
 
+export function startCompaction(previous: PiBootstrap | null, id: string, reason: "threshold" | "overflow") {
+  if (!previous) return previous;
+  const body = reason === "overflow"
+    ? "The context limit was reached. Pi Bot is condensing earlier messages and retrying."
+    : "Pi Bot is condensing earlier messages before the context limit is reached.";
+  const item: TimelineItem = { id, kind: "status", label: "Compacting context", body, status: "running", timestamp: timeNow(), timestampMs: Date.now() };
+  return {
+    ...previous,
+    transcript: [...previous.transcript, item],
+  };
+}
+
+export function finishCompaction(previous: PiBootstrap | null, id: string, failed: boolean, errorMessage?: string) {
+  if (!previous) return previous;
+  return {
+    ...previous,
+    transcript: previous.transcript.map((item) => item.id === id
+      ? {
+        ...item,
+        label: failed ? "Context compaction failed" : "Context compacted",
+        body: failed ? errorMessage || "Pi Bot could not condense the earlier messages." : "Earlier messages were condensed to keep this conversation within the model's context limit.",
+        status: failed ? "failed" as const : "done" as const,
+      }
+      : item),
+  };
+}
+
 function providerLabel(provider: string) {
   const knownLabels: Record<string, string> = {
     anthropic: "Anthropic",
@@ -1642,6 +1669,10 @@ export function App() {
           setData((previous) => appendReasoningDelta(previous, event.id, event.delta));
         } else if (event.type === "reasoning-end") {
           setData((previous) => finishReasoning(previous, event.id));
+        } else if (event.type === "compaction-start") {
+          setData((previous) => startCompaction(previous, event.id, event.reason));
+        } else if (event.type === "compaction-end") {
+          setData((previous) => finishCompaction(previous, event.id, event.failed, event.errorMessage));
         } else if (event.type === "tool-start") {
           setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: event.id, kind: "tool", label: `Tool · ${event.name}`, body: event.detail, input: event.detail, status: "running", timestamp: timeNow(), timestampMs: Date.now() }] } : previous);
         } else if (event.type === "tool-update") {

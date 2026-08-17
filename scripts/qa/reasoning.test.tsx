@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { appendReasoningDelta, finishReasoning, ReasoningRow, startReasoning } from "@/App";
+import { appendReasoningDelta, finishCompaction, finishReasoning, ReasoningRow, startCompaction, startReasoning } from "@/App";
 import type { PiBootstrap, TimelineItem } from "@/types";
 
 function bootstrap(): PiBootstrap {
@@ -33,6 +33,29 @@ describe("reasoning stream state", () => {
   it("removes a reasoning block that never receives readable text", () => {
     const data = finishReasoning(startReasoning(bootstrap(), "reasoning-empty"), "reasoning-empty");
     expect(data?.transcript).toEqual([]);
+  });
+});
+
+describe("context compaction state", () => {
+  it("shows running and completed compaction states in the activity timeline", () => {
+    const running = startCompaction(bootstrap(), "compaction-1", "threshold");
+    expect(running?.transcript).toEqual([
+      expect.objectContaining({
+        id: "compaction-1",
+        kind: "status",
+        label: "Compacting context",
+        status: "running",
+      }),
+    ]);
+
+    const completed = finishCompaction(running, "compaction-1", false);
+    expect(completed?.transcript).toEqual([
+      expect.objectContaining({
+        id: "compaction-1",
+        label: "Context compacted",
+        status: "done",
+      }),
+    ]);
   });
 });
 

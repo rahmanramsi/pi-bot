@@ -174,6 +174,8 @@ export type PiEvent =
   | { type: "tool-update"; id: string; detail: string }
   | { type: "tool-end"; id: string; failed: boolean; detail: string }
   | { type: "agent-status"; agentId: AgentId; running: boolean }
+  | { type: "compaction-start"; id: string; reason: "threshold" | "overflow" }
+  | { type: "compaction-end"; id: string; failed: boolean; errorMessage?: string }
   | { type: "agent-start" }
   | { type: "agent-end"; retrying: boolean }
   | { type: "agent-settled" }

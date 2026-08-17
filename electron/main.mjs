@@ -409,6 +409,19 @@ function transcriptFromManager(manager, profile = activeProfile()) {
   const items = [];
   const toolRows = new Map();
   for (const entry of manager.buildContextEntries()) {
+    if (entry.type === "compaction") {
+      const timestampMs = new Date(entry.timestamp).getTime();
+      items.push({
+        id: entry.id,
+        kind: "status",
+        label: "Context compacted",
+        body: "Earlier messages were condensed to keep this conversation within the model's context limit.",
+        timestamp: displayTime(entry.timestamp),
+        timestampMs,
+        status: "done",
+      });
+      continue;
+    }
     if (entry.type !== "message") continue;
     const message = entry.message;
     const timestamp = displayTime(message.timestamp);
@@ -779,6 +792,15 @@ function relay(runtime, event) {
   }
   if (event.type === "tool_execution_end") {
     send({ type: "tool-end", id: event.toolCallId, failed: event.isError, detail: stringify(event.result) });
+  }
+  if (event.type === "compaction_start") {
+    runtime.compactionId = `compaction-${Date.now()}`;
+    send({ type: "compaction-start", id: runtime.compactionId, reason: event.reason });
+  }
+  if (event.type === "compaction_end") {
+    const id = runtime.compactionId ?? `compaction-${Date.now()}`;
+    runtime.compactionId = undefined;
+    send({ type: "compaction-end", id, failed: Boolean(event.errorMessage), ...(event.errorMessage ? { errorMessage: event.errorMessage } : {}) });
   }
   if (event.type === "turn_end" && event.message?.role === "assistant" && event.message.errorMessage) {
     if (event.message.stopReason === "aborted") send({ type: "aborted" });
