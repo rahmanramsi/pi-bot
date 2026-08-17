@@ -25,12 +25,13 @@ import {
   buildScheduledJob,
   ScheduledJobScheduler,
 } from "./scheduled-jobs.mjs";
+import { agentProfileToolName, createAgentProfileTool } from "./agent-profile-tool.mjs";
 import { migrateAppOwnedWorkspaces } from "./agent-workspace.mjs";
 import { refreshAgentRuntime } from "./agent-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
-const codingTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const codingTools = ["read", "bash", "edit", "write", "grep", "find", "ls", agentProfileToolName];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const browserPartitionPrefix = "persist:pi-bot-browser-";
 const configuredBrowserPartitions = new Set();
@@ -929,6 +930,7 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
     model: selectedModel,
     thinkingLevel: profile.thinkingLevel,
     tools: codingTools,
+    customTools: [createAgentProfileTool(profile)],
     sessionManager: manager,
     settingsManager: SettingsManager.inMemory(),
     resourceLoader,
@@ -984,6 +986,7 @@ async function executeScheduledJob(job) {
       model: selectedModel,
       thinkingLevel: job.thinkingLevel,
       tools: codingTools,
+      customTools: [createAgentProfileTool(scheduledProfile)],
       sessionManager: manager,
       settingsManager: SettingsManager.inMemory(),
       resourceLoader,
