@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
+import { createMermaidPlugin, type MermaidConfig } from "@streamdown/mermaid";
 import type { UIMessage } from "ai";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { createElement, isValidElement, type AnchorHTMLAttributes, type ComponentProps, type HTMLAttributes, type MouseEvent, type ReactElement, type ReactNode } from "react";
@@ -296,6 +296,11 @@ function transformInlineSyntax(parent: MarkdownNode, source: string) {
 
 function remarkMarkdownExtensions() {
   return (tree: MarkdownNode, file: { value?: unknown }) => {
+    const normalizeCodeLanguage = (node: MarkdownNode) => {
+      if (node.type === "code" && (typeof node.lang !== "string" || !node.lang.trim())) node.lang = "text";
+      node.children?.forEach(normalizeCodeLanguage);
+    };
+    normalizeCodeLanguage(tree);
     normalizeWorkspaceLinks(tree);
     transformDefinitionLists(tree);
     transformInlineSyntax(tree, typeof file.value === "string" ? file.value : "");
@@ -666,11 +671,14 @@ export const MessageBranchPage = ({
   );
 };
 
+type MessageTheme = "dark" | "light";
+
 export type MessageResponseProps = Omit<StreamdownProps, "children" | "components"> & {
   children?: string;
   onWorkspaceFile?: (path: string) => void;
   workspaceFiles?: readonly string[];
   components?: Components;
+  theme?: MessageTheme;
 };
 
 function normalizeRelativeWorkspacePath(value: string) {
@@ -764,7 +772,53 @@ function workspacePathPlugin(lookup: Map<string, string>) {
   };
 }
 
-const streamdownPlugins = { cjk, code, math: mathPlugin, mermaid };
+const mermaidPlugin = createMermaidPlugin();
+const streamdownPlugins = { cjk, code, math: mathPlugin, mermaid: mermaidPlugin };
+
+const mermaidFallbacks = {
+  dark: {
+    background: "#25282e",
+    primaryColor: "#3b414b",
+    primaryTextColor: "#f6f7f8",
+    primaryBorderColor: "#8792a0",
+    lineColor: "#bbc5d0",
+    secondaryColor: "#46515e",
+    tertiaryColor: "#303640",
+    textColor: "#f6f7f8",
+    edgeLabelBackground: "#25282e",
+  },
+  light: {
+    background: "#fbfaf7",
+    primaryColor: "#ebe8e2",
+    primaryTextColor: "#20242b",
+    primaryBorderColor: "#a5a29a",
+    lineColor: "#5f6670",
+    secondaryColor: "#e4e8ed",
+    tertiaryColor: "#f3f1ed",
+    textColor: "#20242b",
+    edgeLabelBackground: "#fbfaf7",
+  },
+} satisfies Record<MessageTheme, MermaidConfig["themeVariables"]>;
+
+export function markdownMermaidConfig(theme: MessageTheme) {
+  const fallback = mermaidFallbacks[theme];
+  const styles = typeof document === "undefined" || (document.documentElement.dataset.theme || "dark") !== theme
+    ? undefined
+    : getComputedStyle(document.documentElement);
+  const token = (name: string, value: string) => styles?.getPropertyValue(name).trim() || value;
+  const themeVariables = {
+    background: token("--markdown-diagram-background", fallback.background),
+    primaryColor: token("--markdown-diagram-primary", fallback.primaryColor),
+    primaryTextColor: token("--markdown-diagram-primary-text", fallback.primaryTextColor),
+    primaryBorderColor: token("--markdown-diagram-primary-border", fallback.primaryBorderColor),
+    lineColor: token("--markdown-diagram-line", fallback.lineColor),
+    secondaryColor: token("--markdown-diagram-secondary", fallback.secondaryColor),
+    tertiaryColor: token("--markdown-diagram-tertiary", fallback.tertiaryColor),
+    textColor: token("--markdown-diagram-text", fallback.textColor),
+    edgeLabelBackground: token("--markdown-diagram-background", fallback.edgeLabelBackground),
+  };
+  return { config: { theme: "base" as const, themeVariables } };
+}
 
 export const MessageResponse = memo(function MessageResponse({
   children,
@@ -777,6 +831,7 @@ export const MessageResponse = memo(function MessageResponse({
   urlTransform: customUrlTransform,
   remarkPlugins = [],
   remarkRehypeOptions,
+  theme = "dark",
   ...props
 }: MessageResponseProps) {
   const headingIds = new Map<string, number>();
@@ -817,6 +872,7 @@ export const MessageResponse = memo(function MessageResponse({
         return customUrlTransform ? customUrlTransform(safeUrl, key, node) : safeUrl;
       }}
       {...props}
+      mermaid={markdownMermaidConfig(theme)}
     >
       {content}
     </Streamdown>
@@ -825,7 +881,8 @@ export const MessageResponse = memo(function MessageResponse({
   prevProps.children === nextProps.children &&
   nextProps.isAnimating === prevProps.isAnimating &&
   prevProps.workspaceFiles === nextProps.workspaceFiles &&
-  prevProps.onWorkspaceFile === nextProps.onWorkspaceFile
+  prevProps.onWorkspaceFile === nextProps.onWorkspaceFile &&
+  prevProps.theme === nextProps.theme
 ));
 MessageResponse.displayName = "MessageResponse";
 
