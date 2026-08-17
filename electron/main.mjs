@@ -28,6 +28,12 @@ import {
 import { agentProfileToolName, createAgentProfileTool } from "./agent-profile-tool.mjs";
 import { migrateAppOwnedWorkspaces } from "./agent-workspace.mjs";
 import { refreshAgentRuntime } from "./agent-runtime.mjs";
+import {
+  formatUserProfileContext,
+  loadVersionedUserProfileContext,
+} from "./user-profile-context.mjs";
+
+export { formatUserProfileContext } from "./user-profile-context.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
@@ -37,6 +43,7 @@ const browserPartitionPrefix = "persist:pi-bot-browser-";
 const configuredBrowserPartitions = new Set();
 const maxWorkspaceFiles = 500;
 const defaultAgentId = "assistant";
+const emptyUserProfile = Object.freeze({ avatar: "", name: "", about: "" });
 const developmentServerUrl = process.env.PI_BOT_DEV_SERVER_URL;
 const developmentUserDataDir = process.env.PI_BOT_USER_DATA_DIR;
 
@@ -55,6 +62,8 @@ let executionRiskAccepted = false;
 let currentSessions = {};
 let sessionRecords = {};
 let preferredThinkingLevel = "medium";
+let userProfile = { ...emptyUserProfile };
+let userProfileVersion = 0;
 let session;
 let sessionManager;
 let unsubscribe;
@@ -240,6 +249,8 @@ function loadSettings() {
   executionRiskAccepted = false;
   currentSessions = {};
   sessionRecords = {};
+  userProfile = appDatabase.getUserProfile();
+  userProfileVersion = 0;
   const saved = appDatabase.getState();
   const next = {};
   for (const value of saved.agents) {
@@ -657,6 +668,7 @@ async function bootstrap() {
     activeAgentId,
     scheduledJobs: appDatabase.listScheduledJobs(),
     profile,
+    userProfile,
   };
 }
 
@@ -754,6 +766,7 @@ async function sendSessionSync(runtime) {
     authenticated: availableModels.length > 0,
     activeAgentId: runtime.agentId,
     scheduledJobs: appDatabase.listScheduledJobs(),
+    userProfile,
   });
 }
 
@@ -766,6 +779,9 @@ function relay(runtime, event) {
   updatePendingSession(runtime, event);
   if (event.type === "agent_start") send({ type: "agent-status", agentId: runtime.agentId, running: true });
   if (event.type === "agent_settled" || event.type === "aborted" || (event.type === "agent_end" && !event.willRetry)) send({ type: "agent-status", agentId: runtime.agentId, running: false });
+  if (event.type === "agent_settled" || event.type === "aborted" || (event.type === "agent_end" && !event.willRetry)) {
+    void refreshRuntimeProfileContext(runtime);
+  }
   if (runtime.key !== activeRuntimeKey) return;
   if (event.type === "message_update" && event.assistantMessageEvent?.type === "thinking_start") {
     send({ type: "reasoning-start", id: reasoningId(event.message) });
@@ -852,24 +868,38 @@ async function closeAgentSessions(agentId) {
 }
 
 async function createResourceLoader(profile, runtimeDir = isolatedRuntimeDir(profile.id)) {
-  const skillResult = profile.workspaceTrusted
-    ? loadSkillsFromDir({ dir: path.join(profile.workspace, ".agents", "skills"), source: "agent-workspace" })
-    : { skills: [], diagnostics: [] };
-  const loader = new DefaultResourceLoader({
-    cwd: profile.workspace,
-    agentDir: runtimeDir,
-    settingsManager: SettingsManager.inMemory(),
-    noExtensions: true,
-    noSkills: true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: true,
-    systemPrompt: "You are a helpful coding teammate. Work directly in the selected agent workspace using the available tools. Be clear and concise.",
-    appendSystemPromptOverride: (base) => profile.instructions ? [...base, profile.instructions] : base,
-    skillsOverride: () => skillResult,
+  return loadVersionedUserProfileContext({
+    getProfile: () => userProfile,
+    getVersion: () => userProfileVersion,
+    createResource: async (profileSnapshot, profileVersion) => {
+      const skillResult = profile.workspaceTrusted
+        ? loadSkillsFromDir({ dir: path.join(profile.workspace, ".agents", "skills"), source: "agent-workspace" })
+        : { skills: [], diagnostics: [] };
+      const loader = new DefaultResourceLoader({
+        cwd: profile.workspace,
+        agentDir: runtimeDir,
+        settingsManager: SettingsManager.inMemory(),
+        noExtensions: true,
+        noSkills: true,
+        noPromptTemplates: true,
+        noThemes: true,
+        noContextFiles: true,
+        systemPrompt: "You are a helpful coding teammate. Work directly in the selected agent workspace using the available tools. Be clear and concise.",
+        appendSystemPromptOverride: (base) => {
+          const currentUserProfile = userProfileVersion === profileVersion ? profileSnapshot : userProfile;
+          const userProfileContext = formatUserProfileContext(currentUserProfile);
+          return [
+            ...base,
+            ...(profile.instructions ? [profile.instructions] : []),
+            ...(userProfileContext ? [userProfileContext] : []),
+          ];
+        },
+        skillsOverride: () => skillResult,
+      });
+      await loader.reload();
+      return loader;
+    },
   });
-  await loader.reload();
-  return loader;
 }
 
 function selectedModelFor(profile, manager, mode) {
@@ -881,6 +911,24 @@ function selectedModelFor(profile, manager, mode) {
   if (profile.defaultModelKey) return availableModels.find((model) => modelKey(model) === profile.defaultModelKey);
   if (mode === "new" || mode === "continue") return availableModels[0];
   return undefined;
+}
+
+async function refreshRuntimeProfileContext(runtime) {
+  if (!runtime || runtime.profileVersion === userProfileVersion) return;
+  if (runtime.session?.isStreaming) return;
+  try {
+    while (runtime.profileVersion !== userProfileVersion) {
+      const targetVersion = userProfileVersion;
+      await runtime.session?.reload();
+      if (targetVersion === userProfileVersion) runtime.profileVersion = targetVersion;
+    }
+  } catch (error) {
+    console.warn("Could not refresh user profile context:", error);
+  }
+}
+
+async function refreshAllRuntimeProfileContexts() {
+  await Promise.all([...sessionRuntimes.values()].map((runtime) => refreshRuntimeProfileContext(runtime)));
 }
 
 async function openSession({ mode = "continue", sessionPath, agentId = activeAgentId, workspaceOverride } = {}) {
@@ -906,6 +954,7 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
   const requestedPath = mode === "open" ? sessionPath : mode === "continue" && mappedPathExists ? mappedPath : undefined;
   const existingRuntime = requestedPath ? sessionRuntimes.get(requestedPath) : undefined;
   if (existingRuntime) {
+    await refreshRuntimeProfileContext(existingRuntime);
     currentSessions[agentId] = requestedPath;
     activateRuntime(existingRuntime);
     saveSettings();
@@ -947,7 +996,7 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
     return bootstrap();
   }
 
-  const resourceLoader = await createResourceLoader(profile);
+  const { resource: resourceLoader, profileVersion } = await createResourceLoader(profile);
   const result = await createAgentSession({
     cwd: profile.workspace,
     agentDir: isolatedRuntimeDir(profile.id),
@@ -968,6 +1017,7 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
     session: result.session,
     sessionManager: manager,
     transcript: transcriptFromManager(manager, profile),
+    profileVersion,
   };
   runtime.unsubscribe = runtime.session.subscribe((event) => relay(runtime, event));
   sessionRuntimes.set(runtime.key, runtime);
@@ -1003,7 +1053,7 @@ async function executeScheduledJob(job) {
   const runtimeDir = userDataPath("runtime", "scheduled", job.id);
   let runtime;
   try {
-    const resourceLoader = await createResourceLoader(scheduledProfile, runtimeDir);
+    const { resource: resourceLoader, profileVersion } = await createResourceLoader(scheduledProfile, runtimeDir);
     const result = await createAgentSession({
       cwd: job.workspace,
       agentDir: runtimeDir,
@@ -1024,10 +1074,12 @@ async function executeScheduledJob(job) {
       session: result.session,
       sessionManager: manager,
       transcript: transcriptFromManager(manager, scheduledProfile),
+      profileVersion,
     };
     runtime.unsubscribe = runtime.session.subscribe((event) => relay(runtime, event));
     sessionRuntimes.set(runtime.key, runtime);
     sessionRecords[manager.getSessionFile()] = { agentId: job.agentId, workspace: job.workspace };
+    await refreshRuntimeProfileContext(runtime);
     await runtime.session.prompt(job.prompt);
     const entries = manager.getEntries();
     const assistant = [...entries].reverse().find((entry) => entry.type === "message" && entry.message?.role === "assistant");
@@ -1341,6 +1393,7 @@ ipcMain.handle("pi:prompt", async (_event, message) => {
   const promptSession = runtime?.session;
   if (!runtime || !promptSession) throw new Error("Choose an available model in App Settings before sending a message.");
   if (promptSession.isStreaming) throw new Error("The agent is already responding. Stop the current response first.");
+  await refreshRuntimeProfileContext(runtime);
   const hasUserMessage = runtime.sessionManager.getEntries().some((entry) => entry.type === "message" && entry.message.role === "user");
   if (!hasUserMessage) runtime.sessionManager.appendSessionInfo(titleFromPrompt(message));
   runtime.transcript = transcriptFromManager(runtime.sessionManager, agentProfiles[runtime.agentId]);
@@ -1449,6 +1502,13 @@ ipcMain.handle("pi:auth-respond", (_event, promptId, value) => respondToAuthProm
 ipcMain.handle("pi:auth-cancel", (_event, promptId) => cancelAuthPrompt(promptId));
 ipcMain.handle("pi:get-theme", () => appDatabase.getTheme());
 ipcMain.handle("pi:save-theme", (_event, theme) => appDatabase.saveTheme(theme));
+ipcMain.handle("pi:get-user-profile", () => userProfile);
+ipcMain.handle("pi:save-user-profile", async (_event, value) => {
+  userProfile = appDatabase.saveUserProfile(value);
+  userProfileVersion += 1;
+  await refreshAllRuntimeProfileContexts();
+  return bootstrap();
+});
 ipcMain.handle("pi:get-workspace-preferences", (_event, key) => appDatabase.getWorkspacePreferences(key));
 ipcMain.handle("pi:save-workspace-preferences", (_event, key, preferences) => appDatabase.saveWorkspacePreferences(key, preferences));
 ipcMain.handle("pi:list-workspace-files", () => listWorkspaceFiles());

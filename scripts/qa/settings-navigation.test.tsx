@@ -21,6 +21,7 @@ const data: PiBootstrap = {
   setup: { required: false, canContinue: true, canImportPiAuth: false, piAuthPath: "", credentialStorage: "protected-app-file", providers: [] },
   transcript: [],
   scheduledJobs: [],
+  userProfile: { avatar: "", name: "", about: "" },
 };
 
 const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -53,6 +54,7 @@ describe("Settings navigation", () => {
       getWorkspacePreferences: vi.fn(async () => null),
       listWorkspaceFiles: vi.fn(async () => []),
       updateAgent: vi.fn(async (profile) => ({ ...data, agents: [profile] })),
+      saveUserProfile: vi.fn(async () => data),
     }, {
       get(target, property) {
         return Reflect.get(target, property) ?? vi.fn(async () => data);
@@ -81,9 +83,7 @@ describe("Settings navigation", () => {
 
     await act(async () => {
       settings.click();
-      await wait(300);
     });
-
     await waitFor(() => expect(host.textContent).toContain("App Settings"));
   });
 
@@ -108,5 +108,34 @@ describe("Settings navigation", () => {
     });
     expect(bridge.updateAgent).toHaveBeenCalledWith(expect.objectContaining({ id: "assistant", pinned: true }));
     await waitFor(() => expect(host.querySelector('[title="Pinned"]')).not.toBeNull());
+  });
+
+  it("opens the dedicated profile settings and saves the app-owned fields", async () => {
+    await act(async () => {
+      root.render(<MotionProvider><App /></MotionProvider>);
+      await wait(30);
+    });
+    const settings = host.querySelector('[aria-label="App settings"]') as HTMLButtonElement;
+    await act(async () => {
+      settings.click();
+    });
+    await waitFor(() => expect(host.textContent).toContain("App Settings"));
+    const profile = [...host.querySelectorAll('[data-motion="settings-nav"]')]
+      .find((item) => item.textContent?.includes("Profile")) as HTMLButtonElement;
+    expect(profile).not.toBeNull();
+
+    await act(async () => {
+      profile.click();
+    });
+    await waitFor(() => expect(host.querySelector('[data-motion="profile-settings"]')).not.toBeNull());
+    expect(host.textContent).toContain("About you");
+    expect(host.textContent).toContain("Do not add passwords, API keys");
+
+    const save = [...host.querySelectorAll("button")].find((item) => item.textContent?.includes("Save profile")) as HTMLButtonElement;
+    await act(async () => {
+      save.click();
+      await wait(30);
+    });
+    expect(bridge.saveUserProfile).toHaveBeenCalledWith({ avatar: "", name: "", about: "" });
   });
 });

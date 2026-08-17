@@ -22,6 +22,12 @@ export type AgentDraft = {
   description?: string;
 };
 
+export type UserProfile = {
+  avatar: string;
+  name: string;
+  about: string;
+};
+
 export type PiModelOption = {
   key: string;
   id: string;
@@ -163,6 +169,7 @@ export type PiBootstrap = {
   activeAgentId: AgentId | null;
   scheduledJobs: ScheduledJob[];
   profile?: AgentProfile;
+  userProfile: UserProfile;
 };
 
 export type PiEvent =
@@ -183,7 +190,7 @@ export type PiEvent =
   | { type: "error"; message: string }
   | { type: "auth-prompt"; id: string; prompt: AuthPrompt }
   | { type: "auth-notify"; event: { type: string; message?: string; url?: string; instructions?: string; userCode?: string; verificationUri?: string } }
-  | { type: "session-sync"; transcript: TimelineItem[]; sessions: SessionSummary[]; sessionsByAgent: Record<AgentId, SessionSummary[]>; config: PiConfig; agents: AgentProfile[]; setup: PiSetup; authenticated: boolean; activeAgentId: AgentId | null; scheduledJobs: ScheduledJob[] }
+  | { type: "session-sync"; transcript: TimelineItem[]; sessions: SessionSummary[]; sessionsByAgent: Record<AgentId, SessionSummary[]>; config: PiConfig; agents: AgentProfile[]; setup: PiSetup; authenticated: boolean; activeAgentId: AgentId | null; scheduledJobs: ScheduledJob[]; userProfile: UserProfile }
   | { type: "scheduled-jobs-sync"; scheduledJobs: ScheduledJob[] };
 
 export type PiBotBridge = {
@@ -221,6 +228,8 @@ export type PiBotBridge = {
   cancelAuth: (promptId: string) => Promise<void>;
   getTheme: () => Promise<"dark" | "light">;
   saveTheme: (theme: "dark" | "light") => Promise<"dark" | "light">;
+  getUserProfile: () => Promise<UserProfile>;
+  saveUserProfile: (profile: UserProfile) => Promise<PiBootstrap>;
   getWorkspacePreferences: (key: string) => Promise<WorkspacePanelPreferences | null>;
   saveWorkspacePreferences: (key: string, preferences: WorkspacePanelPreferences) => Promise<WorkspacePanelPreferences>;
   listWorkspaceFiles: () => Promise<WorkspaceFile[]>;

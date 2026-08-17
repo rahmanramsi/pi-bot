@@ -654,6 +654,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .scheduled-form { display: grid; gap: 16px; }
 .scheduled-form .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .scheduled-prompt-field { min-height: 130px; resize: vertical; line-height: 1.5; }
+.profile-form { max-width: 700px; }
+.profile-avatar-controls { display: flex; align-items: center; gap: 8px; max-width: 250px; }
+.profile-avatar-controls .avatar-picker-trigger { width: 110px; }
+.profile-about-field { min-height: 150px; resize: vertical; line-height: 1.5; }
+.profile-warning { max-width: 700px; }
+.profile-warning svg { flex: 0 0 auto; width: 16px; height: 16px; }
 
 .setup-card { width: min(520px, calc(100% - 48px)); padding: 38px; border: 1px solid var(--border); border-radius: 18px; background: var(--card); box-shadow: 0 25px 70px rgb(0 0 0 / 34%); }
 .setup-mark { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-raised); }

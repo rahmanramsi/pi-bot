@@ -41,6 +41,7 @@ import {
   ShieldCheck,
   Sun,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -84,13 +85,14 @@ import type {
   SessionSummary,
   ThinkingLevel,
   TimelineItem,
+  UserProfile,
   WorkspaceFile,
   WorkspacePanelPreferences,
   WorkspacePanelTab,
 } from "./types";
 
 type View = "chat" | "settings";
-type SettingsSection = "agents" | "models" | "schedules";
+type SettingsSection = "profile" | "agents" | "models" | "schedules";
 type Theme = "dark" | "light";
 type WorkspaceTabKind = WorkspacePanelTab["kind"];
 type WorkspaceTab = WorkspacePanelTab;
@@ -1432,6 +1434,28 @@ function AuthProviderRow({ provider, busy, onApiKey, onOAuth, onLogout }: { prov
   return <div className="provider-row"><div className="provider-copy"><strong>{provider.name}</strong><small>{provider.configured ? `Connected${provider.label ? ` · ${provider.label}` : ""}` : provider.methods.length ? "Not connected" : "Environment or external setup"}</small></div><div className="provider-actions">{provider.methods.includes("api_key") && <Button variant="outline" size="sm" onClick={() => onApiKey(provider)} disabled={busy}><KeyRound /> API key</Button>}{provider.methods.includes("oauth") && <Button variant="outline" size="sm" onClick={() => onOAuth(provider)} disabled={busy}><ExternalLink /> Sign in</Button>}{provider.configured && <Button variant="ghost" size="sm" onClick={() => onLogout(provider)} disabled={busy}>Disconnect</Button>}</div></div>;
 }
 
+function ProfileSettings({ profile, busy, onSave }: { profile: UserProfile; busy: boolean; onSave: (profile: UserProfile) => void }) {
+  const [avatar, setAvatar] = useState(profile.avatar);
+  const [name, setName] = useState(profile.name);
+  const [about, setAbout] = useState(profile.about);
+  useEffect(() => {
+    setAvatar(profile.avatar);
+    setName(profile.name);
+    setAbout(profile.about);
+  }, [profile.avatar, profile.name, profile.about]);
+
+  return <motion.section className="settings-detail profile-settings" layout data-motion="profile-settings">
+    <div className="detail-heading"><div><span className="eyebrow">App settings</span><h2>Profile</h2><p>Share a little context about yourself with every Pi Bot agent. This profile stays local to this app.</p></div></div>
+    <div className="settings-form profile-form">
+      <div className="profile-avatar-field"><div className="form-field"><span>Avatar</span><div className="profile-avatar-controls"><AvatarEmojiPicker value={avatar || defaultAvatarEmoji} onChange={setAvatar} disabled={busy} /><Button type="button" variant="ghost" size="sm" onClick={() => setAvatar("")} disabled={busy || !avatar}>Clear</Button></div></div></div>
+      <label className="form-field"><span>Name <em>optional</em></span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Rahman" disabled={busy} /></label>
+      <label className="form-field"><span>About you <em>optional</em></span><Textarea className="profile-about-field" rows={6} value={about} onChange={(event) => setAbout(event.target.value)} placeholder="Your background, preferences, goals, or working style" disabled={busy} /></label>
+      <Alert className="profile-warning"><CircleAlert /><AlertDescription>Do not add passwords, API keys, financial information, or other sensitive data to About you.</AlertDescription></Alert>
+      <div className="settings-actions"><Button onClick={() => onSave({ avatar: avatar.trim(), name: name.trim(), about: about.trim() })} disabled={busy}><Check /> Save profile</Button></div>
+    </div>
+  </motion.section>;
+}
+
 function ModelsSettings({ data, busy, onApiKey, onOAuth, onLogout, onImport }: { data: PiBootstrap; busy: boolean; onApiKey: (provider: ProviderInfo, apiKey?: string) => void; onOAuth: (provider: ProviderInfo) => void; onLogout: (provider: ProviderInfo) => void; onImport: () => void }) {
   const connected = data.setup.providers.filter((provider) => provider.configured).length;
   const [apiProvider, setApiProvider] = useState<ProviderInfo>();
@@ -1534,6 +1558,7 @@ function SettingsPage({
   onArchive,
   onDelete,
   onModelChange,
+  onSaveUserProfile,
   onApiKey,
   onOAuth,
   onLogout,
@@ -1557,6 +1582,7 @@ function SettingsPage({
   onArchive: (agent: AgentProfile) => void;
   onDelete: (agent: AgentProfile) => void;
   onModelChange: (agentId: AgentId, key: string) => void;
+  onSaveUserProfile: (profile: UserProfile) => void;
   onApiKey: (provider: ProviderInfo, apiKey?: string) => void;
   onOAuth: (provider: ProviderInfo) => void;
   onLogout: (provider: ProviderInfo) => void;
@@ -1582,6 +1608,10 @@ function SettingsPage({
       <header className="settings-header"><Button variant="ghost" size="icon" onClick={onBack} aria-label="Back to chat"><ArrowLeft /></Button><div><span className="eyebrow">Pi Bot</span><h1>App Settings</h1></div></header>
       <div className="settings-layout">
         <nav className="settings-nav">
+          <motion.button type="button" className={section === "profile" ? "selected" : ""} onClick={() => setSection("profile")} whileTap={{ scale: 0.98 }} transition={motionSprings.press} data-motion="settings-nav">
+            {section === "profile" && <motion.span className="settings-nav-active" layoutId="settings-nav-active" transition={motionSprings.layout} aria-hidden="true" />}
+            <UserRound /><span>Profile</span>
+          </motion.button>
           <motion.button type="button" className={section === "agents" ? "selected" : ""} onClick={() => setSection("agents")} whileTap={{ scale: 0.98 }} transition={motionSprings.press} data-motion="settings-nav">
             {section === "agents" && <motion.span className="settings-nav-active" layoutId="settings-nav-active" transition={motionSprings.layout} aria-hidden="true" />}
             <Bot /><span>Agents</span><small>{data.agents.length}</small>
@@ -1596,7 +1626,7 @@ function SettingsPage({
           </motion.button>
         </nav>
         <AnimatePresence initial={false} mode="wait">
-          {section === "models" ? <motion.div key="models" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ModelsSettings data={data} busy={busy} onApiKey={onApiKey} onOAuth={onOAuth} onLogout={onLogout} onImport={onImport} /></motion.div> : section === "schedules" ? <motion.div key="schedules" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ScheduledJobsSettings data={data} busy={busy} onSave={(id, draft) => { if (id) onUpdateScheduledJob(id, draft); else onCreateScheduledJob(draft); }} onPause={onPauseScheduledJob} onRun={onRunScheduledJob} onDelete={onDeleteScheduledJob} onOpenSession={onOpenScheduledSession} /></motion.div> : <motion.div key="agents" className="agent-settings-layout" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}>
+          {section === "profile" ? <motion.div key="profile" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ProfileSettings profile={data.userProfile} busy={busy} onSave={onSaveUserProfile} /></motion.div> : section === "models" ? <motion.div key="models" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ModelsSettings data={data} busy={busy} onApiKey={onApiKey} onOAuth={onOAuth} onLogout={onLogout} onImport={onImport} /></motion.div> : section === "schedules" ? <motion.div key="schedules" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ScheduledJobsSettings data={data} busy={busy} onSave={(id, draft) => { if (id) onUpdateScheduledJob(id, draft); else onCreateScheduledJob(draft); }} onPause={onPauseScheduledJob} onRun={onRunScheduledJob} onDelete={onDeleteScheduledJob} onOpenSession={onOpenScheduledSession} /></motion.div> : <motion.div key="agents" className="agent-settings-layout" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}>
             <aside className="settings-agent-list"><div className="settings-list-heading"><span className="eyebrow">All agents</span><Button variant="outline" size="icon-sm" onClick={() => setSelectedId("new")} disabled={busy} aria-label="Create agent"><Plus /></Button></div>{data.agents.map((agent) => <motion.button type="button" className={`settings-agent-item ${selectedId === agent.id ? "selected" : ""} ${agent.archived ? "archived" : ""}`} key={agent.id} onClick={() => setSelectedId(agent.id)} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="settings-agent-select">{selectedId === agent.id && <motion.span className="settings-agent-active" layoutId="settings-agent-active" transition={motionSprings.layout} aria-hidden="true" />}<AgentAvatar agent={agent} /><span><strong>{agent.name}</strong><small>{agent.archived ? "Archived" : agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span></motion.button>)}{data.agents.length === 0 && <p className="muted-copy">No agents yet.</p>}</aside>
             <AgentEditor agent={selected} models={data.config.models} isNew={selectedId === "new"} busy={busy} onCreate={(name, initials, description) => onCreate(name, initials, description)} onSave={onUpdate} onChooseFolder={onChooseFolder} onTrustWorkspace={onTrustWorkspace} onArchive={onArchive} onDelete={onDelete} onModelChange={onModelChange} />
           </motion.div>}
@@ -1699,7 +1729,7 @@ export function App() {
         else if (event.type === "auth-notify") setAuthNotice(event.event.message || event.event.instructions || (event.event.url ? `Continue in your browser: ${event.event.url}` : undefined));
         else if (event.type === "session-sync") {
           activeAgentIdRef.current = event.activeAgentId;
-          setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId, scheduledJobs: event.scheduledJobs } : previous);
+          setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId, scheduledJobs: event.scheduledJobs, userProfile: event.userProfile } : previous);
         }
         else if (event.type === "scheduled-jobs-sync") setData((previous) => previous ? { ...previous, scheduledJobs: event.scheduledJobs } : previous);
       }
@@ -1830,6 +1860,9 @@ export function App() {
   function toggleAgentPin(profile: AgentProfile) {
     updateWith(() => window.piBot.updateAgent({ ...profile, pinned: !profile.pinned }));
   }
+  function saveUserProfile(profile: UserProfile) {
+    updateWith(() => window.piBot.saveUserProfile(profile));
+  }
   function createScheduledJob(draft: ScheduledJobDraft) {
     updateWith(() => window.piBot.createScheduledJob(draft));
   }
@@ -1863,7 +1896,7 @@ export function App() {
         <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
           <AppSidebar data={data} theme={theme} busy={busy} runningAgentIds={runningAgentIds} unreadAgentIds={unreadAgentIds} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
           <AnimatePresence initial={false} mode="wait">
-            {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
+            {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onSaveUserProfile={saveUserProfile} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
       </AnimatePresence>
       <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
     </div>
