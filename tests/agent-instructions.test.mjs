@@ -35,7 +35,8 @@ test("agent instructions are app-owned resource context", () => {
   assert.doesNotMatch(ensureWorkspace, /AGENTS\.md|writeFileSync/);
   assert.match(mainSource, /instructions\.slice\(0, 20000\)/);
   assert.match(resourceLoader, /noContextFiles: true/);
-  assert.match(resourceLoader, /appendSystemPromptOverride: \(base\) => profile\.instructions \? \[\.\.\.base, profile\.instructions\] : base/);
+  assert.match(resourceLoader, /appendSystemPromptOverride: \(base\) => \{/);
+  assert.match(resourceLoader, /\.\.\.\(profile\.instructions \? \[profile\.instructions\] : \[\]\)/);
   assert.doesNotMatch(resourceLoader, /AGENTS\.md|agentsFilesOverride|readInstructions/);
   assert.doesNotMatch(updateAgent, /AGENTS\.md|writeFileSync/);
   assert.match(updateAgent, /session\?\.isStreaming && value\.id === activeAgentId/);

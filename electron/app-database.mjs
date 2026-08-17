@@ -15,7 +15,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { recoverPendingSessions } from "./session-persistence.mjs";
 
 export const DATABASE_FILENAME = "pi-bot.sqlite";
-export const DATABASE_SCHEMA_VERSION = 5;
+export const DATABASE_SCHEMA_VERSION = 6;
 export const SESSION_PATH_PREFIX = "pi-session://";
 
 const migrationKey = "legacy-jsonl";
@@ -55,6 +55,29 @@ function sourcePathKey(value) {
 
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+const emptyUserProfile = Object.freeze({ avatar: "", name: "", about: "" });
+
+function firstGrapheme(value) {
+  return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value))[0]?.segment ?? "";
+}
+
+function isEmojiGrapheme(value) {
+  return /\p{Extended_Pictographic}/u.test(value)
+    || /\p{Emoji_Presentation}/u.test(value)
+    || /^[0-9#*]\uFE0F\u20E3$/u.test(value);
+}
+
+export function normalizeUserProfile(value) {
+  const record = asRecord(value);
+  const rawAvatar = typeof record.avatar === "string" ? record.avatar.trim() : "";
+  const avatar = rawAvatar ? firstGrapheme(rawAvatar) : "";
+  return {
+    avatar: avatar && isEmojiGrapheme(avatar) ? avatar : "",
+    name: typeof record.name === "string" ? record.name.trim().slice(0, 80) : "",
+    about: typeof record.about === "string" ? record.about.trim().slice(0, 2000) : "",
+  };
 }
 
 function validSessionHeader(entry) {
@@ -249,6 +272,18 @@ function migrateSchemaV5(database) {
   if (!columns.some((column) => column.name === "pinned")) database.exec("ALTER TABLE agents ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
 }
 
+function migrateSchemaV6(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS user_profile (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      avatar TEXT NOT NULL DEFAULT '',
+      name TEXT NOT NULL DEFAULT '',
+      about TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL
+    );
+  `);
+}
+
 function normalizeWorkspacePreferences(value) {
   const record = asRecord(value);
   const tabs = Array.isArray(record.tabs)
@@ -320,6 +355,10 @@ export class AppDatabase {
       if (storedVersion < 5) {
         migrateSchemaV5(this.db);
         this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(5, nowIso());
+      }
+      if (storedVersion < 6) {
+        migrateSchemaV6(this.db);
+        this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(6, nowIso());
       }
       this.db.prepare("INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(DATABASE_SCHEMA_VERSION));
     });
@@ -420,6 +459,25 @@ export class AppDatabase {
       this.db.prepare("INSERT INTO preferences (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at").run(themePreferenceKey, JSON.stringify(theme), nowIso());
     });
     return theme;
+  }
+
+  getUserProfile() {
+    const row = this.db.prepare("SELECT avatar, name, about FROM user_profile WHERE id = 1").get();
+    return row ? normalizeUserProfile(row) : { ...emptyUserProfile };
+  }
+
+  saveUserProfile(value) {
+    const profile = normalizeUserProfile(value);
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO user_profile (id, avatar, name, about, updated_at)
+        VALUES (1, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          avatar = excluded.avatar, name = excluded.name, about = excluded.about,
+          updated_at = excluded.updated_at
+      `).run(profile.avatar, profile.name, profile.about, nowIso());
+    });
+    return profile;
   }
 
   listScheduledJobs() {

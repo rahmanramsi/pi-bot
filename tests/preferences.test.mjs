@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createAppDatabase } from "../electron/app-database.mjs";
+import { createAppDatabase, normalizeUserProfile } from "../electron/app-database.mjs";
 
 function withTempDir(run) {
   const directory = mkdtempSync(path.join(tmpdir(), "pi-bot-preferences-test-"));
@@ -46,15 +46,58 @@ test("persists the selected theme through SQLite across restart", () => withTemp
   restarted.close();
 }));
 
-test("exposes only the workspace preference operations through preload", () => {
+test("persists one app-owned user profile through CRUD and restart", () => withTempDir((directory) => {
+  const databasePath = path.join(directory, "pi-bot.sqlite");
+  const database = createAppDatabase(databasePath);
+
+  assert.deepEqual(database.getUserProfile(), { avatar: "", name: "", about: "" });
+  assert.deepEqual(database.saveUserProfile({ avatar: "🧑‍💻", name: "  Rahman  ", about: "  Builds local-first tools.  " }), {
+    avatar: "🧑‍💻",
+    name: "Rahman",
+    about: "Builds local-first tools.",
+  });
+  assert.deepEqual(database.getUserProfile(), {
+    avatar: "🧑‍💻",
+    name: "Rahman",
+    about: "Builds local-first tools.",
+  });
+  database.close();
+
+  const restarted = createAppDatabase(databasePath);
+  assert.deepEqual(restarted.getUserProfile(), {
+    avatar: "🧑‍💻",
+    name: "Rahman",
+    about: "Builds local-first tools.",
+  });
+  assert.deepEqual(restarted.saveUserProfile({ avatar: "", name: "", about: "" }), { avatar: "", name: "", about: "" });
+  assert.deepEqual(restarted.getUserProfile(), { avatar: "", name: "", about: "" });
+  restarted.close();
+
+  const clearedRestart = createAppDatabase(databasePath);
+  assert.deepEqual(clearedRestart.getUserProfile(), { avatar: "", name: "", about: "" });
+  assert.deepEqual(clearedRestart.getState().agents, []);
+  clearedRestart.close();
+}));
+
+test("normalizes user profile input to one emoji and bounded text", () => {
+  assert.deepEqual(normalizeUserProfile({ avatar: "not an emoji", name: "  A  ", about: "  B  " }), { avatar: "", name: "A", about: "B" });
+  assert.equal(normalizeUserProfile({ avatar: "😀😁" }).avatar, "😀");
+});
+
+test("exposes app-owned preference operations through preload", () => {
   const preload = readFileSync(path.join(process.cwd(), "electron", "preload.cjs"), "utf8");
   const app = readFileSync(path.join(process.cwd(), "src", "App.tsx"), "utf8");
   assert.match(preload, /getTheme/);
   assert.match(preload, /saveTheme/);
   assert.match(preload, /getWorkspacePreferences/);
   assert.match(preload, /saveWorkspacePreferences/);
+  assert.match(preload, /getUserProfile/);
+  assert.match(preload, /saveUserProfile/);
   assert.doesNotMatch(preload, /appDatabase|node:sqlite|pi-bot\.sqlite/);
   assert.match(app, /window\.piBot\.saveTheme\(next\)/);
+  assert.match(app, /Profile/);
+  assert.match(app, /About you/);
+  assert.doesNotMatch(app, /passwords, API keys/);
 });
 
 test("guards preference writes until the current session key finishes loading", () => {
