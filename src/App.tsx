@@ -641,7 +641,7 @@ function groupActivityListItems(items: TimelineItem[]) {
   return blocks;
 }
 
-function ActivityList({ items }: { items: TimelineItem[] }) {
+function ActivityList({ items, theme }: { items: TimelineItem[]; theme: Theme }) {
   const blocks = groupActivityListItems(items);
   return (
     <div className="activity-list">
@@ -649,12 +649,12 @@ function ActivityList({ items }: { items: TimelineItem[] }) {
         ? <ActivityItemGroup items={block.items} key={`tools-${block.items[0].id}`} />
         : block.item.kind === "reasoning"
           ? <ReasoningRow item={block.item} key={block.item.id} />
-          : <div className="activity-progress-message" key={block.item.id}><MarkdownContent body={block.item.body} streaming={block.item.status === "running"} /></div>)}
+          : <div className="activity-progress-message" key={block.item.id}><MarkdownContent body={block.item.body} streaming={block.item.status === "running"} theme={theme} /></div>)}
     </div>
   );
 }
 
-export function ActivityGroup({ items, startedAt, endedAt, running = false }: { items: TimelineItem[]; startedAt?: number; endedAt?: number; running?: boolean }) {
+export function ActivityGroup({ items, startedAt, endedAt, running = false, theme = "dark" }: { items: TimelineItem[]; startedAt?: number; endedAt?: number; running?: boolean; theme?: Theme }) {
   const runningCount = items.filter((item) => item.status === "running").length;
   const active = running || runningCount > 0;
   const [open, setOpen] = useState(active);
@@ -686,13 +686,13 @@ export function ActivityGroup({ items, startedAt, endedAt, running = false }: { 
       </TaskTrigger>
       <TaskContent className="activity-group-content">
         <Separator className="activity-group-divider" />
-        <ActivityList items={items} />
+        <ActivityList items={items} theme={theme} />
       </TaskContent>
     </Task>
   );
 }
 
-export function MarkdownContent({ body, streaming, workspaceFiles, onWorkspaceFile }: { body: string; streaming: boolean; workspaceFiles?: readonly string[]; onWorkspaceFile?: (path: string) => void }) {
+export function MarkdownContent({ body, streaming, workspaceFiles, onWorkspaceFile, theme = "dark" }: { body: string; streaming: boolean; workspaceFiles?: readonly string[]; onWorkspaceFile?: (path: string) => void; theme?: Theme }) {
   return (
     <div className="markdown-content" data-motion={streaming ? "streaming-caret" : undefined}>
       <MessageResponse
@@ -700,6 +700,7 @@ export function MarkdownContent({ body, streaming, workspaceFiles, onWorkspaceFi
         isAnimating={streaming}
         workspaceFiles={workspaceFiles}
         onWorkspaceFile={onWorkspaceFile}
+        theme={theme}
       >
         {body}
       </MessageResponse>
@@ -707,7 +708,7 @@ export function MarkdownContent({ body, streaming, workspaceFiles, onWorkspaceFi
   );
 }
 
-function ChatMessage({ item, workspaceFiles }: { item: TimelineItem; workspaceFiles?: readonly string[] }) {
+function ChatMessage({ item, workspaceFiles, theme }: { item: TimelineItem; workspaceFiles?: readonly string[]; theme: Theme }) {
   const isUser = item.kind === "user";
   const copyLabel = isUser ? "Copy message" : "Copy response";
   const streaming = !isUser && item.status === "running";
@@ -716,7 +717,7 @@ function ChatMessage({ item, workspaceFiles }: { item: TimelineItem; workspaceFi
     <motion.div layout="position" initial={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
       <Message from={isUser ? "user" : "assistant"} className={`chat-message ${isUser ? "user" : "assistant"}`}>
         <MessageContent className="chat-message-main">
-          {isUser ? <span className="user-message-text">{item.body}</span> : <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} workspaceFiles={workspaceFiles} onWorkspaceFile={(path) => { void window.piBot.openWorkspaceFile(path); }} />}
+          {isUser ? <span className="user-message-text">{item.body}</span> : <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} workspaceFiles={workspaceFiles} theme={theme} onWorkspaceFile={(path) => { void window.piBot.openWorkspaceFile(path); }} />}
         </MessageContent>
         <MessageToolbar className="chat-message-footer"><time>{item.timestamp}</time>{item.status === "failed" && <Badge variant="destructive">Failed</Badge>}{item.body && <MessageActions className="message-actions"><MessageAction label={copyLabel} tooltip={copyLabel} onClick={() => { void navigator.clipboard?.writeText(item.body); }}><Copy /></MessageAction></MessageActions>}</MessageToolbar>
       </Message>
@@ -759,7 +760,7 @@ export function groupConversationItems(items: TimelineItem[]): ConversationBlock
   return blocks;
 }
 
-function EventRows({ items, responding, sessionId, workspaceFiles }: { items: TimelineItem[]; responding: boolean; sessionId: string; workspaceFiles?: readonly string[] }) {
+function EventRows({ items, responding, sessionId, workspaceFiles, theme }: { items: TimelineItem[]; responding: boolean; sessionId: string; workspaceFiles?: readonly string[]; theme: Theme }) {
   const blocks = groupConversationItems(items);
   const lastActivityIndex = blocks.findLastIndex((block) => block.kind === "activity");
 
@@ -773,12 +774,12 @@ function EventRows({ items, responding, sessionId, workspaceFiles }: { items: Ti
             <AnimatePresence initial={false}>
               {blocks.map((block, index) => {
                 const messageId = block.kind === "activity" ? `activity-${block.items[0].id}` : block.item.id;
-                if (block.kind === "message") return <div className="conversation-item" key={messageId}><ChatMessage item={block.item} workspaceFiles={workspaceFiles} /></div>;
+                if (block.kind === "message") return <div className="conversation-item" key={messageId}><ChatMessage item={block.item} workspaceFiles={workspaceFiles} theme={theme} /></div>;
                 const previous = blocks[index - 1];
                 const next = blocks[index + 1];
                 const startedAt = previous?.kind === "message" && previous.item.kind === "user" ? previous.item.timestampMs : block.items[0]?.timestampMs;
                 const endedAt = next?.kind === "message" && next.item.kind === "assistant" ? next.item.timestampMs : undefined;
-                return <div className="conversation-item" key={messageId}><ActivityGroup items={block.items} startedAt={startedAt} endedAt={endedAt} running={responding && index === lastActivityIndex} /></div>;
+                return <div className="conversation-item" key={messageId}><ActivityGroup items={block.items} startedAt={startedAt} endedAt={endedAt} running={responding && index === lastActivityIndex} theme={theme} /></div>;
               })}
             </AnimatePresence>
           </ConversationContent>
@@ -1259,9 +1260,10 @@ type ChatViewProps = {
   onShowHistory?: (agentId: AgentId) => void;
   workspaceOpen?: boolean;
   onShowWorkspace?: () => void;
+  theme: Theme;
 };
 
-function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onModelChange, onThinkingChange, onShowHistory }: Omit<ChatViewProps, "workspaceOpen" | "onShowWorkspace">) {
+function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onModelChange, onThinkingChange, onShowHistory, theme }: Omit<ChatViewProps, "workspaceOpen" | "onShowWorkspace">) {
   const storageKey = `pi-bot.workspace-panel:${workspacePanelSessionKey(data)}`;
   const [workspaceFileState, setWorkspaceFileState] = useState<{ workspace: string; paths: string[] }>({ workspace: "", paths: [] });
   const [preferences, setPreferences] = useState<WorkspacePanelPreferences>(defaultWorkspacePanelPreferences);
@@ -1327,7 +1329,7 @@ function ChatWorkspace({ data, busy, sidebarOpen, error, onPrompt, onAbort, onMo
     window.addEventListener("mouseup", end);
   };
   const workspaceFiles = workspaceFileState.workspace && workspaceFileState.workspace === data.config.workspace ? workspaceFileState.paths : undefined;
-  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${preferences.open ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${preferences.width}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} workspaceFiles={workspaceFiles} onShowHistory={onShowHistory} workspaceOpen={preferences.open} onShowWorkspace={() => setPreferences((current) => ({ ...current, open: true }))} />{preferences.open && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<AnimatePresence initial={false} mode="popLayout">{preferences.open && <RightWorkspacePanel key="workspace-panel" data={data} open={preferences.open} storageKey={storageKey} preferences={preferences} onChange={setPreferences} onClose={() => setPreferences((current) => ({ ...current, open: false }))} />}</AnimatePresence></motion.section>;
+  return <motion.section layout="position" transition={motionSprings.layout} className={`chat-workspace ${preferences.open ? "panel-open" : "panel-closed"}`} style={{ "--workspace-panel-width": `${preferences.width}px` } as CSSProperties} data-motion="chat-workspace"><ChatView data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} workspaceFiles={workspaceFiles} onShowHistory={onShowHistory} theme={theme} workspaceOpen={preferences.open} onShowWorkspace={() => setPreferences((current) => ({ ...current, open: true }))} />{preferences.open && <motion.button className="workspace-resize-handle" type="button" onMouseDown={startResize} aria-label="Resize workspace panel" whileHover={{ opacity: 1 }} transition={motionTransitions.micro} data-motion="workspace-resize" />}<AnimatePresence initial={false} mode="popLayout">{preferences.open && <RightWorkspacePanel key="workspace-panel" data={data} open={preferences.open} storageKey={storageKey} preferences={preferences} onChange={setPreferences} onClose={() => setPreferences((current) => ({ ...current, open: false }))} />}</AnimatePresence></motion.section>;
 }
 
 function ChatView({
@@ -1343,6 +1345,7 @@ function ChatView({
   onShowHistory,
   workspaceOpen = true,
   onShowWorkspace,
+  theme,
 }: ChatViewProps) {
   const agent = findAgent(data.agents, data.activeAgentId);
   const blocked = !agent || !data.config.modelAvailable;
@@ -1368,7 +1371,7 @@ function ChatView({
       <ErrorBanner message={error} />
       {!data.authenticated && <Alert className="notice-line"><KeyRound /><AlertDescription>Add a provider credential in App Settings to start chatting.</AlertDescription></Alert>}
       {data.authenticated && blocked && agent && <Alert className="notice-line"><CircleAlert /><AlertDescription>This agent’s model is unavailable. Choose another model in App Settings.</AlertDescription></Alert>}
-      <EventRows items={data.transcript} responding={responding} sessionId={data.config.session?.path ?? "new-session"} workspaceFiles={workspaceFiles} />
+      <EventRows items={data.transcript} responding={responding} sessionId={data.config.session?.path ?? "new-session"} workspaceFiles={workspaceFiles} theme={theme} />
       <Composer busy={responding} disabled={blocked || responding} config={data.config} focusKey={workspacePanelSessionKey(data)} placeholder={agent ? `Message ${agent.name}` : "Message your agent"} onPrompt={onPrompt} onAbort={onAbort} onModelChange={onModelChange} onThinkingChange={onThinkingChange} />
     </motion.main>
   );
@@ -1928,7 +1931,7 @@ export function App() {
         <div className={`app-shell ${sidebarOpen ? "sidebar-open" : "sidebar-closed"}`} data-motion="app-shell">
           <AppSidebar data={data} theme={theme} busy={busy} runningAgentIds={runningAgentIds} unreadAgentIds={unreadAgentIds} historyAgentId={historyAgentId} onSelectAgent={selectAgent} onTogglePin={toggleAgentPin} onCreateAgent={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(true); setView("settings"); }} onToggleTheme={toggleTheme} onSettings={() => { setHistoryAgentId(null); setError(undefined); setCreateNewAgent(false); setView("settings"); }} onNewChat={startNewConversation} onOpenSession={openConversation} onDeleteSession={deleteSession} onBackFromHistory={() => setHistoryAgentId(null)} />
           <AnimatePresence initial={false} mode="wait">
-            {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onSaveUserProfile={saveUserProfile} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
+            {view === "chat" ? <motion.div className="app-view" key="chat" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><ChatWorkspace data={data} busy={busy} sidebarOpen={sidebarOpen} error={error} onPrompt={prompt} onAbort={() => { void window.piBot.abort(); setBusy(false); }} onModelChange={(key) => { if (activeId) updateWith(() => window.piBot.setSessionModel(activeId, key)); }} onThinkingChange={(level) => { if (activeId) updateWith(() => window.piBot.setThinkingLevel(activeId, level)); }} onShowHistory={showHistory} theme={theme} /></motion.div> : <motion.div className="app-view" key="settings" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={motionTransitions.standard}><SettingsPage data={data} busy={busy} sidebarOpen={sidebarOpen} createNewAgent={createNewAgent} onBack={() => { setError(undefined); setView("chat"); }} onUpdate={(profile) => updateWith(() => window.piBot.updateAgent(profile))} onCreate={(name, initials, description) => void perform(() => window.piBot.createAgent({ name, initials, description })).then((next) => { if (next) setView("chat"); })} onChooseFolder={(agentId) => updateWith(() => window.piBot.chooseFolder(agentId))} onTrustWorkspace={(agentId) => updateWith(() => window.piBot.trustWorkspace(agentId))} onArchive={(profile) => updateWith(() => window.piBot.archiveAgent(profile.id, !profile.archived))} onDelete={deleteAgent} onModelChange={(agentId, key) => updateWith(() => window.piBot.setAgentModel(agentId, key))} onSaveUserProfile={saveUserProfile} onApiKey={(provider, apiKey) => { if (apiKey) updateWith(() => window.piBot.setProviderApiKey(provider.id, apiKey)); }} onOAuth={(provider) => void authenticate(() => window.piBot.loginProvider(provider.id, "oauth"))} onLogout={(provider) => { if (window.confirm(`Disconnect ${provider.name}?`)) updateWith(() => window.piBot.logoutProvider(provider.id)); }} onImport={() => void authenticate(() => window.piBot.importPiAuth())} onCreateScheduledJob={createScheduledJob} onUpdateScheduledJob={updateScheduledJob} onPauseScheduledJob={pauseScheduledJob} onRunScheduledJob={runScheduledJob} onDeleteScheduledJob={deleteScheduledJob} onOpenScheduledSession={openScheduledSession} /></motion.div>}
       </AnimatePresence>
       <AnimatePresence initial={false}>{authPrompt && <AuthPromptCard key={authPrompt.id} prompt={authPrompt} notice={authNotice} onRespond={(value) => { void window.piBot.respondAuth(authPrompt.id, value); setAuthPrompt(undefined); }} onCancel={cancelProviderSignIn} />}</AnimatePresence>
     </div>

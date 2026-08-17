@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityGroup, Composer, groupConversationItems, MarkdownContent, timelineToolStatus } from "@/App";
+import { markdownMermaidConfig } from "@/components/ai-elements/message";
 import { Conversation, ConversationContent } from "@/components/ai-elements/conversation";
 import {
   Message,
@@ -299,6 +300,25 @@ describe("AI Elements renderer adapters", () => {
     expect(workspaceCallback).toHaveBeenCalledWith("src/App.tsx");
   });
 
+  it("renders Mermaid blocks with readable theme-aware colors and controls", async () => {
+    vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
+    const body = "```mermaid\nflowchart LR\n  A[Mulai] --> B{Valid?}\n  B --> C[Selesai]\n```";
+    const darkConfig = markdownMermaidConfig("dark").config;
+    const lightConfig = markdownMermaidConfig("light").config;
+    expect(darkConfig.theme).toBe("base");
+    expect(darkConfig.themeVariables?.primaryTextColor).toBe("#f6f7f8");
+    expect(lightConfig.themeVariables?.primaryTextColor).toBe("#20242b");
+    expect(darkConfig.themeVariables?.primaryTextColor).not.toBe(lightConfig.themeVariables?.primaryTextColor);
+
+    const result = render(<MarkdownContent body={body} streaming={false} theme="dark" />);
+    roots.push(result.root);
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 50)); });
+    const diagram = result.host.querySelector('[data-streamdown="mermaid-block"]') as HTMLDivElement;
+    expect(diagram).not.toBeNull();
+    expect(diagram.querySelector('button[title="Download diagram"]')).not.toBeNull();
+    expect(diagram.querySelector('[data-streamdown="mermaid-block-actions"]')).not.toBeNull();
+  });
+
   it("keeps Streamdown code and table content on one scrollable surface", () => {
     const body = [
       "```typescript",
@@ -322,6 +342,8 @@ describe("AI Elements renderer adapters", () => {
 
     const codeBlocks = [...result.host.querySelectorAll('[data-streamdown="code-block"]')];
     expect(codeBlocks).toHaveLength(3);
+    expect(codeBlocks[0].querySelector('[data-streamdown="code-block-header"]')?.textContent).toContain("typescript");
+    expect(codeBlocks[2].querySelector('[data-streamdown="code-block-header"]')?.textContent).toContain("text");
     for (const block of codeBlocks) {
       expect(block.querySelectorAll('[data-streamdown="code-block-header"]')).toHaveLength(1);
       expect(block.querySelectorAll('[data-streamdown="code-block-body"]')).toHaveLength(1);

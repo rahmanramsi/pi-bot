@@ -68,6 +68,16 @@
   --surface-raised: oklch(.22 .007 260);
   --surface-outline: rgb(255 255 255 / 8%);
   --surface-outline-hover: rgb(255 255 255 / 13%);
+  --markdown-surface: oklch(.2 .006 260);
+  --markdown-surface-raised: oklch(.245 .007 260);
+  --markdown-diagram-background: #25282e;
+  --markdown-diagram-primary: #3b414b;
+  --markdown-diagram-primary-text: #f6f7f8;
+  --markdown-diagram-primary-border: #8792a0;
+  --markdown-diagram-line: #bbc5d0;
+  --markdown-diagram-secondary: #46515e;
+  --markdown-diagram-tertiary: #303640;
+  --markdown-diagram-text: #f6f7f8;
 }
 
 :root[data-theme="light"] {
@@ -95,6 +105,16 @@
   --surface-raised: oklch(.91 .006 90);
   --surface-outline: rgb(0 0 0 / 10%);
   --surface-outline-hover: rgb(0 0 0 / 15%);
+  --markdown-surface: oklch(.95 .004 90);
+  --markdown-surface-raised: oklch(.91 .006 90);
+  --markdown-diagram-background: #fbfaf7;
+  --markdown-diagram-primary: #ebe8e2;
+  --markdown-diagram-primary-text: #20242b;
+  --markdown-diagram-primary-border: #a5a29a;
+  --markdown-diagram-line: #5f6670;
+  --markdown-diagram-secondary: #e4e8ed;
+  --markdown-diagram-tertiary: #f3f1ed;
+  --markdown-diagram-text: #20242b;
 }
 
 * { box-sizing: border-box; }
@@ -425,20 +445,27 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .markdown-content a { color: var(--foreground); text-decoration: underline; text-decoration-color: var(--muted-foreground); text-underline-offset: 2px; }
 .markdown-content blockquote { margin: 10px 0; padding-left: 12px; border-left: 2px solid var(--input); color: var(--muted-foreground); }
 .markdown-content code:not(pre code) { padding: 2px 5px; border: 1px solid var(--border); border-radius: 5px; background: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
-.markdown-content > pre { max-width: 100%; margin: 11px 0; overflow: auto; border: 1px solid var(--border); border-radius: 9px; color: var(--foreground); background: var(--shell); }
+.markdown-content > pre { max-width: 100%; margin: 11px 0; overflow: auto; border: 1px solid var(--border); border-radius: 9px; color: var(--foreground); background: var(--markdown-surface); }
 .markdown-content > pre code { display: block; padding: 12px 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--text-label); line-height: var(--leading-body); white-space: pre; }
 .markdown-content > table { display: block; max-width: 100%; margin: 10px 0; overflow-x: auto; border-collapse: collapse; font-size: var(--text-label); }
 .markdown-content > table th, .markdown-content > table td { padding: 6px 9px; border: 1px solid var(--border); text-align: left; white-space: nowrap; }
-.markdown-content [data-streamdown="code-block"] { max-width: 100%; margin: 11px 0; overflow: hidden; border-width: 1px; border-style: solid; border-color: var(--border); border-radius: 9px; color: var(--foreground); background: var(--shell); }
-.markdown-content [data-streamdown="code-block-header"] { color: var(--muted-foreground); }
+.markdown-content [data-streamdown="code-block"] { max-width: 100%; margin: 11px 0; overflow: hidden; border-width: 1px; border-style: solid; border-color: var(--border); border-radius: 9px; color: var(--foreground); background: var(--markdown-surface); }
+.markdown-content [data-streamdown="code-block-header"] { color: var(--muted-foreground); background: var(--markdown-surface-raised); }
 .markdown-content [data-streamdown="code-block-actions"] > div { border: 0; background: transparent; }
 .markdown-content [data-streamdown="code-block-body"] { max-width: 100%; overflow-x: auto; border: 0; border-radius: 0; background: transparent; padding: 0; }
 .markdown-content [data-streamdown="code-block-body"] pre { width: max-content; min-width: 100%; max-width: none; margin: 0; overflow: visible; border: 0; border-radius: 0; color: inherit; background: transparent; }
 .markdown-content [data-streamdown="code-block-body"] pre code { display: block; padding: 12px 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--text-label); line-height: var(--leading-body); white-space: pre; }
-.markdown-content [data-streamdown="table-wrapper"] { max-width: 100%; margin: 10px 0; border-width: 1px; border-style: solid; border-color: var(--border); border-radius: 9px; background: var(--shell); }
+.markdown-content [data-streamdown="table-wrapper"] { max-width: 100%; margin: 10px 0; border-width: 1px; border-style: solid; border-color: var(--border); border-radius: 9px; background: var(--markdown-surface); }
 .markdown-content [data-streamdown="table-wrapper"] > div:last-child { max-width: 100%; overflow-x: auto; border: 0; border-radius: 0; background: transparent; }
 .markdown-content [data-streamdown="table-wrapper"] table { display: table; min-width: 100%; max-width: none; margin: 0; overflow: visible; border: 0; border-collapse: collapse; background: transparent; }
 .markdown-content [data-streamdown="table-wrapper"] th, .markdown-content [data-streamdown="table-wrapper"] td { padding: 6px 9px; border: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.markdown-content [data-streamdown="mermaid-block"] { display: block; max-width: 100%; margin: 12px 0; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; color: var(--foreground); background: var(--markdown-diagram-background); }
+.markdown-content [data-streamdown="mermaid-block-actions"] { border: 0; background: transparent; }
+.markdown-content [data-streamdown="mermaid-block"] > div:last-child { margin: 0; border: 0; border-radius: 0; background: transparent; }
+.markdown-content [data-streamdown="mermaid"] { min-width: 0; }
+.markdown-content [data-streamdown="mermaid"] [role="img"] { width: 100%; min-width: 0; overflow: auto; padding: 12px; }
+.markdown-content [data-streamdown="mermaid"] button { color: var(--muted-foreground); }
+.markdown-content [data-streamdown="mermaid"] button:hover { color: var(--foreground); background: var(--muted); }
 .markdown-content th { background: var(--muted); font-weight: 650; }
 .markdown-content input[type="checkbox"] { margin-right: 6px; accent-color: var(--foreground); }
 .activity-group { width: min(790px, 90%); margin-left: 0; color: var(--muted-foreground); }
