@@ -1,4 +1,7 @@
+/// <reference types="node" />
+
 import { act } from "react";
+import { readFileSync } from "node:fs";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityGroup, Composer, groupConversationItems, MarkdownContent, timelineToolStatus } from "@/App";
@@ -20,6 +23,8 @@ import { Terminal } from "@/components/ai-elements/terminal";
 import { Tool, ToolContent, ToolHeader, ToolOutput } from "@/components/ai-elements/tool";
 import type { PiConfig, TimelineItem } from "@/types";
 import kitchenSink from "./fixtures/markdown-kitchen-sink.md?raw";
+
+const markdownStyles = readFileSync("src/styles.css", "utf8");
 
 const config: PiConfig = {
   agentId: "agent",
@@ -60,9 +65,13 @@ function render(element: React.ReactNode) {
 
 describe("AI Elements renderer adapters", () => {
   let roots: Root[] = [];
+  let markdownStyle: HTMLStyleElement | null = null;
 
   beforeEach(() => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    markdownStyle = document.createElement("style");
+    markdownStyle.textContent = markdownStyles;
+    document.head.append(markdownStyle);
     vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
     roots = [];
   });
@@ -70,6 +79,9 @@ describe("AI Elements renderer adapters", () => {
   afterEach(() => {
     for (const root of roots) act(() => root.unmount());
     document.body.replaceChildren();
+    markdownStyle?.remove();
+    markdownStyle = null;
+    document.documentElement.removeAttribute("data-theme");
     vi.unstubAllGlobals();
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
@@ -285,6 +297,158 @@ describe("AI Elements renderer adapters", () => {
     roots.push(workspace.root);
     act(() => (workspace.host.querySelector("a") as HTMLAnchorElement).click());
     expect(workspaceCallback).toHaveBeenCalledWith("src/App.tsx");
+  });
+
+  it("keeps Streamdown code and table content on one scrollable surface", () => {
+    const body = [
+      "```typescript",
+      "const known = true;",
+      "```",
+      "",
+      "```made-up-language",
+      "unknown();",
+      "```",
+      "",
+      "```",
+      "plain text",
+      "```",
+      "",
+      "| Name | Value |",
+      "| --- | --- |",
+      "| first | second |",
+    ].join("\n");
+    const result = render(<MarkdownContent body={body} streaming={false} />);
+    roots.push(result.root);
+
+    const codeBlocks = [...result.host.querySelectorAll('[data-streamdown="code-block"]')];
+    expect(codeBlocks).toHaveLength(3);
+    for (const block of codeBlocks) {
+      expect(block.querySelectorAll('[data-streamdown="code-block-header"]')).toHaveLength(1);
+      expect(block.querySelectorAll('[data-streamdown="code-block-body"]')).toHaveLength(1);
+      expect(block.querySelectorAll('[data-streamdown="code-block-body"] pre')).toHaveLength(1);
+      expect(block.querySelector('[data-streamdown="code-block-body"]')?.classList.contains("overflow-x-auto")).toBe(true);
+      expect(block.querySelector('[data-streamdown="code-block-body"] pre')?.closest('[data-streamdown="code-block"]')).toBe(block);
+      expect(block.querySelector('button[title="Copy Code"]')).not.toBeNull();
+    }
+
+    const tableWrapper = result.host.querySelector('[data-streamdown="table-wrapper"]') as HTMLDivElement;
+    expect(tableWrapper).not.toBeNull();
+    expect(tableWrapper.querySelectorAll("table, thead, tbody, th, td")).not.toHaveLength(0);
+    expect(tableWrapper.querySelector('button[title="Copy table"]')).not.toBeNull();
+    expect(tableWrapper.querySelectorAll(":scope > div")).toHaveLength(2);
+    expect(tableWrapper.querySelector(':scope > div:last-child')).not.toBeNull();
+    expect(tableWrapper.querySelector(':scope > div:last-child')?.classList.contains("overflow-x-auto")).toBe(true);
+    expect(tableWrapper.querySelector(':scope > div:last-child > table')).not.toBeNull();
+  });
+
+  it("keeps one-surface geometry and overflow stable across light and dark themes", () => {
+    const body = [
+      `~~~bash\n${"x".repeat(600)}\n~~~`,
+      "",
+      "| One | Two | Three | Four |",
+      "| --- | --- | --- | --- |",
+      "| a | b | c | d |",
+    ].join("\n");
+    const snapshots: string[][] = [];
+    const shellColors: string[] = [];
+
+    for (const theme of ["dark", "light"] as const) {
+      document.documentElement.dataset.theme = theme;
+      const result = render(<MarkdownContent body={body} streaming={false} />);
+      roots.push(result.root);
+      result.host.style.width = "240px";
+      const markdown = result.host.querySelector(".markdown-content") as HTMLDivElement;
+      markdown.style.width = "100%";
+
+      const codeBlock = result.host.querySelector('[data-streamdown="code-block"]') as HTMLDivElement;
+      const codeBody = codeBlock.querySelector('[data-streamdown="code-block-body"]') as HTMLDivElement;
+      const codePre = codeBody.querySelector("pre") as HTMLPreElement;
+      const tableWrapper = result.host.querySelector('[data-streamdown="table-wrapper"]') as HTMLDivElement;
+      const tableScroll = tableWrapper.querySelector(":scope > div:last-child") as HTMLDivElement;
+      expect(getComputedStyle(codeBlock).borderTopWidth).toBe("1px");
+      expect(getComputedStyle(codeBody).padding).toBe("0px");
+      expect(getComputedStyle(codeBody).borderTopWidth).toBe("0px");
+      expect(getComputedStyle(codeBody).overflowX).toBe("auto");
+      expect(getComputedStyle(codeBody).maxWidth).toBe("100%");
+      expect(getComputedStyle(codePre).borderTopWidth).toBe("0px");
+      expect(getComputedStyle(codePre).overflow).toBe("visible");
+      expect(getComputedStyle(tableWrapper).borderTopWidth).toBe("1px");
+      expect(getComputedStyle(tableScroll).borderTopWidth).toBe("0px");
+      expect(getComputedStyle(tableScroll).overflowX).toBe("auto");
+      expect(getComputedStyle(tableScroll).maxWidth).toBe("100%");
+
+      const rootStyle = getComputedStyle(document.documentElement);
+      shellColors.push(rootStyle.getPropertyValue("--shell"));
+      snapshots.push([
+        getComputedStyle(codeBlock).borderRadius,
+        getComputedStyle(codeBody).padding,
+        getComputedStyle(codeBody).overflowX,
+        getComputedStyle(tableWrapper).borderRadius,
+        getComputedStyle(tableScroll).overflowX,
+      ]);
+    }
+
+    expect(shellColors[0]).not.toBe(shellColors[1]);
+    expect(snapshots[0]).toEqual(snapshots[1]);
+  });
+
+  it("copies code with exact whitespace and keeps copy controls keyboard accessible", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const source = "  first line  \n\tsecond line\n\nlast line\n";
+    const result = render(<MarkdownContent body={`~~~bash\n${source}~~~`} streaming={false} />);
+    roots.push(result.root);
+
+    const copy = result.host.querySelector('button[data-streamdown="code-block-copy-button"]') as HTMLButtonElement;
+    expect(copy).not.toBeNull();
+    expect(copy.type).toBe("button");
+    expect(copy.getAttribute("title")).toBe("Copy Code");
+    copy.focus();
+    expect(document.activeElement).toBe(copy);
+    await act(async () => copy.click());
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith(source);
+  });
+
+  it("copies tables as Markdown, CSV, and TSV through Streamdown's dropdown", async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { write } });
+    class TestClipboardItem {
+      constructor(readonly items: Record<string, Blob>) {}
+    }
+    vi.stubGlobal("ClipboardItem", TestClipboardItem);
+    const result = render(<MarkdownContent body={"| Name | Value |\n| --- | --- |\n| Alice | 1 |\n| Bob | 2 |"} streaming={false} />);
+    roots.push(result.root);
+    const copy = result.host.querySelector('button[title="Copy table"]') as HTMLButtonElement;
+
+    for (const [index, [title, expected]] of ([
+      ["Copy table as Markdown", "| Name | Value |\n| --- | --- |\n| Alice | 1 |\n| Bob | 2 |"],
+      ["Copy table as CSV", "Name,Value\nAlice,1\nBob,2"],
+      ["Copy table as TSV", "Name\tValue\nAlice\t1\nBob\t2"],
+    ] as const).entries()) {
+      await act(async () => copy.click());
+      const option = result.host.querySelector(`button[title="${title}"]`) as HTMLButtonElement;
+      expect(option).not.toBeNull();
+      option.focus();
+      expect(document.activeElement).toBe(option);
+      await act(async () => option.click());
+      expect(write).toHaveBeenCalledTimes(index + 1);
+      const item = write.mock.lastCall?.[0]?.[0] as TestClipboardItem;
+      expect(await item.items["text/plain"].text()).toBe(expected);
+    }
+  });
+
+  it("keeps completed restored and streaming MessageResponse markup equivalent", () => {
+    const body = "| A | B |\n| --- | --- |\n| 1 | 2 |\n\n```javascript\nconst answer = 42;\n```";
+    const restored = render(<MessageResponse mode="static" isAnimating={false}>{body}</MessageResponse>);
+    roots.push(restored.root);
+    const streaming = render(<MessageResponse mode="streaming" isAnimating={false}>{body}</MessageResponse>);
+    roots.push(streaming.root);
+
+    const fingerprint = (host: HTMLElement) => [...host.querySelectorAll("[data-streamdown]")].map((element) => `${element.getAttribute("data-streamdown")}:${element.textContent}`).join("|");
+    expect(fingerprint(streaming.host)).toBe(fingerprint(restored.host));
+    expect(streaming.host.querySelectorAll('[data-streamdown="code-block"]')).toHaveLength(1);
+    expect(streaming.host.querySelector('[data-streamdown="table-wrapper"]')).not.toBeNull();
   });
 
   it("covers the committed Markdown kitchen sink without weakening the renderer boundary", () => {
