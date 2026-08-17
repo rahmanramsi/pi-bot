@@ -73,6 +73,7 @@ import type {
   AgentId,
   AgentProfile,
   AuthPrompt,
+  MemoryEntry,
   PiBootstrap,
   PiConfig,
   PiEvent,
@@ -1363,12 +1364,69 @@ function AgentEditor({
   const [initials, setInitials] = useState(agent?.initials ?? defaultAvatarEmoji);
   const [description, setDescription] = useState(agent?.description ?? "");
   const [instructions, setInstructions] = useState(agent?.instructions ?? "");
+  const [memories, setMemories] = useState<MemoryEntry[]>([]);
+  const [memoryDraft, setMemoryDraft] = useState("");
+  const [memoryBusy, setMemoryBusy] = useState(false);
+  const [memoryError, setMemoryError] = useState<string>();
   useEffect(() => {
     setName(agent?.name ?? "");
     setInitials(agent?.initials ?? defaultAvatarEmoji);
     setDescription(agent?.description ?? "");
     setInstructions(agent?.instructions ?? "");
+    setMemoryDraft("");
+    setMemoryError(undefined);
   }, [agent?.id, agent?.name, agent?.initials, agent?.description, agent?.instructions, isNew]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!agent) {
+      setMemories([]);
+      return () => { cancelled = true; };
+    }
+    window.piBot.getMemories(agent.id)
+      .then((next) => { if (!cancelled) setMemories(next); })
+      .catch((error) => { if (!cancelled) setMemoryError(error instanceof Error ? error.message : String(error)); });
+    return () => { cancelled = true; };
+  }, [agent?.id, agent?.workspace]);
+
+  async function addMemory() {
+    if (!agent || !memoryDraft.trim()) return;
+    setMemoryBusy(true);
+    setMemoryError(undefined);
+    try {
+      setMemories(await window.piBot.createMemory(agent.id, memoryDraft));
+      setMemoryDraft("");
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMemoryBusy(false);
+    }
+  }
+
+  async function saveMemory(memory: MemoryEntry) {
+    if (!agent || !memory.content.trim()) return;
+    setMemoryBusy(true);
+    setMemoryError(undefined);
+    try {
+      setMemories(await window.piBot.updateMemory(agent.id, memory.id, memory.content));
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMemoryBusy(false);
+    }
+  }
+
+  async function removeMemory(memory: MemoryEntry) {
+    if (!agent) return;
+    setMemoryBusy(true);
+    setMemoryError(undefined);
+    try {
+      setMemories(await window.piBot.deleteMemory(agent.id, memory.id));
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMemoryBusy(false);
+    }
+  }
 
   if (isNew) {
     return <section className="settings-detail"><div className="detail-heading"><div><span className="eyebrow">New agent</span><h2>Create an agent</h2><p>Give this teammate a name. Its workspace starts isolated and empty.</p></div></div><div className="settings-form"><label className="form-field"><span>Name</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Deep Research Agent" /></label><label className="form-field compact-field"><span>Avatar</span><AvatarEmojiPicker value={initials} onChange={setInitials} /></label><label className="form-field"><span>Description <em>optional</em></span><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What does this agent do?" /></label><div className="settings-actions"><Button onClick={() => onCreate(name, initials, description)} disabled={busy || !name.trim()}><Plus /> Create agent</Button></div></div></section>;
@@ -1382,6 +1440,21 @@ function AgentEditor({
         <div className="form-grid"><label className="form-field"><span>Name</span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Deep Research Agent" disabled={busy} /></label><label className="form-field compact-field"><span>Avatar</span><AvatarEmojiPicker value={initials} onChange={setInitials} disabled={busy} /></label></div>
         <label className="form-field"><span>Description</span><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What does this agent do?" disabled={busy} /></label>
         <label className="form-field"><span>Instructions</span><Textarea className="instructions-field" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Write what this agent should do, what to focus on, what to avoid..." disabled={busy} /></label>
+        <div className="settings-card memory-card">
+          <div className="settings-card-heading"><div><span className="eyebrow">Memory</span><strong>Persistent notes for this agent</strong></div><FileText /></div>
+          <p className="memory-scope">Scoped to <strong>{agent.name}</strong> · <span title={agent.workspace}>{agent.workspace}</span></p>
+          <p className="memory-warning">Add only explicit preferences, corrections, facts, or decisions. Do not store passwords, API keys, or other secrets.</p>
+          <div className="memory-add-row"><Textarea className="memory-input" rows={3} value={memoryDraft} onChange={(event) => setMemoryDraft(event.target.value)} placeholder="e.g. Prefer concise release notes with a checklist." disabled={memoryBusy} /><Button variant="outline" onClick={() => void addMemory()} disabled={memoryBusy || !memoryDraft.trim()}><Plus /> Add memory</Button></div>
+          {memoryError && <p className="memory-error">{memoryError}</p>}
+          <div className="memory-list">
+            {memories.map((memory) => <div className="memory-row" key={memory.id}>
+              <Textarea className="memory-input" rows={3} value={memory.content} onChange={(event) => setMemories((current) => current.map((item) => item.id === memory.id ? { ...item, content: event.target.value } : item))} disabled={memoryBusy} />
+              <div className="memory-row-actions"><small>{memory.sourceSessionId ? `Source session ${memory.sourceSessionId}` : "Added manually"}</small><Button variant="outline" size="sm" onClick={() => void saveMemory(memory)} disabled={memoryBusy || !memory.content.trim()}><Check /> Save</Button><Button variant="ghost" size="sm" onClick={() => void removeMemory(memory)} disabled={memoryBusy}><Trash2 /> Delete</Button></div>
+            </div>)}
+            {memories.length === 0 && <p className="muted-copy">No saved memories for this agent and workspace.</p>}
+          </div>
+          <small>{memories.length} memor{memories.length === 1 ? "y" : "ies"} · {memories.reduce((total, memory) => total + memory.content.length, 0)} characters</small>
+        </div>
         <div className="settings-card"><div className="settings-card-heading"><div><span className="eyebrow">Workspace</span><strong>{agent.workspaceKind === "app" ? "App-owned workspace" : "External workspace"}</strong></div><FolderOpen /></div><p className="workspace-path" title={agent.workspace}>{agent.workspace || "No workspace"}</p><div className="settings-card-actions"><Button variant="outline" size="sm" onClick={() => onChooseFolder(agent.id)} disabled={busy}><FolderOpen /> Change workspace</Button>{agent.workspaceKind === "external" && !agent.workspaceTrusted && <Button variant="outline" size="sm" onClick={() => onTrustWorkspace(agent.id)} disabled={busy}><ShieldCheck /> Trust skills</Button>}</div><small>{agent.workspaceTrusted ? "Workspace skills are available from .agents/skills." : "Skills are disabled until this workspace is trusted."}</small></div>
         <div className="form-field"><span>Default model <em>applies to new chats</em></span><ModelSelect value={agent.defaultModelKey} models={models} onChange={(key) => onModelChange(agent.id, key)} disabled={busy || models.length === 0} className="field-select-trigger" /></div>
         <div className="settings-actions"><Button onClick={() => onSave({ ...agent, name: name.trim() || agent.name, initials, description: description.trim(), instructions })} disabled={busy || !name.trim()}><Check /> Save changes</Button></div>
@@ -1644,7 +1717,7 @@ export function App() {
         else if (event.type === "error") { setBusy(false); setError(event.message); }
         else if (event.type === "auth-prompt") setAuthPrompt({ id: event.id, prompt: event.prompt });
         else if (event.type === "auth-notify") setAuthNotice(event.event.message || event.event.instructions || (event.event.url ? `Continue in your browser: ${event.event.url}` : undefined));
-        else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId, scheduledJobs: event.scheduledJobs } : previous);
+        else if (event.type === "session-sync") setData((previous) => previous ? { ...previous, transcript: event.transcript, sessions: event.sessions, sessionsByAgent: event.sessionsByAgent, config: event.config, agents: event.agents, memories: event.memories, setup: event.setup, authenticated: event.authenticated, activeAgentId: event.activeAgentId, scheduledJobs: event.scheduledJobs } : previous);
         else if (event.type === "scheduled-jobs-sync") setData((previous) => previous ? { ...previous, scheduledJobs: event.scheduledJobs } : previous);
       }
     });

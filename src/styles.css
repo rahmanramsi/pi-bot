@@ -593,6 +593,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .avatar-emoji-picker [frimousse-emoji][data-active] { background: var(--accent); }
 .avatar-emoji-picker [frimousse-loading], .avatar-emoji-picker [frimousse-empty] { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted-foreground); font-size: var(--text-label); }
 .instructions-field { min-height: 150px; resize: vertical; line-height: 1.5; }
+.memory-card { gap: 11px; }
+.memory-scope, .memory-warning { margin: 0; color: var(--muted-foreground); font-size: var(--text-caption); line-height: var(--leading-body); }
+.memory-scope { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory-scope strong { color: var(--foreground); font-weight: 650; }
+.memory-add-row { display: flex; align-items: flex-end; gap: 9px; }
+.memory-input { min-height: 74px; resize: vertical; line-height: 1.45; }
+.memory-add-row .memory-input { flex: 1 1 auto; }
+.memory-list { display: grid; gap: 10px; }
+.memory-row { display: grid; gap: 7px; padding-top: 10px; border-top: 1px solid var(--border); }
+.memory-row-actions { display: flex; align-items: center; gap: 7px; }
+.memory-row-actions small { flex: 1 1 auto; overflow: hidden; color: var(--muted-foreground); font-size: var(--text-caption); text-overflow: ellipsis; white-space: nowrap; }
+.memory-error { margin: 0; color: var(--destructive); font-size: var(--text-caption); line-height: var(--leading-body); }
 .form-field > :is([data-slot="input"], [data-slot="textarea"]) { color: var(--foreground); font-size: var(--text-control); }
 .field-select, .field-select-trigger { width: 100%; min-height: 36px; padding: 7px 10px; border: 1px solid var(--input); border-radius: 8px; color: var(--foreground); background: var(--background); font-size: var(--text-control); }
 .settings-card, .security-card, .import-card { border: 1px solid var(--border); border-radius: 9px; background: var(--card); }
