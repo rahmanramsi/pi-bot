@@ -35,6 +35,24 @@ import {
 } from "./user-profile-context.mjs";
 
 export { formatUserProfileContext } from "./user-profile-context.mjs";
+import {
+  AttachmentStore,
+  MAX_ATTACHMENTS_PER_SESSION,
+} from "./attachments.mjs";
+import {
+  buildPromptContext,
+  contextAuditBody,
+  normalizeSkillMention,
+  resolveWorkspaceMention as resolveListedWorkspaceMention,
+  trustedSkillOptions,
+} from "./composer-context.mjs";
+import {
+  invokePromptAndMarkSent,
+  normalizeComposerSessionId,
+  resolvePendingAttachmentSession,
+  resolveOwnedComposerSession,
+  validateComposerSessionToken,
+} from "./composer-session.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..");
@@ -72,6 +90,7 @@ let sessionManager;
 let unsubscribe;
 let activeRuntimeKey;
 let sessionOperation = Promise.resolve();
+let composerSessionOperation = Promise.resolve();
 const sessionRuntimes = new Map();
 let modelRuntime;
 let availableModels = [];
@@ -80,6 +99,7 @@ let appDatabase;
 let scheduledJobScheduler;
 const pendingAuthPrompts = new Map();
 let smokeTest;
+let attachmentStore;
 
 ipcMain.on("pi:renderer-stage", (event, stage) => {
   if (!smokeTest || event.sender.id !== smokeTest.webContentsId || typeof stage !== "string") return;
@@ -152,22 +172,22 @@ function isInsideWorkspace(workspace, target) {
   return Boolean(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
-function activeWorkspaceRoot() {
-  const workspace = activeProfile()?.workspace;
+function activeWorkspaceRoot(runtime = activeRuntime()) {
+  const workspace = runtime?.workspace ?? activeProfile()?.workspace;
   if (!workspace) throw new Error("Select an agent workspace first.");
   return realpathSync(workspace);
 }
 
-function resolveWorkspaceFile(relativePath) {
+function resolveWorkspaceFile(relativePath, runtime = activeRuntime()) {
   if (typeof relativePath !== "string" || !relativePath || relativePath.length > 1200) throw new Error("Invalid file path.");
-  const workspace = activeWorkspaceRoot();
+  const workspace = activeWorkspaceRoot(runtime);
   const target = realpathSync(path.resolve(workspace, relativePath));
   if (!isInsideWorkspace(workspace, target)) throw new Error("That file is outside the active workspace.");
   return target;
 }
 
-function listWorkspaceFiles() {
-  const workspace = activeWorkspaceRoot();
+function listWorkspaceFiles(runtime = activeRuntime()) {
+  const workspace = activeWorkspaceRoot(runtime);
   const items = [];
   const skippedNames = new Set([".git", "node_modules", "dist", "build", "release", "coverage", ".next", ".venv"]);
   const visit = (directory, depth) => {
@@ -192,6 +212,65 @@ function listWorkspaceFiles() {
   };
   visit(workspace, 0);
   return items;
+}
+
+function activeSessionId(runtime = activeRuntime()) {
+  const manager = runtime?.sessionManager ?? sessionManager;
+  const id = manager?.getSessionId?.();
+  if (typeof id !== "string" || !id) throw new Error("Start a conversation before adding composer context.");
+  return id;
+}
+
+function listTrustedWorkspaceSkills(profile = activeProfile(), runtime = activeRuntime()) {
+  const trusted = runtime?.workspaceTrusted ?? profile?.workspaceTrusted;
+  if (!trusted || !runtime || typeof runtime.resourceLoader?.getSkills !== "function") return [];
+  try {
+    return trustedSkillOptions(trusted, runtime.resourceLoader.getSkills().skills);
+  } catch {
+    return [];
+  }
+}
+
+function listComposerContext(sessionId = activeSessionId(), runtime = activeRuntime()) {
+  const files = listWorkspaceFiles(runtime);
+  return { sessionId, workspace: files, skills: listTrustedWorkspaceSkills(agentProfiles[runtime?.agentId] ?? activeProfile(), runtime) };
+}
+
+function resolveComposerMentions(rawMentions, runtime = activeRuntime()) {
+  const mentions = Array.isArray(rawMentions) ? rawMentions : [];
+  if (mentions.length > 32) throw new Error("Too many workspace or skill mentions were selected.");
+  const availableFiles = listWorkspaceFiles(runtime);
+  const availableSkills = listTrustedWorkspaceSkills(agentProfiles[runtime?.agentId] ?? activeProfile(), runtime);
+  const workspace = [];
+  const skills = [];
+  const seen = new Set();
+  for (const raw of mentions) {
+    if (!raw || typeof raw !== "object") throw new Error("Invalid composer mention.");
+    if (raw.kind === "workspace") {
+      const mention = resolveListedWorkspaceMention(raw, availableFiles, (relativePath) => {
+        const target = resolveWorkspaceFile(relativePath, runtime);
+        return { kind: lstatSync(target).isDirectory() ? "folder" : "file" };
+      });
+      const key = `workspace:${mention.kind}:${mention.path}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      workspace.push({ kind: mention.kind, path: mention.path });
+      continue;
+    }
+    if (raw.kind === "skill") {
+      const mention = normalizeSkillMention(raw);
+      if (!mention) throw new Error("Invalid skill mention.");
+      const key = `skill:${mention.id}`;
+      if (seen.has(key)) continue;
+      const listed = availableSkills.find((skill) => skill.id === mention.id);
+      if (!listed) throw new Error(`Skill “${mention.id}” is unavailable or this workspace is not trusted.`);
+      seen.add(key);
+      skills.push({ kind: "skill", id: listed.id });
+      continue;
+    }
+    throw new Error("Invalid composer mention source.");
+  }
+  return { workspace, skills };
 }
 
 function initialsFor(name) {
@@ -417,6 +496,7 @@ function transcriptFromManager(manager, profile = activeProfile()) {
   if (!manager) return [];
   const items = [];
   const toolRows = new Map();
+  let pendingPromptMetadata;
   for (const entry of manager.buildContextEntries()) {
     if (entry.type === "compaction") {
       const timestampMs = new Date(entry.timestamp).getTime();
@@ -431,14 +511,37 @@ function transcriptFromManager(manager, profile = activeProfile()) {
       });
       continue;
     }
+    if (entry.type === "custom" && entry.customType === "pi-bot.prompt-context" && entry.data && typeof entry.data === "object") {
+      pendingPromptMetadata = {
+        entryId: entry.id,
+        data: entry.data,
+        status: {
+          id: entry.id,
+          kind: "status",
+          label: "Prompt context",
+          body: contextAuditBody(entry.data),
+          timestamp: displayTime(entry.timestamp),
+          timestampMs: new Date(entry.timestamp).getTime(),
+          status: "done",
+          metadata: entry.data,
+        },
+      };
+      continue;
+    }
     if (entry.type !== "message") continue;
     const message = entry.message;
     const timestamp = displayTime(message.timestamp);
     const timestampMs = new Date(entry.timestamp).getTime();
     if (message.role === "user") {
-      items.push({ id: entry.id, kind: "user", label: "You", body: messageText(message.content), timestamp, timestampMs });
+      const promptContext = pendingPromptMetadata?.entryId === entry.parentId ? pendingPromptMetadata : undefined;
+      if (promptContext) items.push(promptContext.status);
+      const metadata = promptContext?.data;
+      const body = typeof metadata?.originalText === "string" ? metadata.originalText : messageText(message.content);
+      items.push({ id: entry.id, kind: "user", label: "You", body, timestamp, timestampMs, metadata });
+      pendingPromptMetadata = undefined;
       continue;
     }
+    pendingPromptMetadata = undefined;
     if (message.role === "assistant") {
       const reasoning = thinkingText(message.content);
       if (reasoning) {
@@ -590,6 +693,8 @@ function currentConfig(runtime = activeRuntime()) {
   const available = availableModels.some((model) => modelKey(model) === currentKey);
   const contextUsage = currentSession?.getContextUsage?.();
   const contextWindow = contextUsage?.contextWindow ?? currentModel?.contextWindow ?? 0;
+  const composerAttachments = attachmentStore && manager ? attachmentStore.list(manager.getSessionId()).filter((item) => item.status === "pending") : [];
+  const sessionSummary = currentSessionSummary(runtime);
   return {
     agentId: activeAgentId,
     workspace,
@@ -610,7 +715,7 @@ function currentConfig(runtime = activeRuntime()) {
     },
     models: availableModels.map(modelOption),
     tools: agentTools,
-    session: currentSessionSummary(runtime),
+    session: sessionSummary ? { ...sessionSummary, attachments: composerAttachments } : null,
   };
 }
 
@@ -1019,6 +1124,7 @@ async function openSession({ mode = "continue", sessionPath, agentId = activeAge
     workspaceTrusted: profile.workspaceTrusted,
     session: result.session,
     sessionManager: manager,
+    resourceLoader,
     transcript: transcriptFromManager(manager, profile),
     profileVersion,
   };
@@ -1076,6 +1182,7 @@ async function executeScheduledJob(job) {
       workspaceTrusted: job.workspaceTrusted,
       session: result.session,
       sessionManager: manager,
+      resourceLoader,
       transcript: transcriptFromManager(manager, scheduledProfile),
       profileVersion,
     };
@@ -1101,6 +1208,67 @@ function createSession(options = {}) {
   const operation = sessionOperation.then(() => openSession(options), () => openSession(options));
   sessionOperation = operation.catch(() => undefined);
   return operation;
+}
+
+async function ensureComposerSessionNow(requestedSessionId) {
+  const profile = activeProfile();
+  if (!profile || !currentConfig().modelAvailable) {
+    throw new Error("Choose an available model in App Settings before adding attachments.");
+  }
+  const requested = normalizeComposerSessionId(requestedSessionId);
+  if (requested !== undefined) {
+    const sessionId = resolveOwnedComposerSession(requested, (id) => appDatabase?.getSession(id), {
+      agentId: activeAgentId,
+      workspace: activeRuntime()?.workspace ?? profile.workspace,
+    });
+    return { sessionId, bootstrap: null, runtime: activeRuntime() };
+  }
+  const existingRuntime = activeRuntime();
+  const existingManager = existingRuntime?.sessionManager ?? sessionManager;
+  if (existingManager?.getSessionId?.()) {
+    const sessionId = existingManager.getSessionId();
+    return { sessionId, bootstrap: null, runtime: existingRuntime };
+  }
+  const next = await createSession({ mode: "new", agentId: activeAgentId });
+  const runtime = activeRuntime();
+  const manager = runtime?.sessionManager ?? sessionManager;
+  const sessionId = next?.config?.session?.id ?? manager?.getSessionId?.();
+  if (typeof sessionId !== "string" || !sessionId) throw new Error("Pi Bot could not create a conversation for the attachment.");
+  return { sessionId, bootstrap: next, runtime };
+}
+
+function ensureComposerSession(requestedSessionId) {
+  if (normalizeComposerSessionId(requestedSessionId) !== undefined) return ensureComposerSessionNow(requestedSessionId);
+  const operation = composerSessionOperation.then(
+    () => ensureComposerSessionNow(requestedSessionId),
+    () => ensureComposerSessionNow(requestedSessionId),
+  );
+  composerSessionOperation = operation.catch(() => undefined);
+  return operation;
+}
+
+function sendBootstrapSync(next) {
+  if (!next) return;
+  send({
+    type: "session-sync",
+    transcript: next.transcript,
+    sessions: next.sessions,
+    sessionsByAgent: next.sessionsByAgent,
+    config: next.config,
+    agents: next.agents,
+    setup: next.setup,
+    authenticated: next.authenticated,
+    activeAgentId: next.activeAgentId,
+    scheduledJobs: next.scheduledJobs,
+  });
+}
+
+function assertComposerSessionExists(sessionId) {
+  const profile = activeProfile();
+  resolveOwnedComposerSession(sessionId, (id) => appDatabase?.getSession(id), {
+    agentId: activeAgentId,
+    workspace: activeRuntime()?.workspace ?? profile?.workspace,
+  });
 }
 
 async function finishSetup() {
@@ -1262,12 +1430,14 @@ ipcMain.handle("pi:delete-agent", async (_event, agentId, deleteWorkspace = fals
   if (!isAgentId(agentId)) throw new Error("Invalid agent.");
   if (session?.isStreaming && agentId === activeAgentId) throw new Error("Wait for the response to finish first.");
   const profile = agentProfiles[agentId];
+  const agentSessionIds = appDatabase.listSessions(agentId).map((entry) => entry.id);
   await closeAgentSessions(agentId);
   if (agentId === activeAgentId) clearActiveRuntime();
   for (const [file, record] of Object.entries(sessionRecords)) if (record?.agentId === agentId) delete sessionRecords[file];
   delete currentSessions[agentId];
   delete agentProfiles[agentId];
   appDatabase.deleteAgent(agentId);
+  for (const sessionId of agentSessionIds) attachmentStore?.cleanupSession(sessionId);
   if (deleteWorkspace && profile.workspaceKind === "app" && profile.workspace === defaultWorkspace(agentId)) {
     try { rmSync(profile.workspace, { recursive: true, force: true }); } catch { /* Keep profile deletion successful. */ }
   }
@@ -1343,7 +1513,9 @@ ipcMain.handle("pi:delete-session", async (_event, sessionPath) => {
   const runtime = [...sessionRuntimes.values()].find((entry) => entry.sessionManager.getSessionFile() === sessionPath);
   if (runtime) await disposeRuntime(runtime.key);
   else if (wasCurrent) await closeCurrentSession();
+  const storedSession = appDatabase.getSession(sessionPath);
   appDatabase.deleteSession(sessionPath);
+  if (storedSession?.id) attachmentStore?.cleanupSession(storedSession.id);
   delete sessionRecords[sessionPath];
   if (currentSessions[activeAgentId] === sessionPath) delete currentSessions[activeAgentId];
   saveSettings();
@@ -1386,8 +1558,38 @@ ipcMain.handle("pi:delete-scheduled-job", async (_event, id) => {
   return bootstrap();
 });
 
+function normalizePromptRequest(value) {
+  if (typeof value === "string") return { text: value, attachmentIds: [], mentions: [], sessionId: undefined };
+  if (!value || typeof value !== "object") throw new Error("Invalid prompt.");
+  if (typeof value.text !== "string") throw new Error("Prompt text must be a string.");
+  if (!value.text.trim()) return { text: "", attachmentIds: [], mentions: [], sessionId: undefined };
+  if (value.attachmentIds !== undefined && (!Array.isArray(value.attachmentIds) || value.attachmentIds.some((id) => typeof id !== "string"))) throw new Error("Invalid attachment selection.");
+  if (value.attachmentIds && value.attachmentIds.length > MAX_ATTACHMENTS_PER_SESSION) throw new Error(`A prompt can include at most ${MAX_ATTACHMENTS_PER_SESSION} attachments.`);
+  if (value.mentions !== undefined && !Array.isArray(value.mentions)) throw new Error("Invalid composer mentions.");
+  const sessionId = normalizeComposerSessionId(value.sessionId);
+  if (sessionId !== undefined && (typeof sessionId !== "string" || !sessionId)) throw new Error("Invalid composer session.");
+  return { text: value.text, attachmentIds: value.attachmentIds ?? [], mentions: value.mentions ?? [], sessionId };
+}
+
+function preparePromptPayload(runtime, request) {
+  const sessionId = activeSessionId(runtime);
+  validateComposerSessionToken(request.sessionId, sessionId);
+  const mentions = request.mentions.length > 0 ? resolveComposerMentions(request.mentions, runtime) : { workspace: [], skills: [] };
+  const preparedAttachments = attachmentStore.prepare(sessionId, request.attachmentIds);
+  const context = buildPromptContext(request.text, {
+    workspace: mentions.workspace,
+    skills: mentions.skills,
+    attachments: preparedAttachments.map((item) => ({
+      ...item,
+      data: item.kind === "image" ? Buffer.from(item.data).toString("base64") : item.data,
+    })),
+  });
+  return { sessionId, mentions, preparedAttachments, context };
+}
+
 ipcMain.handle("pi:prompt", async (_event, message) => {
-  if (typeof message !== "string" || !message.trim()) return;
+  const request = normalizePromptRequest(message);
+  if (!request.text.trim()) return;
   if (!activeRuntime()?.session) {
     if (!activeProfile() || !currentConfig().modelAvailable) throw new Error("Choose an available model in App Settings before sending a message.");
     await createSession({ mode: "new", agentId: activeAgentId });
@@ -1396,21 +1598,26 @@ ipcMain.handle("pi:prompt", async (_event, message) => {
   const promptSession = runtime?.session;
   if (!runtime || !promptSession) throw new Error("Choose an available model in App Settings before sending a message.");
   if (promptSession.isStreaming) throw new Error("The agent is already responding. Stop the current response first.");
+  const payload = preparePromptPayload(runtime, request);
+  const promptText = payload.context.text;
   await refreshRuntimeProfileContext(runtime);
   const hasUserMessage = runtime.sessionManager.getEntries().some((entry) => entry.type === "message" && entry.message.role === "user");
-  if (!hasUserMessage) runtime.sessionManager.appendSessionInfo(titleFromPrompt(message));
+  if (!hasUserMessage) runtime.sessionManager.appendSessionInfo(titleFromPrompt(request.text));
+  const audit = payload.context.hasContext ? { ...payload.context.audit, originalText: request.text } : undefined;
+  if (audit) runtime.sessionManager.appendCustomEntry("pi-bot.prompt-context", audit);
   runtime.transcript = transcriptFromManager(runtime.sessionManager, agentProfiles[runtime.agentId]);
   const timestampMs = Date.now();
   runtime.transcript.push({
     id: `user-${timestampMs}`,
     kind: "user",
     label: "You",
-    body: message,
+    body: request.text,
     timestamp: displayTime(timestampMs),
     timestampMs,
+    metadata: audit,
   });
   try {
-    await promptSession.prompt(message);
+    await invokePromptAndMarkSent(promptSession, promptText, payload.context.images, () => attachmentStore.markSent(payload.sessionId, request.attachmentIds));
   } catch (error) {
     const text = error instanceof Error ? error.message : String(error);
     if (runtime.key === activeRuntimeKey && text !== "Request was aborted") send({ type: "error", message: text });
@@ -1515,6 +1722,44 @@ ipcMain.handle("pi:save-user-profile", async (_event, value) => {
 ipcMain.handle("pi:get-workspace-preferences", (_event, key) => appDatabase.getWorkspacePreferences(key));
 ipcMain.handle("pi:save-workspace-preferences", (_event, key, preferences) => appDatabase.saveWorkspacePreferences(key, preferences));
 ipcMain.handle("pi:list-workspace-files", () => listWorkspaceFiles());
+ipcMain.handle("pi:list-composer-context", async () => {
+  const { sessionId, bootstrap, runtime } = await ensureComposerSession();
+  sendBootstrapSync(bootstrap);
+  return listComposerContext(sessionId, runtime);
+});
+ipcMain.handle("pi:pick-attachments", async (_event, requestedSessionId) => {
+  const { sessionId, bootstrap } = await ensureComposerSession(requestedSessionId);
+  sendBootstrapSync(bootstrap);
+  const result = await dialog.showOpenDialog(window, {
+    properties: ["openFile", "multiSelections"],
+    title: "Attach files",
+  });
+  if (result.canceled || result.filePaths.length === 0) return [];
+  assertComposerSessionExists(sessionId);
+  return attachmentStore.stageMany(sessionId, result.filePaths.map((sourcePath) => ({ sourcePath })));
+});
+ipcMain.handle("pi:stage-attachment", async (_event, input) => {
+  if (!input || typeof input !== "object" || !(input.data instanceof ArrayBuffer || ArrayBuffer.isView(input.data))) {
+    throw new Error("Attachment drops and pastes must provide file bytes.");
+  }
+  const requested = input.sessionId;
+  const stageInput = { ...input };
+  delete stageInput.sessionId;
+  const { sessionId, bootstrap } = await ensureComposerSession(requested);
+  sendBootstrapSync(bootstrap);
+  assertComposerSessionExists(sessionId);
+  return attachmentStore.stage(sessionId, stageInput);
+});
+ipcMain.handle("pi:remove-attachment", async (_event, attachmentId, requestedSessionId, cleanupToken) => {
+  const sessionId = resolvePendingAttachmentSession(
+    requestedSessionId,
+    attachmentId,
+    cleanupToken,
+    (id) => appDatabase?.getSession(id),
+    (id) => attachmentStore?.list(id) ?? [],
+  );
+  attachmentStore.remove(sessionId, attachmentId, cleanupToken);
+});
 ipcMain.handle("pi:open-workspace-file", async (_event, relativePath) => {
   const target = resolveWorkspaceFile(relativePath);
   if (!lstatSync(target).isFile()) throw new Error("That item is not a file.");
@@ -1604,6 +1849,8 @@ function createWindow() {
 
 app.whenReady().then(() => {
   appDatabase = createAppDatabase(userDataPath(DATABASE_FILENAME));
+  attachmentStore = new AttachmentStore(userDataPath("attachments"));
+  attachmentStore.cleanupMissingManifests();
   migrateLegacyStorage(appDatabase, {
     settingsPath: legacySettingsFile(),
     sessionsRoot: userDataPath("sessions"),
@@ -1611,6 +1858,8 @@ app.whenReady().then(() => {
     defaultAgent: defaultAgentProfile(),
     normalizeAgent: (id, value, fallback) => normalizeProfile(id, value, fallback),
   });
+  attachmentStore.cleanupOrphanedSessions(appDatabase.listSessions().map((entry) => entry.id));
+  attachmentStore.cleanupMissingManifests();
   loadSettings();
   migrateAppOwnedWorkspaces(agentProfiles, (profile, error) => {
     console.warn(`Could not migrate workspace for ${profile.name}:`, error);

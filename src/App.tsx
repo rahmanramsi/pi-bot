@@ -2,6 +2,7 @@ import { createElement, forwardRef, useCallback, useEffect, useMemo, useRef, use
 import { EmojiPicker } from "frimousse";
 import {
   Archive,
+  AtSign,
   ArrowDown,
   ArrowLeft,
   Bot,
@@ -12,6 +13,7 @@ import {
   CircleAlert,
   ChevronLeft,
   ExternalLink,
+  FileImage,
   FileText,
   Files,
   Folder,
@@ -28,6 +30,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Paperclip,
   Pause,
   Pencil,
   Pin,
@@ -45,9 +48,11 @@ import {
   X,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentDescription, AttachmentGroup, AttachmentMedia, AttachmentTitle } from "@/components/ui/attachment";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { ContextMenu, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -67,13 +72,20 @@ import { Separator } from "@/components/ui/separator";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AnimatePresence, motion, motionSprings, motionTimings, motionTransitions, useReducedMotion } from "./lib/motion";
 import { createStreamDeltaBatcher, type StreamDeltaBatcher } from "./lib/streaming";
 import { scheduledDateFromWallClock } from "./scheduled-time";
+import { cn } from "./lib/utils";
 import type {
   AgentId,
   AgentProfile,
   AuthPrompt,
+  ComposerAttachment,
+  ComposerContextOptions,
+  ComposerPromptRequest,
+  ComposerSkillMention,
+  ComposerWorkspaceMention,
   PiBootstrap,
   PiConfig,
   PiEvent,
@@ -434,6 +446,112 @@ function ThinkingSelect({
   );
 }
 
+type ComposerMention = ComposerWorkspaceMention | ComposerSkillMention;
+export type ComposerPromptMetadata = NonNullable<TimelineItem["metadata"]>;
+export type ComposerPromptHandler = (request: ComposerPromptRequest | string, metadata?: ComposerPromptMetadata) => void | Promise<void>;
+
+type MentionChoice = {
+  key: string;
+  label: string;
+  description: string;
+  mention: ComposerMention;
+};
+
+type ComposerSessionSnapshot = {
+  key: string;
+  id: string;
+};
+
+function pendingComposerAttachments(config: PiConfig) {
+  return config.session?.attachments?.filter((attachment) => attachment.status !== "sent") ?? [];
+}
+
+function attachmentSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function attachmentDescription(attachment: Pick<ComposerAttachment, "name" | "kind" | "size">) {
+  const kind = attachment.kind === "image" ? "Image" : "Text";
+  return `${kind} · ${attachmentSize(attachment.size)}`;
+}
+
+function composerMentionLabel(mention: ComposerMention) {
+  if (mention.kind === "workspace") return `@${mention.path}${mention.type === "folder" ? "/" : ""}`;
+  return `@skill:${mention.id}`;
+}
+
+function composerMentionToken(mention: ComposerMention) {
+  return composerMentionLabel(mention);
+}
+
+function composerMentionAudit(mentions: ComposerMention[]) {
+  return {
+    workspace: mentions
+      .filter((mention): mention is ComposerWorkspaceMention => mention.kind === "workspace")
+      .map((mention) => ({ kind: mention.type, path: mention.path })),
+    skills: mentions
+      .filter((mention): mention is ComposerSkillMention => mention.kind === "skill")
+      .map((mention) => ({ kind: "skill" as const, id: mention.id })),
+  };
+}
+
+function mentionTrigger(value: string, cursor: number) {
+  const beforeCursor = value.slice(0, cursor);
+  const match = beforeCursor.match(/(^|[\s([{])@([^\s@]*)$/);
+  if (!match) return null;
+  return { start: cursor - match[2].length - 1, query: match[2] };
+}
+
+function isMentionBoundary(character: string | undefined) {
+  return !character || /\s/.test(character) || "([{)]}.,!?;:".includes(character);
+}
+
+function mentionTokenRange(value: string, token: string) {
+  let searchFrom = 0;
+  while (searchFrom < value.length) {
+    const index = value.indexOf(token, searchFrom);
+    if (index < 0) return null;
+    const end = index + token.length;
+    if (isMentionBoundary(value[index - 1]) && isMentionBoundary(value[end])) return { start: index, end };
+    searchFrom = end;
+  }
+  return null;
+}
+
+function ComposerAttachmentView({ attachment, onRemove, disabled }: { attachment: ComposerAttachment; onRemove: (attachment: ComposerAttachment) => void; disabled: boolean }) {
+  return (
+    <Attachment state="idle" size="sm" className="composer-attachment">
+      <AttachmentMedia variant="icon">{attachment.kind === "image" ? <FileImage /> : <FileText />}</AttachmentMedia>
+      <AttachmentContent>
+        <AttachmentTitle title={attachment.name}>{attachment.name}</AttachmentTitle>
+        <AttachmentDescription>{attachmentDescription(attachment)}</AttachmentDescription>
+      </AttachmentContent>
+      <AttachmentActions>
+        <AttachmentAction type="button" aria-label={`Remove ${attachment.name}`} title={`Remove ${attachment.name}`} onClick={() => onRemove(attachment)} disabled={disabled}>
+          <X />
+        </AttachmentAction>
+      </AttachmentActions>
+    </Attachment>
+  );
+}
+
+function ComposerAudit({ metadata }: { metadata?: ComposerPromptMetadata }) {
+  if (!metadata) return null;
+  const hasAttachments = metadata.attachments.length > 0;
+  const hasWorkspace = metadata.workspace.length > 0;
+  const hasSkills = metadata.skills.length > 0;
+  if (!hasAttachments && !hasWorkspace && !hasSkills) return null;
+  return (
+    <div className="message-context-audit" aria-label="Sent context" data-testid="sent-context-audit">
+      <span className="message-context-audit-label">Context sent</span>
+      {hasAttachments && <AttachmentGroup className="message-context-attachments">{metadata.attachments.map((attachment) => <Attachment key={attachment.id} state="done" size="xs" className="message-context-attachment"><AttachmentMedia variant="icon">{attachment.kind === "image" ? <FileImage /> : <FileText />}</AttachmentMedia><AttachmentContent><AttachmentTitle title={attachment.name}>{attachment.name}</AttachmentTitle><AttachmentDescription>{attachmentDescription(attachment)}</AttachmentDescription></AttachmentContent></Attachment>)}</AttachmentGroup>}
+      {(hasWorkspace || hasSkills) && <div className="message-context-mentions">{metadata.workspace.map((mention) => <Badge variant="secondary" key={`workspace:${mention.path}`}><>{mention.kind === "folder" ? <Folder /> : <FileText />}{`@${mention.path}${mention.kind === "folder" ? "/" : ""}`}</></Badge>)}{metadata.skills.map((mention) => <Badge variant="secondary" key={`skill:${mention.id}`}><><AtSign />{`skill:${mention.id}`}</></Badge>)}</div>}
+    </div>
+  );
+}
+
 export function Composer({
   busy,
   disabled,
@@ -450,60 +568,430 @@ export function Composer({
   config: PiConfig;
   focusKey?: string;
   placeholder?: string;
-  onPrompt: (message: string) => void;
+  onPrompt: ComposerPromptHandler;
   onAbort: () => void;
   onModelChange: (key: string) => void;
   onThinkingChange: (level: ThinkingLevel) => void;
 }) {
   const [message, setMessage] = useState("");
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>(() => pendingComposerAttachments(config));
+  const [mentions, setMentions] = useState<ComposerMention[]>([]);
+  const [contextOptions, setContextOptions] = useState<ComposerContextOptions>({ workspace: [], skills: [] });
+  const [contextError, setContextError] = useState<string>();
+  const [contextLoading, setContextLoading] = useState(true);
+  const [contextSessionId, setContextSessionId] = useState<string>();
+  const [stageError, setStageError] = useState<string>();
+  const [staging, setStaging] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionStart, setMentionStart] = useState(0);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const reasoningLevels = config.availableThinkingLevels.length > 0 ? config.availableThinkingLevels : ["off"] as ThinkingLevel[];
+  const configSessionKey = config.session?.id ?? config.session?.path ?? "new";
+  const [contextConfigKey, setContextConfigKey] = useState(configSessionKey);
+  const contextMatchesConfig = contextConfigKey === configSessionKey;
+  const sessionKey = contextMatchesConfig ? (contextSessionId ?? configSessionKey) : configSessionKey;
+  const currentSessionKeyRef = useRef(sessionKey);
+  const mountedRef = useRef(true);
+  currentSessionKeyRef.current = sessionKey;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!disabled) inputRef.current?.focus();
   }, [disabled, focusKey]);
 
-  function submit(prompt: PromptInputMessage) {
+  useEffect(() => {
+    let cancelled = false;
+    setContextConfigKey(configSessionKey);
+    setAttachments(pendingComposerAttachments(config));
+    setMentions([]);
+    setContextOptions({ workspace: [], skills: [] });
+    setContextSessionId(undefined);
+    setContextLoading(true);
+    setMentionOpen(false);
+    setMentionQuery("");
+    setStageError(undefined);
+    setContextError(undefined);
+    setStaging(false);
+    setSubmitting(false);
+    if (typeof window === "undefined" || !window.piBot?.listComposerContext) {
+      setContextSessionId(config.session?.id);
+      setContextLoading(false);
+      return () => { cancelled = true; };
+    }
+    window.piBot.listComposerContext()
+      .then((options) => {
+        if (cancelled) return;
+        if (!options.sessionId) throw new Error("This conversation has no active session yet.");
+        setContextOptions({ workspace: options.workspace ?? [], skills: options.skills ?? [] });
+        setContextSessionId(options.sessionId);
+        setContextLoading(false);
+      })
+      .catch((reason) => {
+        if (cancelled) return;
+        setContextError(readableError(reason));
+        setContextSessionId(config.session?.id);
+        setContextLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [configSessionKey]);
+
+  const workspaceChoices = useMemo<MentionChoice[]>(() => !contextMatchesConfig ? [] : contextOptions.workspace.map((item) => ({
+    key: `workspace:${item.kind}:${item.path}`,
+    label: item.path,
+    description: item.kind === "folder" ? "Folder" : "File",
+    mention: { kind: "workspace", path: item.path, type: item.kind },
+  })), [contextMatchesConfig, contextOptions.workspace]);
+  const skillChoices = useMemo<MentionChoice[]>(() => !contextMatchesConfig ? [] : contextOptions.skills.map((skill) => ({
+    key: `skill:${skill.id}`,
+    label: `@skill:${skill.id}`,
+    description: skill.description || "Workspace skill",
+    mention: { kind: "skill", id: skill.id, name: skill.name, description: skill.description },
+  })), [contextMatchesConfig, contextOptions.skills]);
+  const normalizedMentionQuery = mentionQuery.trim().toLocaleLowerCase();
+  const filteredWorkspaceChoices = useMemo(() => workspaceChoices.filter((choice) => !normalizedMentionQuery || `${choice.label} ${choice.description}`.toLocaleLowerCase().includes(normalizedMentionQuery)), [normalizedMentionQuery, workspaceChoices]);
+  const filteredSkillChoices = useMemo(() => skillChoices.filter((choice) => !normalizedMentionQuery || `${choice.label} ${choice.description}`.toLocaleLowerCase().includes(normalizedMentionQuery)), [normalizedMentionQuery, skillChoices]);
+  const mentionChoices = useMemo(() => [...filteredWorkspaceChoices, ...filteredSkillChoices], [filteredSkillChoices, filteredWorkspaceChoices]);
+  const hasContext = attachments.length > 0 || mentions.length > 0;
+  const contextReady = contextMatchesConfig && !contextLoading && Boolean(contextSessionId);
+  const visibleAttachments = contextMatchesConfig ? attachments : [];
+  const visibleMentions = contextMatchesConfig ? mentions : [];
+  const visibleStageError = contextMatchesConfig ? stageError : undefined;
+  const showContextStrip = visibleAttachments.length > 0 || visibleMentions.length > 0 || Boolean(visibleStageError);
+
+  useEffect(() => {
+    setMentionIndex((current) => mentionChoices.length === 0 ? 0 : Math.min(current, mentionChoices.length - 1));
+  }, [mentionChoices.length]);
+
+  function focusComposer(cursor?: number) {
+    window.requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      if (typeof cursor === "number") input.setSelectionRange(cursor, cursor);
+    });
+  }
+
+  function captureSession(): ComposerSessionSnapshot | null {
+    if (!contextReady || !contextSessionId) return null;
+    return { key: sessionKey, id: contextSessionId };
+  }
+
+  function isCurrentSession(snapshot: ComposerSessionSnapshot) {
+    return mountedRef.current && currentSessionKeyRef.current === snapshot.key;
+  }
+
+  async function rollbackAttachments(items: ComposerAttachment[], snapshot: ComposerSessionSnapshot) {
+    if (items.length === 0 || typeof window === "undefined" || !window.piBot?.removeAttachment) return;
+    await Promise.all(items.map((item) => window.piBot.removeAttachment(item.id, snapshot.id, item.cleanupToken).catch(() => undefined)));
+  }
+
+  function updateMentionTrigger(value: string, cursor: number) {
+    const trigger = mentionTrigger(value, cursor);
+    if (!trigger) {
+      setMentionOpen(false);
+      setMentionQuery("");
+      return;
+    }
+    setMentionStart(trigger.start);
+    setMentionQuery(trigger.query);
+    setMentionIndex(0);
+    setMentionOpen(true);
+  }
+
+  function removeMention(index: number) {
+    const mention = mentions[index];
+    if (!mention) return;
+    const token = composerMentionToken(mention);
+    const range = mentionTokenRange(message, token);
+    if (range) {
+      let start = range.start;
+      let end = range.end;
+      if (/\s/.test(message[end] ?? "")) end += 1;
+      else if (start > 0 && /\s/.test(message[start - 1] ?? "")) start -= 1;
+      const next = message.slice(0, start) + message.slice(end);
+      setMessage(next.trim() ? next : "");
+      focusComposer(Math.min(start, next.length));
+    }
+    setMentions((current) => current.filter((_, currentIndex) => currentIndex !== index));
+  }
+
+  function selectMention(choice: MentionChoice) {
+    const input = inputRef.current;
+    const cursor = input?.selectionStart ?? message.length;
+    const trigger = mentionTrigger(message, cursor) ?? { start: mentionStart, query: mentionQuery };
+    const token = `${composerMentionToken(choice.mention)} `;
+    const next = `${message.slice(0, trigger.start)}${token}${message.slice(cursor)}`;
+    setMessage(next);
+    setMentions((current) => current.some((mention) => mention.kind === choice.mention.kind && (mention.kind === "workspace" ? mention.path === (choice.mention as ComposerWorkspaceMention).path : mention.id === (choice.mention as ComposerSkillMention).id)) ? current : [...current, choice.mention]);
+    setMentionOpen(false);
+    setMentionQuery("");
+    focusComposer(trigger.start + token.length);
+  }
+
+  function handleComposerChange(event: React.ChangeEvent<HTMLTextAreaElement>) {
+    const next = event.target.value;
+    setMessage(next);
+    setMentions((current) => current.filter((mention) => next.includes(composerMentionToken(mention))));
+    updateMentionTrigger(next, event.target.selectionStart ?? next.length);
+  }
+
+  function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (mentionOpen) {
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && mentionChoices.length > 0) {
+        event.preventDefault();
+        setMentionIndex((current) => event.key === "ArrowDown" ? (current + 1) % mentionChoices.length : (current - 1 + mentionChoices.length) % mentionChoices.length);
+        return;
+      }
+      if ((event.key === "Enter" || event.key === "Tab") && mentionChoices.length > 0) {
+        event.preventDefault();
+        selectMention(mentionChoices[mentionIndex] ?? mentionChoices[0]);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMentionOpen(false);
+        setMentionQuery("");
+        focusComposer();
+        return;
+      }
+    }
+    if (event.key !== "Backspace" || event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) return;
+    const cursor = event.currentTarget.selectionStart;
+    const before = message.slice(0, cursor);
+    const lastMention = mentions.at(-1);
+    if (!lastMention) return;
+    const token = composerMentionToken(lastMention);
+    const tokenRange = mentionTokenRange(before, token);
+    if (tokenRange && before.slice(tokenRange.end).trim() === "") {
+      event.preventDefault();
+      removeMention(mentions.length - 1);
+    }
+  }
+
+  function handleCommandKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if ((event.key === "ArrowDown" || event.key === "ArrowUp") && mentionChoices.length > 0) {
+      event.preventDefault();
+      setMentionIndex((current) => event.key === "ArrowDown" ? (current + 1) % mentionChoices.length : (current - 1 + mentionChoices.length) % mentionChoices.length);
+      return;
+    }
+    if ((event.key === "Enter" || event.key === "Tab") && mentionChoices.length > 0) {
+      event.preventDefault();
+      selectMention(mentionChoices[mentionIndex] ?? mentionChoices[0]);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setMentionOpen(false);
+      setMentionQuery("");
+      focusComposer();
+    }
+  }
+
+  async function stageFiles(files: File[]) {
+    if (files.length === 0 || typeof window === "undefined" || !window.piBot?.stageAttachment) return;
+    const snapshot = captureSession();
+    if (!snapshot) {
+      setStageError("This conversation is still opening. Try attaching again in a moment.");
+      return;
+    }
+    setStageError(undefined);
+    setStaging(true);
+    const staged: ComposerAttachment[] = [];
+    try {
+      for (const file of files) {
+        if (!isCurrentSession(snapshot)) {
+          await rollbackAttachments(staged, snapshot);
+          return;
+        }
+        if (typeof file.arrayBuffer !== "function") throw new Error(`${file.name || "The selected file"} could not be read.`);
+        const data = new Uint8Array(await file.arrayBuffer());
+        staged.push(await window.piBot.stageAttachment({ sessionId: snapshot.id, name: file.name || "attachment", mimeType: file.type || undefined, data }));
+        if (!isCurrentSession(snapshot)) {
+          await rollbackAttachments(staged, snapshot);
+          return;
+        }
+      }
+      if (!isCurrentSession(snapshot)) {
+        await rollbackAttachments(staged, snapshot);
+        return;
+      }
+      setAttachments((current) => [...current, ...staged.filter((item) => !current.some((existing) => existing.id === item.id))]);
+    } catch (reason) {
+      await rollbackAttachments(staged, snapshot);
+      if (isCurrentSession(snapshot)) setStageError(`Couldn’t attach the selected file${files.length === 1 ? "" : "s"}. ${readableError(reason)}`);
+    } finally {
+      if (isCurrentSession(snapshot)) setStaging(false);
+    }
+  }
+
+  async function pickAttachments() {
+    if (typeof window === "undefined" || !window.piBot?.pickAttachments) return;
+    const snapshot = captureSession();
+    if (!snapshot) {
+      setStageError("This conversation is still opening. Try attaching again in a moment.");
+      return;
+    }
+    setStageError(undefined);
+    setStaging(true);
+    try {
+      const picked = await window.piBot.pickAttachments(snapshot.id);
+      if (!isCurrentSession(snapshot)) {
+        await rollbackAttachments(picked, snapshot);
+        return;
+      }
+      setAttachments((current) => [...current, ...picked.filter((item) => !current.some((existing) => existing.id === item.id))]);
+    } catch (reason) {
+      if (isCurrentSession(snapshot)) setStageError(`Couldn’t attach files. ${readableError(reason)}`);
+    } finally {
+      if (isCurrentSession(snapshot)) {
+        setStaging(false);
+        focusComposer();
+      }
+    }
+  }
+
+  async function removeAttachment(attachment: ComposerAttachment) {
+    if (typeof window === "undefined" || !window.piBot?.removeAttachment) return;
+    const snapshot = captureSession();
+    if (!snapshot) {
+      setStageError("This conversation is still opening. Try again in a moment.");
+      return;
+    }
+    setStageError(undefined);
+    try {
+      await window.piBot.removeAttachment(attachment.id, snapshot.id, attachment.cleanupToken);
+      if (!isCurrentSession(snapshot)) return;
+      setAttachments((current) => current.filter((currentAttachment) => currentAttachment.id !== attachment.id));
+      focusComposer();
+    } catch (reason) {
+      if (isCurrentSession(snapshot)) setStageError(`Couldn’t remove that attachment. ${readableError(reason)}`);
+    }
+  }
+
+  async function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = [...event.clipboardData.files];
+    if (files.length === 0) return;
+    event.preventDefault();
+    await stageFiles(files);
+    focusComposer();
+  }
+
+  async function handleDrop(event: React.DragEvent<HTMLTextAreaElement>) {
+    event.preventDefault();
+    setDragging(false);
+    await stageFiles([...event.dataTransfer.files]);
+    focusComposer();
+  }
+
+  function handleDragOver(event: React.DragEvent<HTMLTextAreaElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setDragging(true);
+  }
+
+  async function submit(prompt: PromptInputMessage) {
     const value = prompt.text.trim();
-    if (!value || busy || disabled) return;
-    setMessage("");
-    onPrompt(value);
+    if (!value || busy || disabled || staging || submitting || visibleStageError || (hasContext && !contextReady)) return;
+    const snapshot = captureSession();
+    if (hasContext && !snapshot) return;
+    const metadata = hasContext ? {
+      version: 1,
+      attachments: attachments.map(({ id, name, mimeType, kind, size }) => ({ id, name, mimeType, kind, size })),
+      ...composerMentionAudit(mentions),
+    } : undefined;
+    const request = hasContext ? { text: value, sessionId: snapshot?.id, attachmentIds: attachments.map((attachment) => attachment.id), mentions } : value;
+    setSubmitting(true);
+    setStageError(undefined);
+    try {
+      if (metadata) await onPrompt(request, metadata);
+      else await onPrompt(request);
+      if (snapshot && !isCurrentSession(snapshot)) return;
+      setMessage("");
+      setAttachments([]);
+      setMentions([]);
+      setMentionOpen(false);
+      setMentionQuery("");
+    } catch {
+      // Keep staged context in place so the user can fix the error and retry.
+    } finally {
+      if (!snapshot ? mountedRef.current : isCurrentSession(snapshot)) setSubmitting(false);
+    }
   }
 
   return (
-    <PromptInput className="composer" onSubmit={submit}>
-      <PromptInputBody>
-        <PromptInputTextarea
-          ref={inputRef}
-          className="composer-input"
-          aria-label="Message"
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          placeholder={placeholder}
-          disabled={disabled}
-          rows={1}
-        />
-      </PromptInputBody>
-      <PromptInputFooter className="composer-toolbar">
-        <PromptInputTools className="composer-actions">
-          <Context usedTokens={config.context.tokens ?? 0} maxTokens={config.context.tokens === null ? 0 : config.context.contextWindow}>
-            <ContextTrigger className="composer-context-trigger" aria-label="Context usage" />
-            <ContextContent>
-              <ContextContentHeader />
-            </ContextContent>
-          </Context>
-          <ModelSelect value={config.modelKey} models={config.models} onChange={onModelChange} disabled={busy || config.models.length === 0} className="composer-model-select" />
-          <ThinkingSelect value={config.thinkingLevel} levels={reasoningLevels} onChange={onThinkingChange} disabled={busy || !config.modelAvailable} />
-          <PromptInputSubmit
-            className={busy ? "stop-button" : "send-button"}
-            variant={busy ? "ghost" : "default"}
-            status={busy ? "streaming" : "ready"}
-            onStop={onAbort}
-            disabled={!busy && (disabled || !message.trim())}
-          />
-        </PromptInputTools>
-      </PromptInputFooter>
-    </PromptInput>
+    <TooltipProvider>
+      <Popover open={mentionOpen} onOpenChange={(open) => { setMentionOpen(open); if (!open) { setMentionQuery(""); focusComposer(); } }}>
+        <PromptInput className={cn("composer", showContextStrip && "has-context", dragging && "is-dragging")} onSubmit={(prompt) => { void submit(prompt); }}>
+          <PromptInputBody>
+            <PopoverTrigger render={<span className="composer-mention-anchor" aria-hidden="true" />} nativeButton={false} />
+            {showContextStrip && <div className="composer-context-strip" aria-label="Pending context">
+              {visibleAttachments.length > 0 && <AttachmentGroup className="composer-attachment-group">{visibleAttachments.map((attachment) => <ComposerAttachmentView key={attachment.id} attachment={attachment} onRemove={(pendingAttachment) => { void removeAttachment(pendingAttachment); }} disabled={busy || disabled || staging || submitting || !contextReady} />)}</AttachmentGroup>}
+              {visibleMentions.length > 0 && <div className="composer-mention-list" aria-label="Selected mentions">{visibleMentions.map((mention, index) => <span className="composer-mention" key={`${mention.kind}:${mention.kind === "workspace" ? mention.path : mention.id}`}><AtSign aria-hidden="true" /><span>{composerMentionLabel(mention).slice(1)}</span><Button type="button" variant="ghost" size="icon-sm" className="composer-mention-remove" aria-label={`Remove ${composerMentionLabel(mention)}`} onClick={() => removeMention(index)} disabled={busy || disabled || submitting}><X /></Button></span>)}</div>}
+              {visibleStageError && <p className="composer-stage-error" role="alert">{visibleStageError}</p>}
+            </div>}
+            <PromptInputTextarea
+              ref={inputRef}
+              className="composer-input"
+              aria-label="Message"
+              value={message}
+              onChange={handleComposerChange}
+              onKeyDown={handleComposerKeyDown}
+              onPaste={(event) => { void handlePaste(event); }}
+              onDragOver={handleDragOver}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(event) => { void handleDrop(event); }}
+              placeholder={placeholder}
+              disabled={disabled || staging || submitting}
+              rows={1}
+            />
+          </PromptInputBody>
+          <PromptInputFooter className="composer-toolbar">
+            <PromptInputTools className="composer-actions">
+              <Tooltip>
+                <TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className="composer-attach-button" aria-label="Attach files" onClick={() => { void pickAttachments(); }} disabled={disabled || busy || staging || submitting || !contextReady}><Paperclip /></Button></TooltipTrigger>
+                <TooltipContent>Add files</TooltipContent>
+              </Tooltip>
+              <Context usedTokens={config.context.tokens ?? 0} maxTokens={config.context.tokens === null ? 0 : config.context.contextWindow}>
+                <ContextTrigger className="composer-context-trigger" aria-label="Context usage" />
+                <ContextContent>
+                  <ContextContentHeader />
+                </ContextContent>
+              </Context>
+              <ModelSelect value={config.modelKey} models={config.models} onChange={onModelChange} disabled={busy || config.models.length === 0} className="composer-model-select" />
+              <ThinkingSelect value={config.thinkingLevel} levels={reasoningLevels} onChange={onThinkingChange} disabled={busy || !config.modelAvailable} />
+              <PromptInputSubmit
+                className={busy ? "stop-button" : "send-button"}
+                variant={busy ? "ghost" : "default"}
+                status={busy ? "streaming" : "ready"}
+                onStop={onAbort}
+                disabled={!busy && (disabled || !message.trim() || staging || submitting || Boolean(visibleStageError) || (hasContext && !contextReady))}
+              />
+            </PromptInputTools>
+          </PromptInputFooter>
+        </PromptInput>
+        <PopoverContent className="composer-mention-popover" side="top" align="start">
+          <Command shouldFilter={false} className="composer-command">
+            <CommandInput value={mentionQuery} onValueChange={(value) => { setMentionQuery(value); setMentionIndex(0); }} onKeyDown={handleCommandKeyDown} aria-label="Search workspace and skills" placeholder="Search workspace and skills" />
+            <CommandList>
+              {contextError && <p className="composer-context-error" role="alert">{contextError}</p>}
+              {!contextError && mentionChoices.length === 0 && <CommandEmpty>{normalizedMentionQuery ? "No matching workspace files or skills." : "No matching context."}</CommandEmpty>}
+              {!contextError && filteredWorkspaceChoices.length > 0 && <CommandGroup heading="Workspace">{filteredWorkspaceChoices.map((choice) => <CommandItem key={choice.key} value={choice.key} className={cn(mentionChoices[mentionIndex]?.key === choice.key && "composer-command-item-active")} onSelect={() => selectMention(choice)}><>{choice.mention.kind === "workspace" && choice.mention.type === "folder" ? <Folder /> : <FileText />}<span className="composer-command-copy"><strong>{choice.label}</strong><small>{choice.description}</small></span></></CommandItem>)}</CommandGroup>}
+              {!contextError && <CommandGroup heading="Skills">{filteredSkillChoices.length > 0 ? filteredSkillChoices.map((choice) => <CommandItem key={choice.key} value={choice.key} className={cn(mentionChoices[mentionIndex]?.key === choice.key && "composer-command-item-active")} onSelect={() => selectMention(choice)}><><AtSign /><span className="composer-command-copy"><strong>{choice.label}</strong><small>{choice.description}</small></span></></CommandItem>) : <div className="composer-skills-empty" data-testid="composer-skills-empty">No trusted skills are available in this workspace.</div>}</CommandGroup>}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </TooltipProvider>
   );
 }
 
@@ -716,7 +1204,7 @@ function ChatMessage({ item, workspaceFiles }: { item: TimelineItem; workspaceFi
     <motion.div layout="position" initial={reducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -6 }} transition={motionTransitions.standard} data-motion="chat-message">
       <Message from={isUser ? "user" : "assistant"} className={`chat-message ${isUser ? "user" : "assistant"}`}>
         <MessageContent className="chat-message-main">
-          {isUser ? <span className="user-message-text">{item.body}</span> : <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} workspaceFiles={workspaceFiles} onWorkspaceFile={(path) => { void window.piBot.openWorkspaceFile(path); }} />}
+          {isUser ? <><span className="user-message-text">{item.body}</span><ComposerAudit metadata={item.metadata} /></> : <MarkdownContent body={item.body || "Thinking…"} streaming={streaming} workspaceFiles={workspaceFiles} onWorkspaceFile={(path) => { void window.piBot.openWorkspaceFile(path); }} />}
         </MessageContent>
         <MessageToolbar className="chat-message-footer"><time>{item.timestamp}</time>{item.status === "failed" && <Badge variant="destructive">Failed</Badge>}{item.body && <MessageActions className="message-actions"><MessageAction label={copyLabel} tooltip={copyLabel} onClick={() => { void navigator.clipboard?.writeText(item.body); }}><Copy /></MessageAction></MessageActions>}</MessageToolbar>
       </Message>
@@ -1251,7 +1739,7 @@ type ChatViewProps = {
   busy: boolean;
   sidebarOpen: boolean;
   error?: string;
-  onPrompt: (message: string) => void;
+  onPrompt: ComposerPromptHandler;
   onAbort: () => void;
   onModelChange: (key: string) => void;
   onThinkingChange: (level: ThinkingLevel) => void;
@@ -1802,14 +2290,17 @@ export function App() {
     }
   }
 
-  async function prompt(message: string) {
+  async function prompt(request: ComposerPromptRequest | string, metadata?: ComposerPromptMetadata) {
+    const message = typeof request === "string" ? request : request.text;
     setError(undefined);
     setBusy(true);
     const agentId = data?.activeAgentId;
     if (agentId) setRunningAgentIds((previous) => new Set(previous).add(agentId));
     const timestampMs = Date.now();
-    setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: `user-${timestampMs}`, kind: "user", label: "You", body: message, timestamp: timeNow(), timestampMs }] } : previous);
-    try { await window.piBot.prompt(message); } catch (reason) {
+    setData((previous) => previous ? { ...previous, transcript: [...previous.transcript, { id: `user-${timestampMs}`, kind: "user", label: "You", body: message, timestamp: timeNow(), timestampMs, metadata }] } : previous);
+    try {
+      await window.piBot.prompt(request);
+    } catch (reason) {
       setError(readableError(reason));
       setBusy(false);
       if (agentId) setRunningAgentIds((previous) => {
@@ -1817,6 +2308,7 @@ export function App() {
         next.delete(agentId);
         return next;
       });
+      throw reason;
     }
   }
 
