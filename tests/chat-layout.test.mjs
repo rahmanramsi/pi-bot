@@ -27,8 +27,12 @@ test("chat topbar identifies the active agent instead of the session title", asy
   const avatar = styles.match(/\.agent-avatar\s*\{([^}]*)\}/)?.[1] ?? "";
   assert.match(avatar, /width:\s*38px/);
   assert.match(avatar, /height:\s*38px/);
-  assert.match(styles, /\.agent-avatar::after \{ display: none; \}/);
-  assert.match(styles, /\.agent-avatar \[data-slot="avatar-fallback"\]\s*\{[\s\S]*?background:\s*transparent;[\s\S]*?font-size:\s*32px/);
+  assert.match(app, /function AgentAvatar[\s\S]*?<BlobAvatar name=\{agent\.name\} animate=\{animate\}/);
+  // Every avatar surface idles continuously: sidebar list, settings list,
+  // history header, chat header, and the agent editor title.
+  assert.equal(app.match(/<AgentAvatar agent=\{agent\} animate="always" \/>/g)?.length, 5);
+  assert.doesNotMatch(styles, /\.agent-avatar::after/);
+  assert.doesNotMatch(styles, /\.agent-avatar \[data-slot="avatar-fallback"\]/);
   assert.doesNotMatch(agentAvatar, /agentColor|backgroundColor|active/);
   assert.doesNotMatch(styles, /\.agent-avatar\.active/);
 });
@@ -71,19 +75,23 @@ test("empty conversation does not repeat the agent avatar or name", async () => 
   assert.doesNotMatch(styles, /empty-orbit/);
 });
 
-test("agent avatars use an emoji picker with a robot default", async () => {
+test("avatars render deterministic blobatars derived from the name", async () => {
   const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
   const main = await readFile(new URL("../electron/main.mjs", import.meta.url), "utf8");
-  const editor = app.match(/function AvatarEmojiPicker[\s\S]*?function AuthProviderRow/)?.[0] ?? "";
+  const component = await readFile(new URL("../src/components/ui/blob-avatar.tsx", import.meta.url), "utf8");
+  const agentAvatar = app.match(/function AgentAvatar[\s\S]*?function AgentSidebarSection/)?.[0] ?? "";
+  const editor = app.match(/function AgentEditor[\s\S]*?function AuthProviderRow/)?.[0] ?? "";
 
-  assert.match(app, /import \{ EmojiPicker \} from "frimousse"/);
-  assert.match(app, /const defaultAvatarEmoji = "🤖"/);
-  assert.match(app, /const defaultUserAvatarEmoji = "🙂"/);
-  assert.equal(app.match(/AvatarEmojiPicker value=\{avatar \|\| defaultUserAvatarEmoji\}/g)?.length, 2);
-  assert.match(editor, /<PopoverTrigger render=\{<Button type="button" variant="outline" className="avatar-picker-trigger"/);
-  assert.match(editor, /<EmojiPicker\.Root columns=\{8\} onEmojiSelect=/);
-  assert.match(editor, /<EmojiPicker\.Search aria-label="Search emoji"/);
-  assert.match(editor, /<span>Avatar<\/span><AvatarEmojiPicker/);
-  assert.doesNotMatch(editor, /<span>Avatar<\/span><Input/);
+  assert.match(app, /import \{ BlobAvatar \} from "@\/components\/ui\/blob-avatar"/);
+  assert.match(agentAvatar, /<BlobAvatar name=\{agent\.name\} animate=\{animate\} className=\{`agent-avatar \$\{className\}`\} \/>/);
+  assert.match(editor, /<span>Avatar<\/span><BlobAvatar name=\{name\.trim\(\) \|\| defaultAgentAvatarName\} animate="always"/);
+  assert.match(editor, /<span>Avatar<\/span><BlobAvatar name=\{name\.trim\(\) \|\| agent\.name\} animate="always"/);
+  assert.match(app, /<BlobAvatar name=\{name\.trim\(\) \|\| defaultAvatarName\} animate="always" className="profile-avatar-blob" \/>/);
+  // Motion is opt-in through the wrapper: lists idle on hover, single avatars run always.
+  assert.match(component, /import "blobatar\/motion\.css"/);
+  assert.match(component, /animate\?: "hover" \| "always"/);
+  assert.doesNotMatch(app, /frimousse|EmojiPicker|AvatarEmojiPicker|defaultAvatarEmoji|defaultUserAvatarEmoji/);
+  // The stored initials field survives for data-model compatibility but is never rendered.
+  assert.doesNotMatch(app, /agent\.initials\}\}/);
   assert.match(main, /initials: "🤖"/);
 });
