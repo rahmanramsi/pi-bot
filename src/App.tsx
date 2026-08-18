@@ -1,5 +1,4 @@
 import { createElement, forwardRef, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { EmojiPicker } from "frimousse";
 import {
   Archive,
   ArrowDown,
@@ -45,7 +44,7 @@ import {
   X,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { BlobAvatar } from "@/components/ui/blob-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
@@ -53,7 +52,6 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Context, ContextContent, ContextContentHeader, ContextTrigger } from "@/components/ai-elements/context";
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse, MessageToolbar } from "@/components/ai-elements/message";
@@ -98,8 +96,10 @@ type WorkspaceTabKind = WorkspacePanelTab["kind"];
 type WorkspaceTab = WorkspacePanelTab;
 
 const defaultBrowserUrl = "https://www.google.com/";
-const defaultAvatarEmoji = "🤖";
-const defaultUserAvatarEmoji = "🙂";
+// Avatars are deterministic blobatars derived from the profile or agent name —
+// see src/components/ui/blob-avatar.tsx.
+const defaultAvatarName = "you";
+const defaultAgentAvatarName = "Agent";
 
 function defaultWorkspacePanelPreferences(): WorkspacePanelPreferences {
   return {
@@ -790,13 +790,8 @@ function EventRows({ items, responding, sessionId, workspaceFiles, theme }: { it
   );
 }
 
-function AgentAvatar({ agent, className = "" }: { agent: AgentProfile; className?: string }) {
-  return <Avatar className={`agent-avatar ${className}`} aria-hidden="true"><AvatarFallback>{agent.initials}</AvatarFallback></Avatar>;
-}
-
-function AvatarEmojiPicker({ value, onChange, disabled }: { value: string; onChange: (emoji: string) => void; disabled?: boolean }) {
-  const [open, setOpen] = useState(false);
-  return <Popover open={open} onOpenChange={setOpen}><PopoverTrigger render={<Button type="button" variant="outline" className="avatar-picker-trigger" disabled={disabled} aria-label="Choose avatar emoji" />}>{value || defaultAvatarEmoji}</PopoverTrigger><PopoverContent className="avatar-emoji-picker" align="end"><EmojiPicker.Root columns={8} onEmojiSelect={({ emoji }) => { onChange(emoji); setOpen(false); }}><EmojiPicker.Search aria-label="Search emoji" placeholder="Search emoji" /><EmojiPicker.Viewport><EmojiPicker.Loading>Loading…</EmojiPicker.Loading><EmojiPicker.Empty>No emoji found.</EmojiPicker.Empty><EmojiPicker.List /></EmojiPicker.Viewport></EmojiPicker.Root></PopoverContent></Popover>;
+function AgentAvatar({ agent, animate = "hover", className = "" }: { agent: AgentProfile; animate?: "hover" | "always"; className?: string }) {
+  return <BlobAvatar name={agent.name} animate={animate} className={`agent-avatar ${className}`} />;
 }
 
 function AgentSidebarSection({
@@ -860,7 +855,7 @@ function AgentSidebarSection({
               <ContextMenu>
                 <ContextMenuTrigger className="agent-list-context">
                   <SidebarMenuButton className={`agent-list-item ${agent.id === data.activeAgentId ? "selected" : ""}`} isActive={agent.id === data.activeAgentId} onClick={() => onSelect(agent.id)} title={agent.name} aria-label={agent.name} tooltip={agent.name} data-motion="agent-select">
-                    <AgentAvatar agent={agent} />
+                    <AgentAvatar agent={agent} animate="always" />
                     <span className="agent-list-copy">
                       <span className="agent-list-heading"><strong>{agent.name}</strong><span className="agent-list-meta">{agent.pinned && <span className="agent-pin-indicator" title="Pinned"><Pin aria-hidden="true" /></span>}{isAgentWorking ? <span className="agent-running-indicator" role="status" title={`${agent.name} is working`}><LoaderCircle className="spin" aria-hidden="true" /><span>Working</span></span> : isAgentUnread ? <span className="agent-unread-indicator" role="status" title={`${agent.name} has an unread response`}><span className="agent-unread-dot" aria-hidden="true" /><span>Unread</span></span> : <time>{shortDate(latest?.modified ?? latest?.created)}</time>}</span></span>
                       <small>{latest?.preview ?? "Start a conversation"}</small>
@@ -925,7 +920,7 @@ function HistorySidebar({
     <section className="history-sidebar" data-motion="history-sidebar">
       <header className="history-sidebar-header">
         <Button className="history-back-button" variant="ghost" size="sm" onClick={onBack} aria-label="Back to agents"><ArrowLeft /> <span>All agents</span></Button>
-        {agent && <AgentAvatar agent={agent} />}
+        {agent && <AgentAvatar agent={agent} animate="always" />}
         <div className="history-sidebar-agent">
           <strong>{agent?.name ?? "No active agent"}</strong>
           {agent?.description && <small>{agent.description}</small>}
@@ -1356,7 +1351,7 @@ function ChatView({
       <header className="section-topbar chat-section-topbar" aria-label="Conversation toolbar">
         {!sidebarOpen && <SidebarTrigger className="sidebar-window-toggle" title="Show sidebar" aria-label="Show sidebar" data-motion="sidebar-toggle"><PanelLeftOpen data-icon="inline-start" /></SidebarTrigger>}
         <div className="chat-agent-title">
-          {agent && <AgentAvatar agent={agent} />}
+          {agent && <AgentAvatar agent={agent} animate="always" />}
           <span><strong>{agent?.name ?? "No active agent"}</strong></span>
           {agent && onShowHistory && <DropdownMenu>
             <DropdownMenuTrigger render={<Button className="chat-agent-menu-button" variant="ghost" size="icon-sm" aria-label={`Open menu for ${agent.name}`} />}><MoreHorizontal data-icon="inline-start" /></DropdownMenuTrigger>
@@ -1403,31 +1398,29 @@ function AgentEditor({
   onModelChange: (agentId: AgentId, key: string) => void;
 }) {
   const [name, setName] = useState(agent?.name ?? "");
-  const [initials, setInitials] = useState(agent?.initials ?? defaultAvatarEmoji);
   const [description, setDescription] = useState(agent?.description ?? "");
   const [instructions, setInstructions] = useState(agent?.instructions ?? "");
   useEffect(() => {
     setName(agent?.name ?? "");
-    setInitials(agent?.initials ?? defaultAvatarEmoji);
     setDescription(agent?.description ?? "");
     setInstructions(agent?.instructions ?? "");
-  }, [agent?.id, agent?.name, agent?.initials, agent?.description, agent?.instructions, isNew]);
+  }, [agent?.id, agent?.name, agent?.description, agent?.instructions, isNew]);
 
   if (isNew) {
-    return <section className="settings-detail"><div className="detail-heading"><div><span className="eyebrow">New agent</span><h2>Create an agent</h2><p>Give this teammate a name. Its workspace starts isolated and empty.</p></div></div><div className="settings-form"><label className="form-field"><span>Name</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Deep Research Agent" /></label><label className="form-field compact-field"><span>Avatar</span><AvatarEmojiPicker value={initials} onChange={setInitials} /></label><label className="form-field"><span>Description <em>optional</em></span><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What does this agent do?" /></label><div className="settings-actions"><Button onClick={() => onCreate(name, initials, description)} disabled={busy || !name.trim()}><Plus /> Create agent</Button></div></div></section>;
+    return <section className="settings-detail"><div className="detail-heading"><div><span className="eyebrow">New agent</span><h2>Create an agent</h2><p>Give this teammate a name. Its workspace starts isolated and empty.</p></div></div><div className="settings-form"><label className="form-field"><span>Name</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Deep Research Agent" /></label><div className="form-field compact-field"><span>Avatar</span><BlobAvatar name={name.trim() || defaultAgentAvatarName} animate="always" className="avatar-preview-blob" /></div><label className="form-field"><span>Description <em>optional</em></span><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What does this agent do?" /></label><div className="settings-actions"><Button onClick={() => onCreate(name, "", description)} disabled={busy || !name.trim()}><Plus /> Create agent</Button></div></div></section>;
   }
 
   if (!agent) return <Empty className="settings-detail empty-settings"><EmptyMedia variant="icon"><Bot /></EmptyMedia><EmptyTitle>No active agents</EmptyTitle><EmptyDescription>Create an agent to begin.</EmptyDescription></Empty>;
   return (
     <section className="settings-detail">
-      <div className="detail-heading"><div className="detail-agent-title"><AgentAvatar agent={{ ...agent, initials: initials || agent.initials }} /><div><span className="eyebrow">Agent settings</span><h2>{agent.name}</h2><p>Identity, instructions, workspace, and default model for new chats.</p></div></div></div>
+      <div className="detail-heading"><div className="detail-agent-title"><AgentAvatar agent={agent} animate="always" /><div><span className="eyebrow">Agent settings</span><h2>{agent.name}</h2><p>Identity, instructions, workspace, and default model for new chats.</p></div></div></div>
       <div className="settings-form">
-        <div className="form-grid"><label className="form-field"><span>Name</span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Deep Research Agent" disabled={busy} /></label><label className="form-field compact-field"><span>Avatar</span><AvatarEmojiPicker value={initials} onChange={setInitials} disabled={busy} /></label></div>
+        <div className="form-grid"><label className="form-field"><span>Name</span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Deep Research Agent" disabled={busy} /></label><div className="form-field compact-field"><span>Avatar</span><BlobAvatar name={name.trim() || agent.name} animate="always" className="avatar-preview-blob" /></div></div>
         <label className="form-field"><span>Description</span><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What does this agent do?" disabled={busy} /></label>
         <label className="form-field"><span>Instructions</span><Textarea className="instructions-field" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Write what this agent should do, what to focus on, what to avoid..." disabled={busy} /></label>
         <div className="settings-card"><div className="settings-card-heading"><div><span className="eyebrow">Workspace</span><strong>{agent.workspaceKind === "app" ? "App-owned workspace" : "External workspace"}</strong></div><FolderOpen /></div><p className="workspace-path" title={agent.workspace}>{agent.workspace || "No workspace"}</p><div className="settings-card-actions"><Button variant="outline" size="sm" onClick={() => onChooseFolder(agent.id)} disabled={busy}><FolderOpen /> Change workspace</Button>{agent.workspaceKind === "external" && !agent.workspaceTrusted && <Button variant="outline" size="sm" onClick={() => onTrustWorkspace(agent.id)} disabled={busy}><ShieldCheck /> Trust skills</Button>}</div><small>{agent.workspaceTrusted ? "Workspace skills are available from .agents/skills." : "Skills are disabled until this workspace is trusted."}</small></div>
         <div className="form-field"><span>Default model <em>applies to new chats</em></span><ModelSelect value={agent.defaultModelKey} models={models} onChange={(key) => onModelChange(agent.id, key)} disabled={busy || models.length === 0} className="field-select-trigger" /></div>
-        <div className="settings-actions"><Button onClick={() => onSave({ ...agent, name: name.trim() || agent.name, initials, description: description.trim(), instructions })} disabled={busy || !name.trim()}><Check /> Save changes</Button></div>
+        <div className="settings-actions"><Button onClick={() => onSave({ ...agent, name: name.trim() || agent.name, initials: agent.initials, description: description.trim(), instructions })} disabled={busy || !name.trim()}><Check /> Save changes</Button></div>
       </div>
       <div className="danger-zone"><span className="eyebrow">Lifecycle</span><div className="danger-actions"><Button variant="outline" size="sm" onClick={() => onArchive(agent)} disabled={busy}>{agent.archived ? <RotateCcw /> : <Archive />}{agent.archived ? "Restore agent" : "Archive agent"}</Button><Button variant="destructive" size="sm" onClick={() => onDelete(agent)} disabled={busy}><Trash2 /> Delete permanently</Button></div><p>Archiving hides this agent from chat. Deleting removes its sessions; an external workspace folder is never deleted.</p></div>
     </section>
@@ -1439,22 +1432,20 @@ function AuthProviderRow({ provider, busy, onApiKey, onOAuth, onLogout }: { prov
 }
 
 function ProfileSettings({ profile, busy, onSave }: { profile: UserProfile; busy: boolean; onSave: (profile: UserProfile) => void }) {
-  const [avatar, setAvatar] = useState(profile.avatar);
   const [name, setName] = useState(profile.name);
   const [about, setAbout] = useState(profile.about);
   useEffect(() => {
-    setAvatar(profile.avatar);
     setName(profile.name);
     setAbout(profile.about);
-  }, [profile.avatar, profile.name, profile.about]);
+  }, [profile.name, profile.about]);
 
   return <motion.section className="settings-detail profile-settings" layout data-motion="profile-settings">
     <div className="detail-heading"><div><span className="eyebrow">App settings</span><h2>Profile</h2><p>Share a little context about yourself with every Pi Bot agent. This profile stays local to this app.</p></div></div>
     <div className="settings-form profile-form">
-      <div className="profile-avatar-field"><div className="form-field"><span>Avatar</span><div className="profile-avatar-controls"><AvatarEmojiPicker value={avatar || defaultUserAvatarEmoji} onChange={setAvatar} disabled={busy} /><Button type="button" variant="ghost" size="sm" onClick={() => setAvatar("")} disabled={busy || !avatar}>Clear</Button></div></div></div>
+      <div className="profile-avatar-field"><div className="form-field"><span>Avatar</span><div className="profile-avatar-controls"><BlobAvatar name={name.trim() || defaultAvatarName} animate="always" className="profile-avatar-blob" /><small className="avatar-note">Generated from your name — it updates as you type.</small></div></div></div>
       <label className="form-field"><span>Name <em>optional</em></span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Rahman" disabled={busy} /></label>
       <label className="form-field"><span>About you <em>optional</em></span><Textarea className="profile-about-field" rows={6} value={about} onChange={(event) => setAbout(event.target.value)} placeholder="Your background, preferences, goals, or working style" disabled={busy} /></label>
-      <div className="settings-actions"><Button onClick={() => onSave({ avatar: avatar.trim(), name: name.trim(), about: about.trim() })} disabled={busy}><Check /> Save profile</Button></div>
+      <div className="settings-actions"><Button onClick={() => onSave({ avatar: profile.avatar, name: name.trim(), about: about.trim() })} disabled={busy}><Check /> Save profile</Button></div>
     </div>
   </motion.section>;
 }
@@ -1630,7 +1621,7 @@ function SettingsPage({
         </nav>
         <AnimatePresence initial={false} mode="wait">
           {section === "profile" ? <motion.div key="profile" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ProfileSettings profile={data.userProfile} busy={busy} onSave={onSaveUserProfile} /></motion.div> : section === "models" ? <motion.div key="models" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ModelsSettings data={data} busy={busy} onApiKey={onApiKey} onOAuth={onOAuth} onLogout={onLogout} onImport={onImport} /></motion.div> : section === "schedules" ? <motion.div key="schedules" className="settings-panel-motion" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}><ScheduledJobsSettings data={data} busy={busy} onSave={(id, draft) => { if (id) onUpdateScheduledJob(id, draft); else onCreateScheduledJob(draft); }} onPause={onPauseScheduledJob} onRun={onRunScheduledJob} onDelete={onDeleteScheduledJob} onOpenSession={onOpenScheduledSession} /></motion.div> : <motion.div key="agents" className="agent-settings-layout" initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }} transition={motionTransitions.standard}>
-            <aside className="settings-agent-list"><div className="settings-list-heading"><span className="eyebrow">All agents</span><Button variant="outline" size="icon-sm" onClick={() => setSelectedId("new")} disabled={busy} aria-label="Create agent"><Plus /></Button></div>{data.agents.map((agent) => <motion.button type="button" className={`settings-agent-item ${selectedId === agent.id ? "selected" : ""} ${agent.archived ? "archived" : ""}`} key={agent.id} onClick={() => setSelectedId(agent.id)} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="settings-agent-select">{selectedId === agent.id && <motion.span className="settings-agent-active" layoutId="settings-agent-active" transition={motionSprings.layout} aria-hidden="true" />}<AgentAvatar agent={agent} /><span><strong>{agent.name}</strong><small>{agent.archived ? "Archived" : agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span></motion.button>)}{data.agents.length === 0 && <p className="muted-copy">No agents yet.</p>}</aside>
+            <aside className="settings-agent-list"><div className="settings-list-heading"><span className="eyebrow">All agents</span><Button variant="outline" size="icon-sm" onClick={() => setSelectedId("new")} disabled={busy} aria-label="Create agent"><Plus /></Button></div>{data.agents.map((agent) => <motion.button type="button" className={`settings-agent-item ${selectedId === agent.id ? "selected" : ""} ${agent.archived ? "archived" : ""}`} key={agent.id} onClick={() => setSelectedId(agent.id)} whileTap={{ scale: 0.99 }} transition={motionSprings.press} data-motion="settings-agent-select">{selectedId === agent.id && <motion.span className="settings-agent-active" layoutId="settings-agent-active" transition={motionSprings.layout} aria-hidden="true" />}<AgentAvatar agent={agent} animate="always" /><span><strong>{agent.name}</strong><small>{agent.archived ? "Archived" : agent.workspaceKind === "external" ? "External workspace" : "App workspace"}</small></span></motion.button>)}{data.agents.length === 0 && <p className="muted-copy">No agents yet.</p>}</aside>
             <AgentEditor agent={selected} models={data.config.models} isNew={selectedId === "new"} busy={busy} onCreate={(name, initials, description) => onCreate(name, initials, description)} onSave={onUpdate} onChooseFolder={onChooseFolder} onTrustWorkspace={onTrustWorkspace} onArchive={onArchive} onDelete={onDelete} onModelChange={onModelChange} />
           </motion.div>}
         </AnimatePresence>
@@ -1657,7 +1648,6 @@ function AuthPromptCard({ prompt, notice, onRespond, onCancel }: { prompt: { id:
 
 function SetupPage({ data, busy, error, onSaveProfile, onContinue, onImport, onApiKey, onOAuth }: { data: PiBootstrap; busy: boolean; error?: string; onSaveProfile: (profile: UserProfile) => Promise<boolean>; onContinue: (accepted: boolean) => void; onImport: (accepted: boolean) => void; onApiKey: (providerId: string, apiKey: string, accepted: boolean) => void; onOAuth: (provider: ProviderInfo, accepted: boolean) => void }) {
   const [step, setStep] = useState<"profile" | "provider">("profile");
-  const [avatar, setAvatar] = useState(data.userProfile.avatar);
   const [name, setName] = useState(data.userProfile.name);
   const [about, setAbout] = useState(data.userProfile.about);
   const apiProviders = data.setup.providers.filter((provider) => provider.methods.includes("api_key"));
@@ -1666,7 +1656,7 @@ function SetupPage({ data, busy, error, onSaveProfile, onContinue, onImport, onA
   const [executionRiskAccepted, setExecutionRiskAccepted] = useState(false);
   const provider = data.setup.providers.find((item) => item.id === providerId);
   async function continueFromProfile() {
-    const saved = await onSaveProfile({ avatar: avatar.trim(), name: name.trim(), about: about.trim() });
+    const saved = await onSaveProfile({ avatar: data.userProfile.avatar, name: name.trim(), about: about.trim() });
     if (saved) setStep("provider");
   }
   return <motion.main className="setup-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={motionTransitions.standard} data-motion="setup-page">
@@ -1678,7 +1668,7 @@ function SetupPage({ data, busy, error, onSaveProfile, onContinue, onImport, onA
         {step === "profile" ? <motion.section key="profile" className="setup-step" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={motionTransitions.standard} data-motion="setup-profile-step">
           <div><span className="eyebrow">Step 1 of 2</span><h1>Tell your agents about you</h1><p className="setup-lede">Add context that every Pi Bot agent can use. You can leave everything blank and change it later.</p></div>
           <div className="setup-profile-form">
-            <div className="form-field"><span>Avatar</span><div className="profile-avatar-controls"><AvatarEmojiPicker value={avatar || defaultUserAvatarEmoji} onChange={setAvatar} disabled={busy} /><Button type="button" variant="ghost" size="sm" onClick={() => setAvatar("")} disabled={busy || !avatar}>Clear</Button></div></div>
+            <div className="form-field"><span>Avatar</span><div className="profile-avatar-controls"><BlobAvatar name={name.trim() || defaultAvatarName} animate="always" className="profile-avatar-blob" /><small className="avatar-note">Generated from your name — it updates as you type.</small></div></div>
             <label className="form-field"><span>Name <em>optional</em></span><Input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder="e.g. Rahman" disabled={busy} /></label>
             <label className="form-field"><span>About you <em>optional</em></span><Textarea className="setup-profile-about" rows={5} value={about} onChange={(event) => setAbout(event.target.value)} maxLength={2000} placeholder="Your background, preferences, goals, or working style" disabled={busy} /></label>
             <Button className="setup-primary" onClick={() => void continueFromProfile()} disabled={busy}>{busy ? <LoaderCircle className="spin" data-icon="inline-start" /> : <ChevronRight data-icon="inline-start" />} Continue</Button>

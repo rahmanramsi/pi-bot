@@ -276,21 +276,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .agent-context-menu-content { width: 152px; }
 .agent-list-empty { padding: 12px 10px; }
 .agent-avatar {
-  display: grid;
+  display: block;
   flex: 0 0 auto;
-  place-items: center;
   width: 38px;
   height: 38px;
-}
-.agent-avatar::after { display: none; }
-.agent-avatar [data-slot="avatar-fallback"] {
-  background: transparent;
-  color: inherit;
-  font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
-  font-size: 32px;
-  font-weight: 400;
-  letter-spacing: 0;
-  line-height: 1;
 }
 
 .history-sidebar {
@@ -397,7 +386,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .chat-section-topbar button { -webkit-app-region: no-drag; }
 .chat-agent-title { display: flex; flex: 1 1 auto; align-items: center; gap: 9px; min-width: 0; margin-right: auto; }
 .chat-agent-title > .agent-avatar { width: 30px; height: 30px; }
-.chat-agent-title > .agent-avatar [data-slot="avatar-fallback"] { font-size: 24px; }
 .chat-agent-title > span { display: grid; min-width: 0; }
 .chat-agent-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-agent-title strong { color: var(--foreground); font-size: var(--text-body); font-weight: 650; }
@@ -622,17 +610,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .form-field em { font-size: var(--text-caption); font-style: normal; opacity: .8; }
 .form-grid { display: grid; grid-template-columns: minmax(0, 1fr) 110px; gap: 12px; }
 .compact-field { max-width: 110px; }
-.avatar-picker-trigger { width: 100%; font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif; font-size: 20px; }
-.avatar-emoji-picker { width: 300px; height: 360px; padding: 0; overflow: hidden; }
-.avatar-emoji-picker [frimousse-root] { display: flex; flex-direction: column; height: 100%; background: var(--popover); }
-.avatar-emoji-picker [frimousse-search] { flex: 0 0 auto; width: calc(100% - 16px); height: 34px; margin: 8px; padding: 7px 9px; border: 1px solid var(--input); border-radius: 7px; color: var(--foreground); background: var(--background); font-size: var(--text-label); outline: none; }
-.avatar-emoji-picker [frimousse-viewport] { position: relative; flex: 1 1 auto; min-height: 0; outline: none; }
-.avatar-emoji-picker [frimousse-list] { padding-bottom: 8px; user-select: none; }
-.avatar-emoji-picker [frimousse-category-header] { padding: 9px 12px 5px; color: var(--muted-foreground); background: var(--popover); font-size: var(--text-caption); font-weight: 650; }
-.avatar-emoji-picker [frimousse-row] { padding: 0 6px; scroll-margin-block: 8px; }
-.avatar-emoji-picker [frimousse-emoji] { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 7px; color: var(--foreground); background: transparent; cursor: pointer; font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif; font-size: 20px; }
-.avatar-emoji-picker [frimousse-emoji][data-active] { background: var(--accent); }
-.avatar-emoji-picker [frimousse-loading], .avatar-emoji-picker [frimousse-empty] { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted-foreground); font-size: var(--text-label); }
+.avatar-preview-blob { width: 44px; height: 44px; justify-self: center; margin-top: 2px; }
 .instructions-field { min-height: 150px; resize: vertical; line-height: 1.5; }
 .form-field > :is([data-slot="input"], [data-slot="textarea"]) { color: var(--foreground); font-size: var(--text-control); }
 .field-select, .field-select-trigger { width: 100%; min-height: 36px; padding: 7px 10px; border: 1px solid var(--input); border-radius: 8px; color: var(--foreground); background: var(--background); font-size: var(--text-control); }
@@ -692,8 +670,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .scheduled-form .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .scheduled-prompt-field { min-height: 130px; resize: vertical; line-height: 1.5; }
 .profile-form { max-width: 700px; }
-.profile-avatar-controls { display: flex; align-items: center; gap: 8px; max-width: 250px; }
-.profile-avatar-controls .avatar-picker-trigger { width: 110px; }
+.profile-avatar-controls { display: flex; align-items: center; gap: 14px; }
+.profile-avatar-blob { width: 56px; height: 56px; }
+.avatar-note { max-width: 300px; color: var(--muted-foreground); font-size: var(--text-caption); line-height: 1.4; }
 .profile-about-field { min-height: 150px; resize: vertical; line-height: 1.5; }
 .setup-card { width: min(560px, calc(100% - 48px)); padding: 38px; border: 1px solid var(--border); border-radius: 18px; background: var(--card); box-shadow: 0 25px 70px rgb(0 0 0 / 34%); }
 .setup-mark { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-raised); }
